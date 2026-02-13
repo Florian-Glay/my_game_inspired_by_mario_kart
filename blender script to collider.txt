@@ -1,0 +1,443 @@
+import bpy
+import bmesh
+import math
+from mathutils import Vector
+
+# ============================================================
+#  VISUAL-PRESERVING COLLISION FIXER
+#
+#  Key idea:
+#   - Do NOT destroy the visual mesh shading/UVs/topology.
+#   - Generate colliders from duplicates and do the "aggressive" steps there only.
+#
+#  Fixes your issues:
+#   1) Grey triangles/debris: disable holes_fill + risky non-manifold deletes + interior faces removal on VISUAL mesh
+#   2) Bad angles / everything smoothed: DO NOT force shade_smooth / autosmooth / remove custom normals on VISUAL mesh
+#   3) Texture mismatch: avoid topology changes on VISUAL mesh; apply transforms only on collider if needed
+# ============================================================
+
+CONFIG = {
+    # What to process
+    "process_selected_only": True,
+    "include_hidden": False,
+
+    # --- Visual mesh policy (KEEP LOOK) ---
+    "fix_visual_mesh": True,                # keep True, but in "safe" mode
+    "visual_apply_transforms": False,       # IMPORTANT: can break procedural mapping; keep False to preserve
+    "visual_apply_modifiers": False,        # keep False unless you MUST bake modifiers for export
+    "visual_merge_by_distance": False,      # merging can break UV seams => keep False on visual
+    "visual_merge_distance": 0.00002,
+    "visual_remove_degenerate": True,       # safe
+    "visual_delete_loose": True,            # safe
+    "visual_recalc_normals": False,         # can change shading; keep False to preserve
+    "visual_remove_custom_normals": False,  # keep False to preserve shading
+    "visual_triangulate": False,            # keep False to preserve exact topology / UV behavior
+    "visual_dissolve_limited": False,
+    "visual_planar_cleanup": False,
+    "visual_fix_non_manifold": False,       # avoid hole filling on visual
+    "visual_remove_interior_faces": False,  # avoid deleting anything on visual
+    "visual_set_smoothing": False,          # DO NOT shade_smooth / autosmooth
+
+    # --- Collider generation (THIS is where we clean) ---
+    "generate_colliders": True,
+    "collider_style": "UCX",                # "UCX" (Unreal) or "COL"
+    "collider_method": "COPY_CLEAN",        # "COPY_CLEAN" or "DECIMATE" or "CONVEX_HULL"
+    "collider_apply_transforms": True,      # strongly recommended
+    "collider_apply_modifiers": True,       # recommended for collider reliability
+
+    # Collider cleanup (allowed to be stronger)
+    "collider_merge_by_distance": True,
+    "collider_merge_distance": 0.0001,
+    "collider_remove_degenerate": True,
+    "collider_delete_loose": True,
+    "collider_recalc_normals": True,
+    "collider_triangulate": True,
+
+    # If you choose DECIMATE:
+    "collider_decimate_ratio": 1.0,         # 1.0 = keep detail, lower = simplify
+    "collider_max_faces": 500000000,
+
+    # Disable the destructive stuff even on collider by default (turn on only if needed)
+    "collider_dissolve_limited": False,
+    "collider_dissolve_angle_deg": 2.0,
+    "collider_planar_cleanup": False,
+    "collider_fix_non_manifold": False,     # hole fill can create "debris" faces; keep False unless you know you need it
+    "hole_fill_sides_max": 32,
+    "collider_remove_interior_faces": False,
+
+    # Shared
+    "make_single_user": True,
+    "rename_safely": False,
+    "verbose": True,
+}
+
+# ----------------------------
+# Helpers
+# ----------------------------
+def log(msg):
+    if CONFIG["verbose"]:
+        print("[FIXER]", msg)
+
+def sanitize_name(name: str) -> str:
+    safe = "".join(c if c.isalnum() or c in "_-." else "_" for c in name)
+    if safe and safe[0].isdigit():
+        safe = "_" + safe
+    return safe
+
+def obj_is_mesh(o):
+    return o and o.type == 'MESH' and o.data is not None
+
+def set_active(obj):
+    bpy.context.view_layer.objects.active = obj
+
+def select_only(obj):
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    set_active(obj)
+
+def ensure_object_mode():
+    if bpy.context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+def apply_modifiers(obj):
+    if not obj.modifiers:
+        return
+    select_only(obj)
+    ensure_object_mode()
+    for m in list(obj.modifiers):
+        try:
+            bpy.ops.object.modifier_apply(modifier=m.name)
+            log(f"Applied modifier: {obj.name} -> {m.name}")
+        except Exception as e:
+            log(f"Could not apply modifier {m.name} on {obj.name}: {e}")
+
+def apply_transforms(obj):
+    select_only(obj)
+    ensure_object_mode()
+    try:
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        log(f"Applied transforms: {obj.name}")
+    except Exception as e:
+        log(f"Could not apply transforms on {obj.name}: {e}")
+
+def remove_custom_normals(obj):
+    me = obj.data
+    try:
+        me.normals_split_custom_set(None)
+        me.use_auto_smooth = False
+        log(f"Removed custom normals: {obj.name}")
+    except Exception:
+        pass
+
+def mesh_stats(me):
+    return (len(me.vertices), len(me.edges), len(me.polygons))
+
+# ----------------------------
+# Parameterized cleanup
+# ----------------------------
+def bmesh_cleanup_param(obj, *, merge_by_distance, merge_distance,
+                        remove_degenerate, delete_loose,
+                        dissolve_limited, dissolve_angle_deg,
+                        planar_cleanup,
+                        fix_non_manifold, hole_fill_sides_max,
+                        remove_interior_faces,
+                        recalc_normals,
+                        triangulate):
+    me = obj.data
+    v0, e0, f0 = mesh_stats(me)
+
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.verts.ensure_lookup_table()
+    bm.edges.ensure_lookup_table()
+    bm.faces.ensure_lookup_table()
+
+    # Delete loose (safe)
+    if delete_loose:
+        loose_verts = [v for v in bm.verts if not v.link_edges]
+        loose_edges = [e for e in bm.edges if not e.link_faces]
+        if loose_edges:
+            bmesh.ops.delete(bm, geom=loose_edges, context='EDGES')
+        if loose_verts:
+            bmesh.ops.delete(bm, geom=loose_verts, context='VERTS')
+        log(f"{obj.name}: delete_loose done")
+
+    # Merge doubles (can be destructive for UV seams => disable on visual)
+    if merge_by_distance:
+        try:
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=merge_distance)
+            log(f"{obj.name}: merge_by_distance={merge_distance}")
+        except Exception as e:
+            log(f"{obj.name}: merge_by_distance failed: {e}")
+
+    # Remove degenerate
+    if remove_degenerate:
+        try:
+            bmesh.ops.dissolve_degenerate(bm, edges=bm.edges, dist=1e-12)
+            bad_faces = [f for f in bm.faces if f.calc_area() <= 1e-12]
+            if bad_faces:
+                bmesh.ops.delete(bm, geom=bad_faces, context='FACES')
+            log(f"{obj.name}: remove_degenerate done")
+        except Exception as e:
+            log(f"{obj.name}: remove_degenerate failed: {e}")
+
+    # Dissolve limited (destructive) => generally OFF
+    if dissolve_limited:
+        try:
+            angle = math.radians(dissolve_angle_deg)
+            bmesh.ops.dissolve_limit(bm, angle_limit=angle, verts=bm.verts, edges=bm.edges)
+            log(f"{obj.name}: dissolve_limited angle={dissolve_angle_deg}°")
+        except Exception as e:
+            log(f"{obj.name}: dissolve_limited failed: {e}")
+
+    # Planar cleanup (destructive) => generally OFF
+    if planar_cleanup:
+        try:
+            angle = math.radians(1.0)
+            bmesh.ops.dissolve_limit(bm, angle_limit=angle, verts=bm.verts, edges=bm.edges)
+            log(f"{obj.name}: planar cleanup done")
+        except Exception as e:
+            log(f"{obj.name}: planar cleanup failed: {e}")
+
+    # Non-manifold fix (hole fill can add "debris" faces) => OFF by default
+    if fix_non_manifold:
+        try:
+            bm.faces.ensure_lookup_table()
+            bm.edges.ensure_lookup_table()
+
+            boundary_edges = [e for e in bm.edges if e.is_boundary]
+            if boundary_edges:
+                bmesh.ops.holes_fill(bm, edges=boundary_edges, sides=hole_fill_sides_max)
+                log(f"{obj.name}: holes_fill up to {hole_fill_sides_max} sides")
+
+            # DO NOT delete risky edges here unless you really need it
+            # (it can remove real geometry and create artifacts)
+        except Exception as e:
+            log(f"{obj.name}: fix_non_manifold failed: {e}")
+
+    # Remove interior faces (destructive) => OFF by default
+    if remove_interior_faces:
+        try:
+            bm.faces.ensure_lookup_table()
+            if bm.verts:
+                center = sum((v.co for v in bm.verts), Vector((0,0,0))) / len(bm.verts)
+                candidates = []
+                for f in bm.faces:
+                    fc = f.calc_center_median()
+                    out = (fc - center)
+                    if out.length > 1e-9:
+                        out.normalize()
+                        fn = f.normal.copy()
+                        if fn.length > 1e-9:
+                            fn.normalize()
+                            if fn.dot(out) < -0.95 and f.calc_area() < 1e-6:
+                                candidates.append(f)
+                if candidates:
+                    bmesh.ops.delete(bm, geom=candidates, context='FACES')
+                    log(f"{obj.name}: removed interior-ish tiny faces: {len(candidates)}")
+        except Exception as e:
+            log(f"{obj.name}: remove_interior_faces failed: {e}")
+
+    # Recalculate normals (can change shading) => OFF for visual, ON for collider
+    if recalc_normals:
+        try:
+            bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+            log(f"{obj.name}: recalc_normals done")
+        except Exception as e:
+            log(f"{obj.name}: recalc_normals failed: {e}")
+
+    # Triangulate (topology change, but often best for collider) => ON for collider only
+    if triangulate:
+        try:
+            bmesh.ops.triangulate(bm, faces=bm.faces, quad_method='BEAUTY', ngon_method='BEAUTY')
+            log(f"{obj.name}: triangulated")
+        except Exception as e:
+            log(f"{obj.name}: triangulate failed: {e}")
+
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+
+    v1, e1, f1 = mesh_stats(me)
+    log(f"{obj.name}: stats {v0}/{e0}/{f0} -> {v1}/{e1}/{f1}")
+
+# ----------------------------
+# Collider generation
+# ----------------------------
+def duplicate_object(obj, suffix="_COL"):
+    ensure_object_mode()
+    select_only(obj)
+    bpy.ops.object.duplicate()
+    dup = bpy.context.active_object
+    dup.name = obj.name + suffix
+    dup.data.name = dup.name + "_Mesh"
+    return dup
+
+def face_count(obj):
+    return len(obj.data.polygons) if obj and obj.data else 0
+
+def add_decimate(obj, ratio):
+    mod = obj.modifiers.new(name="Decimate", type='DECIMATE')
+    mod.ratio = max(0.0001, min(1.0, ratio))
+    mod.use_collapse_triangulate = True
+    return mod
+
+def convex_hull_collider(obj):
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.verts.ensure_lookup_table()
+    if not bm.verts:
+        bm.free()
+        return
+    try:
+        bmesh.ops.convex_hull(bm, input=bm.verts)
+    except Exception as e:
+        log(f"{obj.name}: convex_hull failed: {e}")
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+
+def generate_collider_for(obj):
+    base_name = sanitize_name(obj.name) if CONFIG["rename_safely"] else obj.name
+    col_prefix = f"UCX_{base_name}_" if CONFIG["collider_style"].upper() == "UCX" else f"COL_{base_name}_"
+
+    dup = duplicate_object(obj, suffix="_COLLIDER_TMP")
+
+    # collider should not keep materials (optional)
+    try:
+        dup.data.materials.clear()
+    except:
+        pass
+
+    if CONFIG["collider_apply_modifiers"]:
+        apply_modifiers(dup)
+    if CONFIG["collider_apply_transforms"]:
+        apply_transforms(dup)
+
+    method = CONFIG["collider_method"].upper()
+
+    if method == "DECIMATE":
+        add_decimate(dup, CONFIG["collider_decimate_ratio"])
+        apply_modifiers(dup)
+
+        fc = face_count(dup)
+        if fc > CONFIG["collider_max_faces"]:
+            factor = CONFIG["collider_max_faces"] / max(1, fc)
+            new_ratio = max(0.0001, CONFIG["collider_decimate_ratio"] * factor)
+            add_decimate(dup, new_ratio)
+            apply_modifiers(dup)
+            log(f"{dup.name}: extra decimate -> {new_ratio:.6f} (faces now {face_count(dup)})")
+
+    elif method == "CONVEX_HULL":
+        convex_hull_collider(dup)
+
+    # COPY_CLEAN: keep detail, just clean + triangulate for collider stability
+    # Always do collider cleanup (allowed stronger than visual)
+    bmesh_cleanup_param(
+        dup,
+        merge_by_distance=CONFIG["collider_merge_by_distance"],
+        merge_distance=CONFIG["collider_merge_distance"],
+        remove_degenerate=CONFIG["collider_remove_degenerate"],
+        delete_loose=CONFIG["collider_delete_loose"],
+        dissolve_limited=CONFIG["collider_dissolve_limited"],
+        dissolve_angle_deg=CONFIG["collider_dissolve_angle_deg"],
+        planar_cleanup=CONFIG["collider_planar_cleanup"],
+        fix_non_manifold=CONFIG["collider_fix_non_manifold"],
+        hole_fill_sides_max=CONFIG["hole_fill_sides_max"],
+        remove_interior_faces=CONFIG["collider_remove_interior_faces"],
+        recalc_normals=CONFIG["collider_recalc_normals"],
+        triangulate=CONFIG["collider_triangulate"],
+    )
+
+    dup.name = col_prefix + "01"
+    dup.data.name = dup.name + "_Mesh"
+
+    try:
+        dup.display_type = 'WIRE'
+    except:
+        pass
+
+    log(f"Collider generated: {dup.name} (faces={face_count(dup)})")
+    return dup
+
+# ----------------------------
+# Main
+# ----------------------------
+def gather_objects():
+    if CONFIG["process_selected_only"]:
+        return [o for o in bpy.context.selected_objects if obj_is_mesh(o)]
+    objs = []
+    for o in bpy.context.scene.objects:
+        if not obj_is_mesh(o):
+            continue
+        if not CONFIG["include_hidden"] and (o.hide_get() or o.hide_viewport):
+            continue
+        objs.append(o)
+    return objs
+
+def fix_visual_object(obj):
+    # PRESERVE VISUAL: minimal-safe cleanup only
+    if CONFIG["visual_apply_modifiers"]:
+        apply_modifiers(obj)
+    if CONFIG["visual_apply_transforms"]:
+        apply_transforms(obj)
+
+    if CONFIG["visual_remove_custom_normals"]:
+        remove_custom_normals(obj)
+
+    bmesh_cleanup_param(
+        obj,
+        merge_by_distance=CONFIG["visual_merge_by_distance"],
+        merge_distance=CONFIG["visual_merge_distance"],
+        remove_degenerate=CONFIG["visual_remove_degenerate"],
+        delete_loose=CONFIG["visual_delete_loose"],
+        dissolve_limited=CONFIG["visual_dissolve_limited"],
+        dissolve_angle_deg=2.0,
+        planar_cleanup=CONFIG["visual_planar_cleanup"],
+        fix_non_manifold=CONFIG["visual_fix_non_manifold"],
+        hole_fill_sides_max=CONFIG["hole_fill_sides_max"],
+        remove_interior_faces=CONFIG["visual_remove_interior_faces"],
+        recalc_normals=CONFIG["visual_recalc_normals"],
+        triangulate=CONFIG["visual_triangulate"],
+    )
+
+    # DO NOT set smoothing (preserve shading exactly)
+    if CONFIG["visual_set_smoothing"]:
+        # intentionally not doing shade_smooth/autosmooth by default
+        pass
+
+def main():
+    ensure_object_mode()
+    objs = gather_objects()
+    if not objs:
+        log("No mesh objects found to process.")
+        return
+
+    log(f"Processing {len(objs)} mesh object(s)...")
+
+    # Fix VISUAL meshes (safe)
+    if CONFIG["fix_visual_mesh"]:
+        for i, obj in enumerate(objs, 1):
+            log(f"--- [{i}/{len(objs)}] Visual safe fix: {obj.name} ---")
+            try:
+                if CONFIG["make_single_user"] and obj.data.users > 1:
+                    obj.data = obj.data.copy()
+                    log(f"Single-user mesh datablock: {obj.name}")
+                fix_visual_object(obj)
+            except Exception as e:
+                log(f"ERROR on {obj.name}: {e}")
+
+    # Generate COLLIDERS from duplicates (cleaner + triangulate)
+    if CONFIG["generate_colliders"]:
+        log("Generating colliders...")
+        for i, obj in enumerate(objs, 1):
+            log(f"--- [{i}/{len(objs)}] Collider for: {obj.name} ---")
+            try:
+                generate_collider_for(obj)
+            except Exception as e:
+                log(f"Collider ERROR on {obj.name}: {e}")
+
+    log("DONE. Export ensuite. Le visuel est préservé; la collision vient des colliders UCX/COL.")
+
+main()

@@ -1,0 +1,1247 @@
+@import "tailwindcss";
+
+:root {
+  --mk-blue-deep: #0a2ec8;
+  --mk-blue-mid: #2c62ff;
+  --mk-blue-light: #7bb9ff;
+  --mk-panel: rgba(14, 35, 111, 0.52);
+  --mk-panel-border: rgba(220, 236, 255, 0.35);
+  --mk-text: #f7fbff;
+  --mk-text-soft: rgba(247, 251, 255, 0.76);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.mk-menu-screen {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: "Trebuchet MS", "Arial Black", "Segoe UI", sans-serif;
+  color: var(--mk-text);
+}
+
+.mk-menu-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 0% 0%, #8ad4ff 0%, transparent 36%),
+    radial-gradient(circle at 100% 100%, #4f7dff 0%, transparent 45%),
+    linear-gradient(120deg, var(--mk-blue-deep) 0%, var(--mk-blue-mid) 48%, #3e86ff 100%);
+}
+
+.mk-menu-particle-field {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.98) 0 1.6px, rgba(255, 255, 255, 0) 2.1px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.72) 0 1.2px, rgba(255, 255, 255, 0) 1.8px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.55) 0 1px, rgba(255, 255, 255, 0) 1.4px);
+  background-size: 120px 120px, 84px 84px, 58px 58px;
+  background-position: 0 0, 32px 18px, 14px 36px;
+  opacity: 0.75;
+  animation: mk-particles-drift-near 13s linear infinite;
+}
+
+.mk-menu-particle-field--far {
+  background-size: 188px 188px, 150px 150px, 114px 114px;
+  background-position: 10px 12px, 72px 40px, 44px 26px;
+  opacity: 0.52;
+  filter: blur(0.6px);
+  animation: mk-particles-drift-far 21s linear infinite;
+}
+
+@keyframes mk-particles-drift-near {
+  from {
+    background-position: 0 0, 32px 18px, 14px 36px;
+  }
+  to {
+    background-position: 460px 0, 492px 18px, 474px 36px;
+  }
+}
+
+@keyframes mk-particles-drift-far {
+  from {
+    background-position: 10px 12px, 72px 40px, 44px 26px;
+  }
+  to {
+    background-position: 370px 12px, 432px 40px, 404px 26px;
+  }
+}
+
+.mk-menu-overlay {
+  --mk-panel-shift-submenu: clamp(25vw, 20vw, 15vw);
+  --mk-panel-transition: 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  padding: clamp(10px, 2.2vw, 24px);
+  gap: clamp(10px, 2vw, 20px);
+}
+
+.mk-menu-overlay.is-transitioning {
+  pointer-events: none;
+}
+
+.mk-menu-panel {
+  width: min(100%, 1240px);
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
+  padding-bottom: clamp(70px, 9vh, 98px);
+  transform: translateX(0);
+  transition: transform var(--mk-panel-transition);
+  will-change: transform;
+}
+
+.mk-back-btn {
+  position: absolute;
+  left: clamp(16px, 3vw, 34px);
+  bottom: clamp(16px, 3vw, 34px);
+  z-index: 6;
+  min-width: clamp(128px, 10vw, 168px);
+  border: 2px solid rgba(179, 200, 245, 0.82);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(231, 237, 245, 0.97) 100%);
+  color: #7a7f89;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  clip-path: polygon(8% 0%, 95% 0%, 100% 50%, 95% 100%, 8% 100%, 0% 50%);
+  box-shadow: 0 12px 25px rgba(6, 20, 72, 0.18);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.mk-back-btn:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.mk-back-btn:hover {
+  transform: translateY(-1px) scale(1.005);
+  border-color: rgba(127, 167, 248, 0.98);
+}
+
+.mk-menu-list {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  gap: clamp(16px, 2.2vh, 30px);
+  padding-top: 0;
+  width: min(100%, 660px);
+  margin-inline: auto;
+}
+
+.mk-main-btn {
+  width: 100%;
+  border: 2px solid rgba(179, 200, 245, 0.82);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(231, 237, 245, 0.97) 100%);
+  color: #7a7f89;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: clamp(72px, 11vh, 122px);
+  padding: 10px 22px;
+  clip-path: polygon(7% 0%, 95% 0%, 100% 50%, 95% 100%, 7% 100%, 0% 50%);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  box-shadow: 0 12px 25px rgba(6, 20, 72, 0.18);
+}
+
+@keyframes mk-menu-btn-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-42px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes mk-menu-btn-exit-right {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(120px) scale(0.985);
+  }
+}
+
+@keyframes mk-menu-btn-exit-left {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-120px) scale(0.985);
+  }
+}
+
+.mk-menu-list--animated .mk-main-btn {
+  animation: mk-menu-btn-enter 360ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.mk-menu-list--animated .mk-main-btn:nth-child(1) {
+  animation-delay: 50ms;
+}
+
+.mk-menu-list--animated .mk-main-btn:nth-child(2) {
+  animation-delay: 100ms;
+}
+
+.mk-menu-list--animated .mk-main-btn:nth-child(3) {
+  animation-delay: 150ms;
+}
+
+.mk-menu-list--animated .mk-main-btn:nth-child(4) {
+  animation-delay: 200ms;
+}
+
+.mk-card--animated .mk-character-slot,
+.mk-card--animated .mk-circuit-btn,
+.mk-card--animated .mk-gp-cup-btn,
+.mk-card--animated .mk-gp-course-card,
+.mk-card--animated .mk-gp-selected-name,
+.mk-card--animated .mk-confirm-btn,
+.mk-card--animated .mk-garage-section,
+.mk-card--animated .mk-garage-confirm-btn {
+  animation: mk-menu-btn-enter 340ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.mk-card--animated .mk-character-slot:nth-child(1),
+.mk-card--animated .mk-circuit-btn:nth-child(1) {
+  animation-delay: 40ms;
+}
+
+.mk-card--animated .mk-character-slot:nth-child(2),
+.mk-card--animated .mk-circuit-btn:nth-child(2) {
+  animation-delay: 80ms;
+}
+
+.mk-card--animated .mk-character-slot:nth-child(3),
+.mk-card--animated .mk-circuit-btn:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+.mk-card--animated .mk-character-slot:nth-child(4),
+.mk-card--animated .mk-circuit-btn:nth-child(4) {
+  animation-delay: 160ms;
+}
+
+.mk-card--animated .mk-character-slot:nth-child(5),
+.mk-card--animated .mk-circuit-btn:nth-child(5) {
+  animation-delay: 200ms;
+}
+
+.mk-card--animated .mk-character-slot:nth-child(6),
+.mk-card--animated .mk-circuit-btn:nth-child(6) {
+  animation-delay: 240ms;
+}
+
+.mk-card--animated .mk-character-slot:nth-child(7),
+.mk-card--animated .mk-circuit-btn:nth-child(7) {
+  animation-delay: 280ms;
+}
+
+.mk-card--animated .mk-character-slot:nth-child(8),
+.mk-card--animated .mk-circuit-btn:nth-child(8) {
+  animation-delay: 320ms;
+}
+
+.mk-card--animated .mk-confirm-btn {
+  animation-delay: 180ms;
+}
+
+.mk-card--animated .mk-garage-section:nth-child(1) {
+  animation-delay: 60ms;
+}
+
+.mk-card--animated .mk-garage-section:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.mk-card--animated .mk-garage-section:nth-child(3) {
+  animation-delay: 180ms;
+}
+
+.mk-card--animated .mk-garage-confirm-btn {
+  animation-delay: 240ms;
+}
+
+.mk-menu-overlay--home-exit .mk-main-btn,
+.mk-menu-overlay--home-exit .mk-character-slot,
+.mk-menu-overlay--home-exit .mk-circuit-btn,
+.mk-menu-overlay--home-exit .mk-gp-cup-btn,
+.mk-menu-overlay--home-exit .mk-gp-course-card,
+.mk-menu-overlay--home-exit .mk-gp-selected-name,
+.mk-menu-overlay--home-exit .mk-confirm-btn,
+.mk-menu-overlay--home-exit .mk-garage-section,
+.mk-menu-overlay--home-exit .mk-garage-confirm-btn {
+  animation: mk-menu-btn-exit-right 300ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.mk-menu-overlay--submenu-exit .mk-main-btn,
+.mk-menu-overlay--submenu-exit .mk-character-slot,
+.mk-menu-overlay--submenu-exit .mk-circuit-btn,
+.mk-menu-overlay--submenu-exit .mk-gp-cup-btn,
+.mk-menu-overlay--submenu-exit .mk-gp-course-card,
+.mk-menu-overlay--submenu-exit .mk-gp-selected-name,
+.mk-menu-overlay--submenu-exit .mk-confirm-btn,
+.mk-menu-overlay--submenu-exit .mk-garage-section,
+.mk-menu-overlay--submenu-exit .mk-garage-confirm-btn {
+  animation: mk-menu-btn-exit-left 300ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.mk-main-btn:hover {
+  transform: translateY(-1px) scale(1.005);
+  border-color: rgba(127, 167, 248, 0.98);
+}
+
+.mk-main-btn.is-active {
+  box-shadow: 0 0 0 3px rgba(123, 182, 255, 0.5), 0 14px 30px rgba(6, 20, 72, 0.22);
+}
+
+.mk-main-btn-icon {
+  width: clamp(40px, 4vw, 54px);
+  height: clamp(40px, 4vw, 54px);
+  border-radius: 999px;
+  border: 2px solid rgba(122, 189, 255, 0.7);
+  color: #76b7ff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(11px, 1.2vw, 15px);
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.mk-main-btn-label {
+  font-size: clamp(24px, 3.4vw, 52px);
+  line-height: 1;
+  letter-spacing: 0.06em;
+  font-weight: 900;
+}
+
+.mk-card {
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  border-radius: 0;
+  padding: clamp(10px, 1.4vw, 18px) 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mk-card h2 {
+  margin: 0;
+  font-size: clamp(20px, 2.2vw, 31px);
+  letter-spacing: 0.03em;
+}
+
+.mk-card p {
+  margin: 0;
+  color: var(--mk-text-soft);
+  font-size: clamp(14px, 1.2vw, 18px);
+}
+
+.mk-mapping-grid {
+  display: grid;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.mk-character-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mk-character-slot {
+  border: 1px solid rgba(196, 220, 255, 0.42);
+  border-radius: 12px;
+  background: rgba(11, 40, 124, 0.48);
+  color: var(--mk-text);
+  min-height: 110px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.mk-character-slot.is-selected {
+  border-color: rgba(145, 205, 255, 0.9);
+  box-shadow: 0 0 0 2px rgba(125, 195, 255, 0.44);
+}
+
+.mk-character-title {
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mk-character-subtitle {
+  font-size: 13px;
+  color: var(--mk-text-soft);
+}
+
+.mk-character-tags {
+  display: flex;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.mk-tag {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  border: 1px solid transparent;
+}
+
+.mk-tag.p1 {
+  background: rgba(36, 153, 255, 0.24);
+  border-color: rgba(133, 206, 255, 0.65);
+}
+
+.mk-tag.p2 {
+  background: rgba(255, 118, 68, 0.22);
+  border-color: rgba(255, 165, 133, 0.62);
+}
+
+.mk-circuit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mk-circuit-btn {
+  border: 1px solid rgba(195, 218, 255, 0.45);
+  border-radius: 12px;
+  background: rgba(10, 36, 117, 0.5);
+  color: var(--mk-text);
+  min-height: 84px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.mk-circuit-btn span {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mk-circuit-btn small {
+  color: var(--mk-text-soft);
+  font-size: 12px;
+}
+
+.mk-circuit-btn.is-active {
+  border-color: rgba(149, 209, 255, 0.95);
+  box-shadow: 0 0 0 2px rgba(145, 209, 255, 0.4);
+}
+
+.mk-grand-prix-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mk-gp-cups-section {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.mk-gp-cups-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  padding-bottom: 4px;
+}
+
+.mk-gp-cups-grid {
+  --mk-gp-cup-size: clamp(96px, 11.4vw, 160px);
+  width: max-content;
+  min-width: 100%;
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: repeat(6, var(--mk-gp-cup-size));
+  grid-template-rows: repeat(2, var(--mk-gp-cup-size));
+  justify-content: center;
+  gap: clamp(8px, 1.1vw, 16px);
+}
+
+.mk-gp-cup-btn {
+  width: var(--mk-gp-cup-size);
+  height: var(--mk-gp-cup-size);
+  border-radius: 999px;
+  border: 2px solid rgba(198, 221, 255, 0.62);
+  background:
+    radial-gradient(circle at 38% 30%, rgba(255, 243, 180, 0.4), rgba(255, 214, 102, 0.2) 42%, transparent 68%),
+    linear-gradient(155deg, rgba(19, 58, 165, 0.82), rgba(6, 24, 90, 0.85));
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.mk-gp-cup-btn:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 10px 18px rgba(6, 20, 72, 0.28);
+}
+
+.mk-gp-cup-btn:focus-visible {
+  outline: 2px solid rgba(255, 234, 132, 0.95);
+  outline-offset: 2px;
+}
+
+.mk-gp-cup-btn.is-active {
+  border-color: rgba(255, 233, 138, 0.96);
+  box-shadow:
+    0 0 0 2px rgba(255, 238, 166, 0.6),
+    0 12px 24px rgba(8, 25, 75, 0.3);
+}
+
+.mk-gp-cup-image {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(253, 232, 150, 0.55);
+}
+
+.mk-gp-courses-section {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.mk-gp-courses-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  padding-bottom: 6px;
+}
+
+.mk-gp-courses-row {
+  width: 100%;
+  min-width: 860px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  animation: mk-gp-courses-enter 240ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+@keyframes mk-gp-courses-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mk-gp-course-card {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid rgba(195, 220, 255, 0.48);
+  background: rgba(8, 26, 88, 0.42);
+  overflow: hidden;
+  min-height: clamp(150px, 19vh, 204px);
+  aspect-ratio: 16 / 9;
+}
+
+.mk-gp-course-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: rgba(21, 54, 131, 0.42);
+}
+
+.mk-gp-course-meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  gap: 2px;
+  padding: 10px 10px 12px;
+  background: linear-gradient(180deg, rgba(10, 21, 57, 0), rgba(10, 21, 57, 0.46) 42%, rgba(10, 21, 57, 0.68));
+  backdrop-filter: blur(2px);
+}
+
+.mk-gp-course-origin {
+  color: rgba(245, 251, 255, 0.9);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mk-gp-course-label {
+  color: #f7fbff;
+  text-shadow: 0 2px 10px rgba(3, 10, 36, 0.4);
+  font-size: clamp(30px, 3.2vw, 52px);
+  font-weight: 900;
+  line-height: 0.9;
+  letter-spacing: 0.01em;
+}
+
+.mk-gp-selected-name {
+  width: 100%;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  text-align: center;
+  padding: 2px 0 4px;
+  font-size: clamp(20px, 2.4vw, 34px);
+  font-weight: 900;
+  letter-spacing: 0.03em;
+}
+
+.mk-gp-confirm-btn {
+  width: 100%;
+}
+
+.mk-confirm-btn {
+  border: 1px solid rgba(188, 219, 255, 0.7);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(249, 252, 255, 0.94), rgba(215, 231, 252, 0.96));
+  color: #4b5b7c;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  cursor: pointer;
+}
+
+.mk-confirm-btn:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.mk-error {
+  border: 1px solid rgba(255, 138, 126, 0.62);
+  background: rgba(117, 23, 16, 0.45);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 13px;
+  color: #ffd8d3;
+}
+
+.mk-hero-panel {
+  flex: 1;
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  transform: translateX(0);
+  transition: transform var(--mk-panel-transition), opacity 260ms ease;
+  will-change: transform, opacity;
+}
+
+.mk-menu-overlay--home .mk-menu-panel,
+.mk-menu-overlay--submenu-exit .mk-menu-panel {
+  transform: translateX(0);
+}
+
+.mk-menu-overlay--home-exit .mk-menu-panel,
+.mk-menu-overlay--submenu .mk-menu-panel {
+  transform: translateX(0);
+}
+
+.mk-menu-overlay--home .mk-hero-panel {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.mk-menu-overlay--home-exit .mk-hero-panel,
+.mk-menu-overlay--submenu-exit .mk-hero-panel,
+.mk-menu-overlay--submenu .mk-hero-panel {
+  opacity: 0;
+  transform: translateX(115%);
+  pointer-events: none;
+}
+
+.mk-menu-overlay--home .mk-menu-panel {
+  width: min(56vw, 780px);
+}
+
+.mk-menu-overlay--home-exit .mk-menu-panel {
+  width: min(56vw, 780px);
+}
+
+.mk-menu-overlay--submenu:not(.mk-menu-overlay--garage) .mk-menu-panel,
+.mk-menu-overlay--submenu-exit:not(.mk-menu-overlay--garage) .mk-menu-panel {
+  width: min(100%, 1240px);
+}
+
+.mk-menu-overlay--submenu:not(.mk-menu-overlay--garage) .mk-hero-panel,
+.mk-menu-overlay--submenu-exit:not(.mk-menu-overlay--garage) .mk-hero-panel {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mk-hero-image {
+  height: 200%;
+  max-height: calc(100% + 6vw);
+  max-width: 2000%;
+  position: absolute;
+  right: calc(-3vw - 15%);
+  object-fit: contain;
+  filter: drop-shadow(0 26px 40px rgba(2, 14, 64, 0.42));
+}
+
+.mk-hero-fallback {
+  width: min(100%, 920px);
+  height: min(72vh, 640px);
+  border-radius: 30px;
+  border: 1px solid rgba(200, 223, 255, 0.5);
+  background:
+    radial-gradient(circle at 25% 20%, rgba(193, 231, 255, 0.45), transparent 48%),
+    radial-gradient(circle at 78% 65%, rgba(105, 177, 255, 0.42), transparent 52%),
+    linear-gradient(145deg, rgba(12, 44, 153, 0.92), rgba(38, 95, 255, 0.92));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mk-hero-fallback-label {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(241, 248, 255, 0.84);
+}
+
+.race-back-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 60;
+  border: 1px solid rgba(201, 224, 255, 0.72);
+  border-radius: 999px;
+  background: rgba(11, 35, 111, 0.84);
+  color: #f3f9ff;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.split-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  z-index: 30;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(180, 218, 255, 0.78), rgba(95, 147, 255, 0.72));
+  box-shadow: 0 0 12px rgba(167, 212, 255, 0.5);
+}
+
+.mk-menu-overlay--garage .mk-menu-panel {
+  width: min(58vw, 940px);
+  transform: translateX(0);
+  padding-bottom: clamp(88px, 10vh, 116px);
+}
+
+.mk-menu-overlay--garage .mk-hero-panel {
+  flex: 1;
+  width: auto;
+  min-width: min(40vw, 620px);
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.mk-hero-panel--garage {
+  flex: 1;
+  min-width: min(40vw, 620px);
+  padding: clamp(10px, 1.6vw, 20px);
+}
+
+.mk-garage-layout {
+  display: flex;
+  flex: 1;
+}
+
+.mk-garage-selector {
+  width: 100%;
+  height: min(100%, calc(100vh - clamp(120px, 14vh, 170px)));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable both-edges;
+  padding-right: 0;
+}
+
+.mk-garage-sections {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.mk-garage-section {
+  --mk-garage-scroll-size: clamp(48px, 5.2vw, 72px);
+  --mk-garage-side-preview-size: clamp(46px, 4.6vw, 70px);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  display: grid;
+  grid-template-columns:
+    var(--mk-garage-scroll-size)
+    minmax(0, 1fr)
+    var(--mk-garage-scroll-size);
+  grid-template-rows: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 0;
+  min-height: clamp(116px, 17vh, 178px);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mk-garage-section--vehicle {
+  --mk-garage-side-preview-size: clamp(54px, 5.6vw, 86px);
+  min-height: clamp(146px, 22.5vh, 230px);
+  box-shadow: none;
+}
+
+.mk-garage-section-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mk-garage-section-title {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mk-garage-section-subtitle {
+  color: var(--mk-text-soft);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mk-garage-scroll-btn {
+  border: 1px solid rgba(181, 216, 255, 0.7);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(244, 249, 255, 0.96), rgba(208, 226, 253, 0.95));
+  color: #4a5e87;
+  font-size: 16px;
+  font-weight: 900;
+  width: var(--mk-garage-scroll-size);
+  height: var(--mk-garage-scroll-size);
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.mk-garage-scroll-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(7, 22, 70, 0.24);
+}
+
+.mk-garage-item-card {
+  width: 100%;
+  min-width: 0;
+  min-height: clamp(74px, 11.6vh, 100px);
+  border-radius: 14px;
+  border: none;
+  background: rgba(7, 31, 105, 0.34);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px clamp(8px, 1vw, 12px);
+  overflow: hidden;
+}
+
+.mk-garage-section--vehicle .mk-garage-item-card {
+  min-height: clamp(100px, 15.2vh, 142px);
+}
+
+.mk-garage-item-content {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns:
+    minmax(0, var(--mk-garage-side-preview-size))
+    minmax(0, 1fr)
+    minmax(0, var(--mk-garage-side-preview-size));
+  align-items: center;
+  gap: clamp(6px, 1vw, 12px);
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.mk-garage-side-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.mk-garage-side-preview-image {
+  width: var(--mk-garage-side-preview-size);
+  height: var(--mk-garage-side-preview-size);
+  border-radius: 10px;
+  object-fit: contain;
+  border: 1px solid rgba(186, 219, 255, 0.42);
+  background: rgba(9, 30, 98, 0.52);
+  opacity: 0.92;
+}
+
+.mk-garage-side-preview-image--fallback {
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.03));
+}
+
+.mk-garage-item-track {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.mk-garage-item-content.is-enter-from-left {
+  animation: mk-garage-item-enter-left 260ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.mk-garage-item-content.is-enter-from-right {
+  animation: mk-garage-item-enter-right 260ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+@keyframes mk-garage-item-enter-left {
+  from {
+    opacity: 0.2;
+    transform: translateX(-34px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes mk-garage-item-enter-right {
+  from {
+    opacity: 0.2;
+    transform: translateX(34px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.mk-garage-item-image {
+  width: min(100%, 162px);
+  height: auto;
+  max-height: 92px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 16px rgba(3, 11, 37, 0.42));
+}
+
+.mk-garage-section--vehicle .mk-garage-item-image {
+  max-height: 126px;
+  width: min(100%, 200px);
+}
+
+.mk-garage-item-image--fallback {
+  width: 120px;
+  height: 72px;
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.03));
+}
+
+.mk-garage-item-label {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.mk-garage-confirm-btn {
+  width: 100%;
+}
+
+.mk-garage-footer {
+  margin-top: clamp(8px, 1.2vh, 16px);
+  position: static;
+  padding-top: clamp(10px, 1.6vh, 18px);
+  background: transparent;
+}
+
+.mk-garage-preview-wrap {
+  width: 100%;
+  height: min(78vh, 720px);
+  border-radius: 14px;
+  overflow: hidden;
+  border: none;
+  background: radial-gradient(circle at 20% 20%, rgba(120, 174, 255, 0.35), rgba(8, 23, 73, 0.8));
+  box-shadow: none;
+}
+
+.mk-garage-preview-wrap canvas {
+  display: block;
+}
+
+.mk-garage-preview-fallback {
+  width: 100%;
+  height: min(78vh, 720px);
+  border-radius: 14px;
+  border: none;
+  background: rgba(7, 28, 96, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mk-text-soft);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 1080px) {
+  .mk-menu-overlay {
+    --mk-panel-shift-submenu: clamp(24px, 4vw, 44px);
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mk-menu-panel {
+    width: 100%;
+    order: 2;
+  }
+
+  .mk-hero-panel {
+    min-height: 28vh;
+    order: 1;
+  }
+
+  .mk-menu-overlay--garage .mk-menu-panel {
+    width: 100%;
+    order: 1;
+    padding-bottom: clamp(86px, 12vh, 116px);
+  }
+
+  .mk-menu-overlay--garage .mk-hero-panel {
+    order: 2;
+    min-height: 38vh;
+    padding: 0;
+  }
+
+  .mk-garage-sections {
+    grid-template-rows: repeat(3, minmax(0, auto));
+  }
+
+  .mk-garage-section {
+    --mk-garage-scroll-size: clamp(42px, 8vw, 58px);
+    --mk-garage-side-preview-size: clamp(38px, 7vw, 56px);
+    min-height: clamp(112px, 18vh, 166px);
+  }
+
+  .mk-garage-section--vehicle {
+    --mk-garage-side-preview-size: clamp(48px, 8vw, 68px);
+    min-height: clamp(140px, 23vh, 206px);
+  }
+
+  .mk-garage-preview-wrap,
+  .mk-garage-preview-fallback {
+    height: min(52vh, 440px);
+    border-radius: 16px;
+  }
+
+  .mk-gp-cups-grid {
+    --mk-gp-cup-size: clamp(78px, 18vw, 118px);
+    gap: clamp(8px, 2vw, 12px);
+  }
+
+  .mk-gp-courses-row {
+    min-width: 760px;
+  }
+
+  .mk-gp-course-image {
+    height: 100%;
+  }
+
+  .mk-gp-course-label {
+    font-size: clamp(24px, 5.4vw, 38px);
+  }
+
+  .mk-circuit-grid,
+  .mk-character-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mk-main-btn-label {
+    font-size: clamp(20px, 6vw, 34px);
+  }
+
+  .mk-back-btn {
+    left: 16px;
+    bottom: 14px;
+    min-width: 124px;
+    font-size: 12px;
+  }
+}
+
+@media (max-height: 940px) {
+  .mk-menu-overlay--garage .mk-menu-panel {
+    padding-bottom: clamp(94px, 13vh, 130px);
+  }
+
+  .mk-garage-selector {
+    height: min(100%, calc(100vh - 120px));
+    gap: 12px;
+  }
+
+  .mk-garage-sections {
+    gap: 9px;
+  }
+
+  .mk-garage-section {
+    --mk-garage-scroll-size: clamp(40px, 4.8vw, 56px);
+    --mk-garage-side-preview-size: clamp(34px, 4.2vw, 52px);
+    min-height: clamp(100px, 15.2vh, 146px);
+    padding: 8px;
+  }
+
+  .mk-garage-section--vehicle {
+    --mk-garage-side-preview-size: clamp(42px, 4.8vw, 62px);
+    min-height: clamp(126px, 20vh, 188px);
+  }
+
+  .mk-garage-item-card {
+    min-height: clamp(64px, 10.2vh, 84px);
+    padding: 8px;
+  }
+
+  .mk-garage-section--vehicle .mk-garage-item-card {
+    min-height: clamp(86px, 13.4vh, 116px);
+  }
+
+  .mk-garage-item-image {
+    max-height: 70px;
+  }
+
+  .mk-garage-section--vehicle .mk-garage-item-image {
+    max-height: 96px;
+  }
+
+  .mk-gp-cups-grid {
+    --mk-gp-cup-size: clamp(70px, 9.2vh, 104px);
+  }
+
+  .mk-gp-courses-row {
+    min-width: 700px;
+    gap: 10px;
+  }
+
+  .mk-gp-course-card {
+    min-height: clamp(136px, 17.5vh, 178px);
+  }
+
+  .mk-gp-selected-name {
+    font-size: clamp(17px, 2.8vh, 24px);
+    padding: 8px 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-menu-panel,
+  .mk-hero-panel {
+    transition: none;
+  }
+
+  .mk-menu-particle-field {
+    animation: none;
+  }
+
+  .mk-main-btn,
+  .mk-character-slot,
+  .mk-circuit-btn,
+  .mk-gp-cup-btn,
+  .mk-gp-course-card,
+  .mk-gp-courses-row,
+  .mk-gp-selected-name,
+  .mk-confirm-btn,
+  .mk-garage-section,
+  .mk-garage-confirm-btn,
+  .mk-garage-item-content,
+  .mk-garage-item-track {
+    animation: none !important;
+  }
+}
