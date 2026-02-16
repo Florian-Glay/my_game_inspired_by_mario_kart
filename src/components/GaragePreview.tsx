@@ -61,9 +61,8 @@ function GaragePreviewCanvas({ loadout }: { loadout: PlayerLoadoutSelection }) {
       shadows
       dpr={[1, 1.5]}
       camera={{ position: [4.2, 2.1, 5.2], fov: 36 }}
-      gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+      gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
     >
-      <color attach="background" args={['#081b4f']} />
       <fog attach="fog" args={['#081b4f', 8, 22]} />
       <ambientLight intensity={0.6} />
       <directionalLight position={[5, 8, 4]} intensity={1.2} castShadow />
@@ -72,10 +71,6 @@ function GaragePreviewCanvas({ loadout }: { loadout: PlayerLoadoutSelection }) {
       <Suspense fallback={null}>
         <group position={[0, -0.5, 0]}>
           <GaragePreviewModel loadout={loadout} />
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.9, 0]} receiveShadow>
-            <circleGeometry args={[6.5, 48]} />
-            <meshStandardMaterial color="#1f3a7e" roughness={0.85} metalness={0.05} />
-          </mesh>
         </group>
       </Suspense>
 
@@ -118,4 +113,3 @@ const PREVIEW_MODEL_URLS = Array.from(
 for (const url of PREVIEW_MODEL_URLS) {
   useGLTF.preload(url);
 }
-

@@ -249,6 +249,24 @@ const SUBWAY_SPAWN_ROTATIONS: Record<'solo' | PlayerId, Vec3> = {
   p2: [0, 0, 0],
 };
 
+const toadHarborTransform = {
+  position: [0, 0, 0] as Vec3,
+  rotation: [0, 0, 0] as Vec3,
+  scale: [0.1, 0.1, 0.1] as Vec3,
+};
+
+const TOAD_HARBOR_SPAWNS: Record<'solo' | PlayerId, Vec3> = {
+  solo: [-75, 100, 100],
+  p1:  [-75, 73, 100],
+  p2: [2, 6, 0],
+};
+
+const TOAD_HARBOR_SPAWN_ROTATIONS: Record<'solo' | PlayerId, Vec3> = {
+  solo: [0, 1.564, 0],
+  p1: [0, 1.564, 0],
+  p2: [0, 0, 0],
+};
+
 export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
   ds_mario_circuit: {
     id: 'ds_mario_circuit',
@@ -381,23 +399,64 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       loopSlopeSlideAngleDeg: 172,
     },
   },
+  toad_harbor: {
+    id: 'toad_harbor',
+    label: 'DS Toad Harbor',
+    transform: toadHarborTransform,
+    spawns: TOAD_HARBOR_SPAWNS,
+    spawnRotations: TOAD_HARBOR_SPAWN_ROTATIONS,
+    road: {
+      model: '/models/toad_harbor_road.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+    },
+    ext: {
+      model: '/models/toad_harbor_ext.glb',
+      drag: 2,
+      friction: 0,
+      restitution: 0,
+    },
+    booster: {
+      model: '/models/toad_harbor_boost.glb',
+      duration: 1,
+      strength: 1.5,
+      transform: toadHarborTransform,
+    },
+    performance: {
+      maxVisibleDistance: 100,
+      cullConeDot: CULL_CONE_DOT_120,
+      cullNearDistance: 35,
+    },
+    vehicleAttachment: {
+      enabled: false,
+      maxAttachAngleDeg: 88,
+      probeDistance: 8,
+      stickForce: 34,
+      maxSlopeClimbAngleDeg: 60,
+      detachGraceMs: 120,
+      allowedSurfaces: 'road-ext',
+      loopSlopeClimbAngleDeg: 165,
+      loopSlopeSlideAngleDeg: 172,
+    },
+  },
 };
 
 export const GRAND_PRIXS: Record<GrandPrixId, GrandPrixConfig> = {
   mushroom_cup: createGrandPrix('mushroom_cup', 'Coupe Champignon', 'Coupe Champignon', [
     { origin: 'SNES', label: 'Circuit Mario 1', previewIndex: 1, circuitId: 'ds_mario_circuit' },
-    { origin: 'GBA', label: 'Plage Maskass', previewIndex: 2, circuitId: 'stadium' },
+    { origin: 'GBA', label: 'Stadium', previewIndex: 2, circuitId: 'stadium' },
     { origin: 'N64', label: 'Vallee Yoshi', previewIndex: 3, circuitId: 'super_bell_subway' },
     { origin: '3DS', label: 'Route Toad', previewIndex: 4, circuitId: 'ds_mario_circuit' },
   ]),
   flower_cup: createGrandPrix('flower_cup', 'Coupe Fleur', 'Coupe Fleur', [
-    { origin: 'Wii', label: 'Prairies Meuh Meuh', previewIndex: 5, circuitId: 'stadium' },
+    { origin: 'Wii', label: 'Stadium', previewIndex: 5, circuitId: 'stadium' },
     { origin: 'DS', label: 'Cascades Cheep Cheep', previewIndex: 6, circuitId: 'super_bell_subway' },
     { origin: 'GCN', label: 'Portail Peach', previewIndex: 7, circuitId: 'ds_mario_circuit' },
     { origin: 'N64', label: 'Desert Kalimari', previewIndex: 8, circuitId: 'stadium' },
   ]),
   star_cup: createGrandPrix('star_cup', 'Coupe Etoile', 'Coupe Etoile', [
-    { origin: 'Wii', label: 'Mont Wario', previewIndex: 9, circuitId: 'super_bell_subway' },
+    { origin: 'Wii', label: 'Super Bell Subway', previewIndex: 9, circuitId: 'super_bell_subway' },
     { origin: 'N64', label: 'Route Arc-en-ciel', previewIndex: 10, circuitId: 'ds_mario_circuit' },
     { origin: 'GBA', label: 'Chateau Bowser', previewIndex: 11, circuitId: 'stadium' },
     { origin: '3DS', label: 'Music Park', previewIndex: 12, circuitId: 'super_bell_subway' },
@@ -409,7 +468,7 @@ export const GRAND_PRIXS: Record<GrandPrixId, GrandPrixConfig> = {
     { origin: 'DS', label: 'Horloge Tic-Tac', previewIndex: 4, circuitId: 'stadium' },
   ]),
   shell_cup: createGrandPrix('shell_cup', 'Coupe Carapace', 'Coupe Carapace', [
-    { origin: 'SNES', label: 'Donut Plains 1', previewIndex: 5, circuitId: 'ds_mario_circuit' },
+    { origin: 'SNES', label: 'Toad Harbor', previewIndex: 5, circuitId: 'toad_harbor' },
     { origin: 'GBA', label: 'Rivage Koopa', previewIndex: 6, circuitId: 'stadium' },
     { origin: 'N64', label: 'Circuit Luigi', previewIndex: 7, circuitId: 'super_bell_subway' },
     { origin: '3DS', label: 'Vague Wuhu', previewIndex: 8, circuitId: 'ds_mario_circuit' },

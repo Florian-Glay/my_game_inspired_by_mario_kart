@@ -4,7 +4,7 @@ export type RaceMode = 'solo' | 'multi';
 
 export type CcLevel = '50cc' | '100cc' | '150cc' | '200cc';
 
-export type CircuitId = 'ds_mario_circuit' | 'stadium' | 'super_bell_subway';
+export type CircuitId = 'ds_mario_circuit' | 'stadium' | 'super_bell_subway' | 'toad_harbor';
 
 export type GrandPrixId =
   | 'mushroom_cup'
