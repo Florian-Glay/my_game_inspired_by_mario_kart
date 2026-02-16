@@ -385,7 +385,7 @@ export function GameMenu({
                 onClick={() => runForwardTransition(() => onSelectMode('solo'))}
               >
                 <span className="mk-main-btn-icon">
-                  <img src="ui/solo.svg" alt="solo" />
+                  <img src="ui/solo.png" alt="solo" />
                 </span>
                 <span className="mk-main-btn-label">SOLO</span>
               </button>
@@ -395,7 +395,7 @@ export function GameMenu({
                 onClick={() => runForwardTransition(() => onSelectMode('multi'))}
               >
                 <span className="mk-main-btn-icon">
-                  <img src="ui/multi.svg" alt="multi" />
+                  <img src="ui/multi.png" alt="multi" />
                 </span>
                 <span className="mk-main-btn-label">MULTIPLAYER</span>
               </button>
@@ -405,7 +405,7 @@ export function GameMenu({
                 onClick={() => runForwardTransition(onOpenConfig)}
               >
                 <span className="mk-main-btn-icon">
-                  <img src="ui/vollant.svg" alt="volant" />
+                  <img src="ui/vollant.png" alt="volant" />
                 </span>
                 <span className="mk-main-btn-label">CONFIG MANETTE</span>
               </button>
@@ -437,7 +437,7 @@ export function GameMenu({
                   onClick={() => runForwardTransition(() => onSelectCc(ccValue))}
                 >
                   <span className="mk-main-btn-icon">
-                    <img src={`ui/${ccValue}.svg`} alt={ccValue} />
+                    <img src={`ui/${ccValue}.png`} alt={ccValue} />
                   </span>
                   <span className="mk-main-btn-label">{ccValue}</span>
                 </button>

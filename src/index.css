@@ -1202,7 +1202,7 @@
   }
 
   .mk-gp-cups-grid {
-    --mk-gp-cup-size: clamp(70px, 9.2vh, 104px);
+    --mk-gp-cup-size:  19.2vh;
   }
 
   .mk-gp-courses-row {

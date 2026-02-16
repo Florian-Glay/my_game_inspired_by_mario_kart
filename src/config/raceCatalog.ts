@@ -131,7 +131,7 @@ function createGrandPrix(
   return {
     id,
     label,
-    badgeImage: `${GRAND_PRIX_BADGE_BASE_PATH}/${id}.svg`,
+    badgeImage: `${GRAND_PRIX_BADGE_BASE_PATH}/${id}.png` ? `${GRAND_PRIX_BADGE_BASE_PATH}/${id}.png` : `${GRAND_PRIX_BADGE_BASE_PATH}/${id}.svg`,
     badgeAlt,
     courses,
   };
@@ -142,13 +142,13 @@ export const GRAND_PRIX_ORDER: GrandPrixId[] = [
   'flower_cup',
   'star_cup',
   'special_cup',
+  'egg_cup',
+  'crossing_cup',
   'shell_cup',
   'banana_cup',
   'leaf_cup',
   'lightning_cup',
-  'egg_cup',
   'triforce_cup',
-  'crossing_cup',
   'bell_cup',
 ];
 
