@@ -805,7 +805,7 @@
 .mk-hero-panel--garage {
   flex: 1;
   min-width: min(40vw, 620px);
-  padding: clamp(10px, 1.6vw, 20px);
+  padding: clamp(6px, 1.2vw, 14px);
 }
 
 .mk-garage-layout {
@@ -1047,7 +1047,7 @@
 
 .mk-garage-preview-wrap {
   width: 100%;
-  height: min(78vh, 720px);
+  height: min(84vh, 800px);
   border-radius: 14px;
   overflow: hidden;
   border: none;
@@ -1061,7 +1061,7 @@
 
 .mk-garage-preview-fallback {
   width: 100%;
-  height: min(78vh, 720px);
+  height: min(84vh, 800px);
   border-radius: 14px;
   border: none;
   background: rgba(7, 28, 96, 0.55);
@@ -1120,7 +1120,7 @@
 
   .mk-garage-preview-wrap,
   .mk-garage-preview-fallback {
-    height: min(52vh, 440px);
+    height: min(58vh, 500px);
     border-radius: 16px;
   }
 

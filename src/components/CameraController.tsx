@@ -14,6 +14,10 @@ type CameraControllerProps = {
   enableClipPlane?: boolean;
 };
 
+const BOOST_FOV_DELTA = 5;
+const BOOST_FOV_IN_SPEED = 20;
+const BOOST_FOV_OUT_SPEED = 10;
+
 export function CameraController({
   targetPoseRef,
   clipPlaneOffset = PERF_PROFILE.clipPlaneOffset,
@@ -50,8 +54,10 @@ export function CameraController({
   const tmpCarUp = useRef(new Vector3());
   const upAxis = useMemo(() => new Vector3(0, 1, 0), []);
   const clipPlaneRef = useRef(new Plane());
+  const baseFovRef = useRef(camera.fov);
 
   useEffect(() => {
+    baseFovRef.current = camera.fov;
     camera.near = PERF_PROFILE.cameraNear;
     camera.far = PERF_PROFILE.cameraFar;
     camera.updateProjectionMatrix();
@@ -225,6 +231,16 @@ export function CameraController({
       camera.rotation.order = 'YXZ';
       camera.rotation.y = angleRef.current;
       camera.rotation.x = pitchRef.current;
+    }
+
+    const boostActive = gameMode.current === 'run' && Boolean(targetPoseRef?.current?.boostActive);
+    const targetFov = baseFovRef.current + (boostActive ? BOOST_FOV_DELTA : 0);
+    const fovRate = boostActive ? BOOST_FOV_IN_SPEED : BOOST_FOV_OUT_SPEED;
+    const fovAlpha = 1 - Math.exp(-fovRate * Math.min(delta, 0.05));
+    const nextFov = camera.fov + (targetFov - camera.fov) * fovAlpha;
+    if (Math.abs(nextFov - camera.fov) > 0.0001) {
+      camera.fov = nextFov;
+      camera.updateProjectionMatrix();
     }
 
     if (enableClipPlane) {

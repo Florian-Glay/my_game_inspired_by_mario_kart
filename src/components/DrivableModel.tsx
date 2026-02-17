@@ -103,19 +103,28 @@ const MAX_CLIMB_ANGLE_DEG = 60;
 // Let the car pass small mesh bumps/steps and only block on higher obstacles.
 const AUTO_STEP_HEIGHT_RATIO = 0.5;
 const AUTO_STEP_HEIGHT_MIN = 0.08;
-const AUTO_STEP_HEIGHT_MAX = 0.5;
+// Keep enough headroom for larger colliders (normal-scale assets) to still step over small ledges.
+const AUTO_STEP_HEIGHT_MAX = 1.2;
 const AUTO_STEP_MIN_WIDTH_RATIO = 0.35;
 const AUTO_STEP_MIN_WIDTH_MIN = 0.08;
 // 0..1: 0 = no tilt (always upright), 1 = full tilt to ground normal
 const GROUND_TILT_FACTOR = 1;
+// Stabilize triangle-to-triangle ground normal noise on mesh roads.
+const GROUND_NORMAL_SMOOTHING = 22;
+const GROUND_NORMAL_DEADZONE_DOT = Math.cos((1.2 * Math.PI) / 180);
 // Rotation smoothing (higher = snappier, lower = smoother). Used as a rate in an
 // exponential smoothing function to compute an interpolation alpha per-step.
 const ROTATION_SMOOTHING = 20;
 const GRAVITY_ACCEL = 19.81;
 const GROUND_RAY_EXTRA_DISTANCE = 4.0;
-// Vertical offset applied to the visual model relative to the collider.
-// Tweak this value (meters) when the mesh appears too high/low.
-const MODEL_Y_OFFSET = -1.8;
+const GROUND_RAY_START_MARGIN = 0.3;
+// Global visual Y offset relative to the collider.
+// Keep this at 0 so collider-ground contact and visual mesh stay aligned by default.
+const MODEL_Y_OFFSET = 0;
+// Visual-only smoothing to avoid abrupt "step pop" when autostep lifts the collider.
+const VISUAL_STEP_SMOOTHING_UP = 24;
+const VISUAL_STEP_SMOOTHING_DOWN = 30;
+const VISUAL_STEP_MAX_LAG = 0.12;
 // If the hit normal diverges too much from the current attached normal, treat this as a lateral wall.
 const WALL_COLLISION_ALIGN_DOT = Math.cos((88 * Math.PI) / 180);
 // In wall-guard mode keep loop slopes below vertical so side walls remain collisions.
@@ -169,6 +178,9 @@ const DEFAULT_WHEEL_MOUNTS: [Vec3, Vec3, Vec3, Vec3] = [
   [-0.92, 0.04, -1.14],
   [0.92, 0.04, -1.14],
 ];
+
+const getWheelRotationForMount = (mount: Vec3): Vec3 =>
+  mount[0] > 0 ? [0, Math.PI, 0] : [0, 0, 0];
 
 const DEFAULT_SURFACE_ATTACHMENT: Required<SurfaceAttachmentConfig> = {
   enabled: false,
@@ -280,10 +292,12 @@ export default function DrivableModel({
   const rescueTargetPosRef = useRef(new Vector3());
   const rescueStartQuatRef = useRef(new Quaternion());
   const lakituGroupRef = useRef<Group | null>(null);
+  const visualRootRef = useRef<Group | null>(null);
   const lakituFadeRef = useRef(0);
   const lakituVisibleTargetRef = useRef(false);
   const lakituPositionTargetRef = useRef(new Vector3());
   const lakituInitializedRef = useRef(false);
+  const smoothedVisualBodyYRef = useRef<number | null>(null);
 
   const vehicleScaleVec = useMemo<Vec3>(() => {
     if (Array.isArray(vehicleScale)) return vehicleScale;
@@ -320,9 +334,12 @@ export default function DrivableModel({
   }, [vehicleCloned, vehicleScaleVec[0], vehicleScaleVec[1], vehicleScaleVec[2]]);
 
   const surfaceAttachmentSettings = useMemo(() => {
+    // Probe distance must cover:
+    // - from body center to above the top of the collider (ray start),
+    // - then from this start point down past the collider bottom and a safety margin.
     const fallbackProbeDistance = Math.max(
       DEFAULT_SURFACE_ATTACHMENT.probeDistance,
-      colliderFit.halfExtents[1] + GROUND_RAY_EXTRA_DISTANCE,
+      colliderFit.halfExtents[1] * 2 + GROUND_RAY_START_MARGIN + GROUND_RAY_EXTRA_DISTANCE,
     );
     const loopSlopeClimbAngleDeg = clamp(
       surfaceAttachment?.loopSlopeClimbAngleDeg ??
@@ -449,8 +466,10 @@ export default function DrivableModel({
   const tmpBodyQuat = useMemo(() => new Quaternion(), []);
   const tmpPoseForward = useMemo(() => new Vector3(), []);
   const tmpPoseUp = useMemo(() => new Vector3(), []);
+  const tmpDesiredUp = useMemo(() => new Vector3(), []);
   const tmpRescuePos = useMemo(() => new Vector3(), []);
   const rotRef = useRef(new Quaternion());
+  const smoothedGroundNormalRef = useRef(new Vector3(0, 1, 0));
   const desiredDeltaRef = useRef<RapierVec>({ x: 0, y: 0, z: 0 });
   const nextTranslationRef = useRef<RapierVec>({ x: 0, y: 0, z: 0 });
   const tmpTranslationRef = useRef<RapierVec>({ x: 0, y: 0, z: 0 });
@@ -464,8 +483,11 @@ export default function DrivableModel({
   }, [rapier]);
   const controllerUpVec = useMemo(() => new rapier.Vector3(0, 1, 0), [rapier]);
 
-  const rayStartOffset = Math.max(0.2, colliderFit.halfExtents[1] + 0.3);
-  const groundProbeDistance = Math.max(surfaceAttachmentSettings.probeDistance, colliderFit.halfExtents[1] + GROUND_RAY_EXTRA_DISTANCE);
+  const rayStartOffset = Math.max(0.2, colliderFit.halfExtents[1] + GROUND_RAY_START_MARGIN);
+  const groundProbeDistance = Math.max(
+    surfaceAttachmentSettings.probeDistance,
+    colliderFit.halfExtents[1] + rayStartOffset + GROUND_RAY_EXTRA_DISTANCE,
+  );
 
   const isValidHandle = (value: unknown): value is number =>
     typeof value === 'number' && Number.isFinite(value) && Number.isSafeInteger(value) && value >= 0;
@@ -1032,7 +1054,20 @@ export default function DrivableModel({
       lakitu.position.copy(lakituPositionTargetRef.current);
       lakitu.scale.set(0, 0, 0);
     }
-  }, [antiGravSwitchesEnabled, initialRotation, spawnPosition]);
+
+    smoothedGroundNormalRef.current.copy(worldUp);
+    smoothedVisualBodyYRef.current = null;
+    const visualRoot = visualRootRef.current;
+    if (visualRoot) {
+      visualRoot.position.set(visualRootPosition[0], visualRootPosition[1], visualRootPosition[2]);
+    }
+  }, [antiGravSwitchesEnabled, initialRotation, spawnPosition, visualRootPosition]);
+
+  useEffect(() => {
+    const visualRoot = visualRootRef.current;
+    if (!visualRoot) return;
+    visualRoot.position.set(visualRootPosition[0], visualRootPosition[1], visualRootPosition[2]);
+  }, [visualRootPosition]);
 
   useEffect(() => {
     const setKeyState = (key: string, pressed: boolean) => {
@@ -1608,21 +1643,34 @@ export default function DrivableModel({
 
     const minWalkableDot = Math.cos((MAX_CLIMB_ANGLE_DEG * Math.PI) / 180);
     const isAttachedAfterAlign = attachmentFeatureEnabled && attachmentStateRef.current !== 'detached';
+    const desiredUp = tmpDesiredUp;
     if (isAttachedAfterAlign) {
       tmpNormal.copy(lastValidNormalRef.current);
-    } else if (groundHit) {
-      tmpNormal.set(groundHit.normal.x, groundHit.normal.y, groundHit.normal.z).normalize();
-      if (tmpNormal.dot(worldUp) < minWalkableDot) {
-        tmpNormal.copy(worldUp);
-      } else {
-        // Blend between world-up and the ground normal so we can control how strongly
-        // the car tilts to match the slope. `GROUND_TILT_FACTOR` in [0..1].
-        tmpNormal.lerp(worldUp, 1 - GROUND_TILT_FACTOR).normalize();
-      }
-    } else if (shouldUseDetachedLoopReference) {
-      tmpNormal.copy(detachedReferenceUp);
+      smoothedGroundNormalRef.current.copy(tmpNormal);
     } else {
-      tmpNormal.copy(worldUp);
+      if (groundHit) {
+        desiredUp.set(groundHit.normal.x, groundHit.normal.y, groundHit.normal.z).normalize();
+        if (desiredUp.dot(worldUp) < minWalkableDot) {
+          desiredUp.copy(worldUp);
+        } else {
+          // Blend between world-up and the ground normal so we can control how strongly
+          // the car tilts to match the slope. `GROUND_TILT_FACTOR` in [0..1].
+          desiredUp.lerp(worldUp, 1 - GROUND_TILT_FACTOR).normalize();
+        }
+      } else if (shouldUseDetachedLoopReference) {
+        desiredUp.copy(detachedReferenceUp);
+      } else {
+        desiredUp.copy(worldUp);
+      }
+
+      const smoothedUp = smoothedGroundNormalRef.current;
+      const alignmentDot = clamp(smoothedUp.dot(desiredUp), -1, 1);
+      if (alignmentDot < GROUND_NORMAL_DEADZONE_DOT) {
+        const upAlpha = 1 - Math.exp(-GROUND_NORMAL_SMOOTHING * dtClamped);
+        smoothedUp.lerp(desiredUp, upAlpha).normalize();
+      }
+
+      tmpNormal.copy(smoothedUp);
     }
 
     // Debug: log ground object name when the car transitions to a different collider.
@@ -1676,7 +1724,33 @@ export default function DrivableModel({
     const body = bodyRef.current;
     if (!body) return;
 
+    const nowMs = performance.now();
+    const boostActiveNow = boosterSettings.enabled && nowMs < boostEndTimestampRef.current;
     const t = body.translation();
+    const visualRoot = visualRootRef.current;
+    if (visualRoot) {
+      const dt = Math.min(world.timestep, 0.05);
+      const targetBodyY = t.y;
+      const previousSmoothedY = smoothedVisualBodyYRef.current;
+      const smoothedBodyY =
+        previousSmoothedY === null ?
+          targetBodyY
+        : (() => {
+            const deltaY = targetBodyY - previousSmoothedY;
+            const smoothingRate = deltaY >= 0 ? VISUAL_STEP_SMOOTHING_UP : VISUAL_STEP_SMOOTHING_DOWN;
+            const alpha = 1 - Math.exp(-smoothingRate * dt);
+            return previousSmoothedY + deltaY * alpha;
+          })();
+
+      smoothedVisualBodyYRef.current = smoothedBodyY;
+      const visualStepLag = clamp(smoothedBodyY - targetBodyY, -VISUAL_STEP_MAX_LAG, VISUAL_STEP_MAX_LAG);
+      visualRoot.position.set(
+        visualRootPosition[0],
+        visualRootPosition[1] + visualStepLag,
+        visualRootPosition[2],
+      );
+    }
+
     const r = body.rotation();
     tmpBodyQuat.set(r.x, r.y, r.z, r.w).normalize();
     tmpPoseForward.set(0, 0, 1).applyQuaternion(tmpBodyQuat).normalize();
@@ -1687,6 +1761,7 @@ export default function DrivableModel({
       y: t.y,
       z: t.z,
       yaw: yawRef.current,
+      boostActive: boostActiveNow,
       forwardX: tmpPoseForward.x,
       forwardY: tmpPoseForward.y,
       forwardZ: tmpPoseForward.z,
@@ -1726,13 +1801,17 @@ export default function DrivableModel({
           onIntersectionEnter={handleAntiGravIntersectionEnter}
           onIntersectionExit={handleAntiGravIntersectionExit}
         />
-        <group position={visualRootPosition}>
+        <group ref={visualRootRef} position={visualRootPosition}>
           <primitive object={vehicleCloned} scale={vehicleScale} />
           <group position={characterMountWithLift}>
             <primitive object={characterCloned} scale={characterScale} />
           </group>
           {effectiveWheelMounts.map((mount, index) => (
-            <group key={`wheel-instance-${index}`} position={mount}>
+            <group
+              key={`wheel-instance-${index}`}
+              position={mount}
+              rotation={getWheelRotationForMount(mount)}
+            >
               <primitive object={wheelObjects[index]} scale={wheelScale} />
             </group>
           ))}

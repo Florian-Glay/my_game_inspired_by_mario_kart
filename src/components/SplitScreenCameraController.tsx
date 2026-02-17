@@ -18,6 +18,9 @@ const FOLLOW_RADIUS = 8;
 const FOLLOW_HEIGHT = 5;
 const LOOK_AT_HEIGHT = 1.5;
 const CAMERA_SMOOTH_SPEED = 8;
+const BOOST_FOV_DELTA = 5;
+const BOOST_FOV_IN_SPEED = 20;
+const BOOST_FOV_OUT_SPEED = 10;
 
 function followCar(
   camera: PerspectiveCamera,
@@ -70,6 +73,17 @@ function followCar(
   camera.lookAt(smoothLookAt);
 }
 
+function updateBoostFov(camera: PerspectiveCamera, baseFov: number, boostActive: boolean, delta: number) {
+  const targetFov = baseFov + (boostActive ? BOOST_FOV_DELTA : 0);
+  const fovRate = boostActive ? BOOST_FOV_IN_SPEED : BOOST_FOV_OUT_SPEED;
+  const alpha = 1 - Math.exp(-fovRate * Math.min(delta, 0.05));
+  const nextFov = camera.fov + (targetFov - camera.fov) * alpha;
+  if (Math.abs(nextFov - camera.fov) > 0.0001) {
+    camera.fov = nextFov;
+    camera.updateProjectionMatrix();
+  }
+}
+
 export function SplitScreenCameraController({
   leftPoseRef,
   rightPoseRef,
@@ -85,6 +99,8 @@ export function SplitScreenCameraController({
     () => new PerspectiveCamera(70, 1, PERF_PROFILE.cameraNear, PERF_PROFILE.cameraFar),
     [],
   );
+  const leftBaseFovRef = useRef(leftCamera.fov);
+  const rightBaseFovRef = useRef(rightCamera.fov);
 
   const leftSmoothPos = useRef(new Vector3());
   const leftSmoothLookAt = useRef(new Vector3());
@@ -152,6 +168,19 @@ export function SplitScreenCameraController({
       leftTmpForward.current,
       leftTmpUp.current,
       worldUp,
+      delta,
+    );
+
+    updateBoostFov(
+      leftCamera,
+      leftBaseFovRef.current,
+      Boolean(leftPoseRef.current?.boostActive),
+      delta,
+    );
+    updateBoostFov(
+      rightCamera,
+      rightBaseFovRef.current,
+      Boolean(rightPoseRef.current?.boostActive),
       delta,
     );
     followCar(

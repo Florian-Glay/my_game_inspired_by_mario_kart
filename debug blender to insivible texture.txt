@@ -1,0 +1,90 @@
+import bpy
+
+def make_materials_fully_opaque(mat: bpy.types.Material):
+    if not mat or not mat.use_nodes:
+        return
+
+    # 1) Force le mode d'opacité (Eevee / export)
+    # OPAQUE = plus de tri alpha foireux
+    try:
+        mat.blend_method = 'OPAQUE'
+        mat.shadow_method = 'OPAQUE'
+        mat.use_screen_refraction = False
+        mat.refraction_depth = 0.0
+    except Exception:
+        pass
+
+    nt = mat.node_tree
+    links = nt.links
+
+    # 2) Trouve les Principled BSDF et force Alpha=1
+    principled_nodes = [n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED']
+    for bsdf in principled_nodes:
+        if "Alpha" in bsdf.inputs:
+            bsdf.inputs["Alpha"].default_value = 1.0
+
+            # Si un node (Image Texture, etc.) est branché sur Alpha -> on débranche
+            alpha_in = bsdf.inputs["Alpha"]
+            if alpha_in.is_linked:
+                for l in list(alpha_in.links):
+                    links.remove(l)
+
+    # 3) Certains setups utilisent un Mix Shader avec Transparent BSDF
+    # On neutralise ça en forçant le facteur à 1 (tout sur le shader "non transparent"),
+    # ou en supprimant le Transparent si détecté.
+    for mix in [n for n in nt.nodes if n.type == 'MIX_SHADER']:
+        fac = mix.inputs.get("Fac")
+        if fac:
+            # 1.0 => sort Shader2 (souvent le non transparent, mais pas toujours)
+            # Pour éviter de casser un matériau complexe, on ne supprime pas les liens,
+            # on fixe juste le facteur pour éviter la transparence.
+            if fac.is_linked:
+                for l in list(fac.links):
+                    links.remove(l)
+            fac.default_value = 1.0
+
+    # 4) Si tu veux aussi éviter le “Backface culling” (faces invisibles d'un côté)
+    # tu peux désactiver ceci (selon ton besoin). Ici on laisse à False pour être safe.
+    try:
+        mat.use_backface_culling = False
+    except Exception:
+        pass
+
+
+def clean_mesh_object(obj: bpy.types.Object):
+    if not obj or obj.type != 'MESH':
+        return
+
+    bpy.context.view_layer.objects.active = obj
+
+    # Mode Edit pour operations mesh
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+
+    # Merge verts proches (ex "Remove Doubles")
+    bpy.ops.mesh.remove_doubles(threshold=0.0001)
+
+    # Recalcule les normales vers l'extérieur
+    bpy.ops.mesh.normals_make_consistent(inside=False)
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+
+def fix_selected_objects():
+    sel = [o for o in bpy.context.selected_objects if o.type in {'MESH'}]
+    if not sel:
+        print("Aucun objet mesh sélectionné.")
+        return
+
+    for obj in sel:
+        # Nettoyage mesh
+        clean_mesh_object(obj)
+
+        # Matériaux : opacité forcée
+        for slot in obj.material_slots:
+            make_materials_fully_opaque(slot.material)
+
+    print(f"OK: corrigé {len(sel)} objet(s) sélectionné(s).")
+
+
+fix_selected_objects()

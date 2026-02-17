@@ -46,6 +46,7 @@ export type CarPose = {
   y: number;
   z: number;
   yaw: number;
+  boostActive?: boolean;
   forwardX?: number;
   forwardY?: number;
   forwardZ?: number;

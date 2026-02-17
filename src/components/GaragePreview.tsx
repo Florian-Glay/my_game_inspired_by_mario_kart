@@ -17,6 +17,11 @@ type GaragePreviewProps = {
 };
 
 const addVec3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const getWheelRotationForMount = (mount: Vec3): Vec3 =>
+  mount[0] > 0 ? [0, Math.PI, 0] : [0, 0, 0];
+const PREVIEW_CAMERA_POSITION: Vec3 = [6.2, 1.92, 5.2];
+const PREVIEW_ORBIT_TARGET: Vec3 = [0, 0.12, 0];
+const PREVIEW_MODEL_OFFSET: Vec3 = [0, -1.2, 0];
 
 function useClonedScene(url: string) {
   const { scene } = useGLTF(url) as unknown as { scene: Group };
@@ -47,7 +52,7 @@ function GaragePreviewModel({ loadout }: { loadout: PlayerLoadoutSelection }) {
         <primitive object={characterScene} scale={character.scale} />
       </group>
       {vehicle.wheelMounts.map((mount, index) => (
-        <group key={`wheel-${index}`} position={mount}>
+        <group key={`wheel-${index}`} position={mount} rotation={getWheelRotationForMount(mount)}>
           <primitive object={wheelScenes[index]} scale={wheel.scale} />
         </group>
       ))}
@@ -60,7 +65,7 @@ function GaragePreviewCanvas({ loadout }: { loadout: PlayerLoadoutSelection }) {
     <Canvas
       shadows
       dpr={[1, 1.5]}
-      camera={{ position: [4.2, 2.1, 5.2], fov: 36 }}
+      camera={{ position: PREVIEW_CAMERA_POSITION, fov: 36 }}
       gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
     >
       <fog attach="fog" args={['#081b4f', 8, 22]} />
@@ -69,12 +74,13 @@ function GaragePreviewCanvas({ loadout }: { loadout: PlayerLoadoutSelection }) {
       <directionalLight position={[-5, 4, -6]} intensity={0.4} />
 
       <Suspense fallback={null}>
-        <group position={[0, -0.5, 0]}>
+        <group position={PREVIEW_MODEL_OFFSET}>
           <GaragePreviewModel loadout={loadout} />
         </group>
       </Suspense>
 
       <OrbitControls
+        target={PREVIEW_ORBIT_TARGET}
         enablePan={false}
         enableZoom={false}
         minPolarAngle={0.9}
