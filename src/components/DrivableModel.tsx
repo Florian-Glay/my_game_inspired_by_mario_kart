@@ -2,7 +2,16 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import type { Group } from 'three';
-import { Box3, Matrix4, Quaternion, Vector3 } from 'three';
+import {
+  AdditiveBlending,
+  Box3,
+  BufferAttribute,
+  BufferGeometry,
+  DynamicDrawUsage,
+  Matrix4,
+  Quaternion,
+  Vector3,
+} from 'three';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils';
 import {
   type CollisionEnterPayload,
@@ -29,6 +38,8 @@ type Vec3 = [number, number, number];
 type RapierVec = { x: number; y: number; z: number };
 type GroundHit = { collider: RapierCollider; normal: RapierVec };
 type AttachmentSurfaceKind = 'road' | 'ext';
+type SteeringChargeDirection = 'left' | 'right';
+type FlameTrailColor = 'blue' | 'orange';
 type GroundHitOptions = {
   filter?: (candidate: RapierCollider) => boolean;
   preferredUp?: Vector3;
@@ -209,6 +220,30 @@ const START_BOOST_MIN_STRENGTH = 1.1;
 const START_BOOST_MAX_STRENGTH = 1.9;
 const START_BOOST_MIN_DURATION_MS = 500;
 const START_BOOST_MAX_DURATION_MS = 1200;
+const STEER_CHARGE_DOUBLE_TAP_WINDOW_MS = 320;
+const STEER_CHARGE_NORMAL_THRESHOLD_MS = 1500;
+const STEER_CHARGE_BIG_THRESHOLD_MS = 3000;
+const STEER_CHARGE_TURN_RATE_BONUS = 0.5;
+const STEER_CHARGE_JUMP_SPEED = 2.8;
+const STEER_CHARGE_NORMAL_BOOST_STRENGTH = 1.35;
+const STEER_CHARGE_NORMAL_BOOST_DURATION_MS = 900;
+const STEER_CHARGE_BIG_BOOST_STRENGTH = 1.75;
+const STEER_CHARGE_BIG_BOOST_DURATION_MS = 1300;
+const FLAME_TRAIL_MAX_PARTICLES = 420;
+const FLAME_TRAIL_SPAWN_RATE_PER_EMITTER = 52;
+const FLAME_TRAIL_MIN_LIFETIME_SEC = 1.2;
+const FLAME_TRAIL_MAX_LIFETIME_SEC = 2.1;
+const FLAME_TRAIL_PARTICLE_SIZE = 0.28;
+const FLAME_TRAIL_BACKWARD_SPEED = 3.8;
+const FLAME_TRAIL_UPWARD_SPEED = 1.15;
+const FLAME_TRAIL_GRAVITY = -1.3;
+const FLAME_TRAIL_POSITION_JITTER = 0.06;
+const FLAME_TRAIL_LATERAL_SPEED_JITTER = 0.85;
+const FLAME_TRAIL_EMIT_UP_OFFSET = 0.22;
+const FLAME_TRAIL_EMIT_BACK_OFFSET = 0.3;
+const START_BOOST_ORANGE_TRAIL_MIN_DURATION_MS = 1600;
+const FLAME_TRAIL_ORANGE_RGB: Readonly<[number, number, number]> = [1, 0.48, 0.1];
+const FLAME_TRAIL_BLUE_RGB: Readonly<[number, number, number]> = [0.2, 0.62, 1];
 
 const ROAD_SURFACE_RE = /(?:^|[-_])road(?:[-_]|$)/i;
 const EXT_SURFACE_RE = /(?:^|[-_])ext(?:[-_]|$)/i;
@@ -303,6 +338,20 @@ export default function DrivableModel({
   const startBoostChargeStartMsRef = useRef<number | null>(null);
   const startBoostConsumedRef = useRef(false);
   const previousStartCountdownRef = useRef<number | null>(null);
+  const steerChargeTapRef = useRef<{
+    direction: SteeringChargeDirection | null;
+    timestampMs: number;
+  }>({
+    direction: null,
+    timestampMs: 0,
+  });
+  const steerChargeDirectionRef = useRef<SteeringChargeDirection | null>(null);
+  const steerChargeStartMsRef = useRef<number | null>(null);
+  const steerChargeJumpPendingRef = useRef(false);
+  const flameTrailCursorRef = useRef(0);
+  const flameTrailSpawnRemainderRef = useRef(0);
+  const flameTrailOrangeEndMsRef = useRef(0);
+  const flameTrailBlueEndMsRef = useRef(0);
   const lastGroundSurfaceKindRef = useRef<AttachmentSurfaceKind | null>(null);
   const lapTriggerDebounceRef = useRef(new Map<string, number>());
   const hasLastRoadToExtPositionRef = useRef(false);
@@ -468,11 +517,49 @@ export default function DrivableModel({
     () => wheelMounts ?? DEFAULT_WHEEL_MOUNTS,
     [wheelMounts],
   );
+  const rearWheelMounts = useMemo<[Vec3, Vec3]>(() => {
+    const [a, b, c, d] = effectiveWheelMounts;
+    const sortedByRear = [a, b, c, d].sort((m1, m2) => m1[2] - m2[2]);
+    return [sortedByRear[0], sortedByRear[1]];
+  }, [effectiveWheelMounts]);
 
   const wheelObjects = useMemo<[Group, Group, Group, Group]>(() => {
     const [a, b, c, d] = wheelClones;
     return [a, b, c, d];
   }, [wheelClones]);
+
+  const flameTrailPositions = useMemo(
+    () => new Float32Array(FLAME_TRAIL_MAX_PARTICLES * 3),
+    [],
+  );
+  const flameTrailColors = useMemo(
+    () => new Float32Array(FLAME_TRAIL_MAX_PARTICLES * 3),
+    [],
+  );
+  const flameTrailVelocityRef = useRef(new Float32Array(FLAME_TRAIL_MAX_PARTICLES * 3));
+  const flameTrailAgeRef = useRef(new Float32Array(FLAME_TRAIL_MAX_PARTICLES));
+  const flameTrailLifeRef = useRef(new Float32Array(FLAME_TRAIL_MAX_PARTICLES));
+  const flameTrailTypeRef = useRef(new Uint8Array(FLAME_TRAIL_MAX_PARTICLES));
+  const flameTrailActiveRef = useRef(new Uint8Array(FLAME_TRAIL_MAX_PARTICLES));
+  const flameTrailGeometry = useMemo(() => {
+    const geometry = new BufferGeometry();
+    const positionAttr = new BufferAttribute(flameTrailPositions, 3);
+    const colorAttr = new BufferAttribute(flameTrailColors, 3);
+    positionAttr.setUsage(DynamicDrawUsage);
+    colorAttr.setUsage(DynamicDrawUsage);
+    geometry.setAttribute('position', positionAttr);
+    geometry.setAttribute('color', colorAttr);
+    geometry.setDrawRange(0, FLAME_TRAIL_MAX_PARTICLES);
+    return geometry;
+  }, [flameTrailColors, flameTrailPositions]);
+  const flameTrailPositionAttr = useMemo(
+    () => flameTrailGeometry.getAttribute('position') as BufferAttribute,
+    [flameTrailGeometry],
+  );
+  const flameTrailColorAttr = useMemo(
+    () => flameTrailGeometry.getAttribute('color') as BufferAttribute,
+    [flameTrailGeometry],
+  );
 
   // temp objects to avoid allocations in the render loop
   const worldUp = useMemo(() => new Vector3(0, 1, 0), []);
@@ -492,6 +579,11 @@ export default function DrivableModel({
   const tmpPoseUp = useMemo(() => new Vector3(), []);
   const tmpDesiredUp = useMemo(() => new Vector3(), []);
   const tmpRescuePos = useMemo(() => new Vector3(), []);
+  const tmpFlamePos = useMemo(() => new Vector3(), []);
+  const tmpFlameQuat = useMemo(() => new Quaternion(), []);
+  const tmpFlameForward = useMemo(() => new Vector3(), []);
+  const tmpFlameRight = useMemo(() => new Vector3(), []);
+  const tmpFlameUp = useMemo(() => new Vector3(), []);
   const rotRef = useRef(new Quaternion());
   const smoothedGroundNormalRef = useRef(new Vector3(0, 1, 0));
   const desiredDeltaRef = useRef<RapierVec>({ x: 0, y: 0, z: 0 });
@@ -695,7 +787,107 @@ export default function DrivableModel({
     return candidateNames.find((name) => name.length > 0) ?? '';
   };
 
-  const activateBoost = (strength: number, durationMs: number) => {
+  const setFlameParticleInactive = (particleIndex: number) => {
+    const i3 = particleIndex * 3;
+    flameTrailActiveRef.current[particleIndex] = 0;
+    flameTrailAgeRef.current[particleIndex] = 0;
+    flameTrailLifeRef.current[particleIndex] = 0;
+    flameTrailPositions[i3] = 0;
+    flameTrailPositions[i3 + 1] = 0;
+    flameTrailPositions[i3 + 2] = 0;
+    flameTrailColors[i3] = 0;
+    flameTrailColors[i3 + 1] = 0;
+    flameTrailColors[i3 + 2] = 0;
+  };
+
+  const clearFlameTrail = () => {
+    flameTrailCursorRef.current = 0;
+    flameTrailSpawnRemainderRef.current = 0;
+    flameTrailOrangeEndMsRef.current = 0;
+    flameTrailBlueEndMsRef.current = 0;
+    flameTrailActiveRef.current.fill(0);
+    flameTrailTypeRef.current.fill(0);
+    flameTrailAgeRef.current.fill(0);
+    flameTrailLifeRef.current.fill(0);
+    flameTrailVelocityRef.current.fill(0);
+    flameTrailPositions.fill(0);
+    flameTrailColors.fill(0);
+    flameTrailPositionAttr.needsUpdate = true;
+    flameTrailColorAttr.needsUpdate = true;
+  };
+
+  const scheduleFlameTrail = (color: FlameTrailColor, durationMs: number) => {
+    const nowMs = performance.now();
+    const endMs = nowMs + Math.max(120, durationMs);
+    if (color === 'orange') {
+      flameTrailOrangeEndMsRef.current = Math.max(flameTrailOrangeEndMsRef.current, endMs);
+      return;
+    }
+
+    flameTrailBlueEndMsRef.current = Math.max(flameTrailBlueEndMsRef.current, endMs);
+  };
+
+  const emitFlameParticle = ({
+    originX,
+    originY,
+    originZ,
+    forwardX,
+    forwardY,
+    forwardZ,
+    rightX,
+    rightY,
+    rightZ,
+    color,
+  }: {
+    originX: number;
+    originY: number;
+    originZ: number;
+    forwardX: number;
+    forwardY: number;
+    forwardZ: number;
+    rightX: number;
+    rightY: number;
+    rightZ: number;
+    color: FlameTrailColor;
+  }) => {
+    const particleIndex = flameTrailCursorRef.current;
+    flameTrailCursorRef.current = (particleIndex + 1) % FLAME_TRAIL_MAX_PARTICLES;
+
+    const i3 = particleIndex * 3;
+    const lateralOffset = (Math.random() - 0.5) * FLAME_TRAIL_POSITION_JITTER;
+    const upwardOffset = Math.random() * FLAME_TRAIL_POSITION_JITTER * 0.7;
+    flameTrailPositions[i3] = originX + rightX * lateralOffset;
+    flameTrailPositions[i3 + 1] = originY + upwardOffset;
+    flameTrailPositions[i3 + 2] = originZ + rightZ * lateralOffset;
+
+    const backwardSpeed = FLAME_TRAIL_BACKWARD_SPEED * (0.82 + Math.random() * 0.5);
+    const lateralSpeed = (Math.random() - 0.5) * FLAME_TRAIL_LATERAL_SPEED_JITTER;
+    flameTrailVelocityRef.current[i3] = -forwardX * backwardSpeed + rightX * lateralSpeed;
+    flameTrailVelocityRef.current[i3 + 1] =
+      -forwardY * backwardSpeed +
+      FLAME_TRAIL_UPWARD_SPEED * (0.65 + Math.random() * 0.75) +
+      rightY * lateralSpeed;
+    flameTrailVelocityRef.current[i3 + 2] = -forwardZ * backwardSpeed + rightZ * lateralSpeed;
+
+    flameTrailAgeRef.current[particleIndex] = 0;
+    flameTrailLifeRef.current[particleIndex] =
+      FLAME_TRAIL_MIN_LIFETIME_SEC +
+      Math.random() * (FLAME_TRAIL_MAX_LIFETIME_SEC - FLAME_TRAIL_MIN_LIFETIME_SEC);
+    flameTrailTypeRef.current[particleIndex] = color === 'orange' ? 1 : 0;
+    flameTrailActiveRef.current[particleIndex] = 1;
+
+    const [baseR, baseG, baseB] =
+      color === 'orange' ? FLAME_TRAIL_ORANGE_RGB : FLAME_TRAIL_BLUE_RGB;
+    flameTrailColors[i3] = baseR;
+    flameTrailColors[i3 + 1] = baseG;
+    flameTrailColors[i3 + 2] = baseB;
+  };
+
+  const activateBoost = (
+    strength: number,
+    durationMs: number,
+    source: 'generic' | 'start' | 'steer-normal' | 'steer-big' = 'generic',
+  ) => {
     const nowMs = performance.now();
     const resolvedStrength = Math.max(1, strength);
     const resolvedDurationMs = Math.max(120, durationMs);
@@ -705,6 +897,86 @@ export default function DrivableModel({
 
     const minBoostedSpeed = Math.max(0.1, maxForward) * resolvedStrength;
     speedRef.current = Math.max(minBoostedSpeed, Math.abs(speedRef.current) * resolvedStrength);
+
+    if (source === 'start') {
+      scheduleFlameTrail('orange', Math.max(resolvedDurationMs, START_BOOST_ORANGE_TRAIL_MIN_DURATION_MS));
+      return;
+    }
+
+    if (source === 'steer-normal') {
+      scheduleFlameTrail('blue', resolvedDurationMs);
+    }
+  };
+
+  const resolveSteeringDirectionFromKey = (key: string): SteeringChargeDirection | null => {
+    if (bindingSets.left.has(key)) return 'left';
+    if (bindingSets.right.has(key)) return 'right';
+    return null;
+  };
+
+  const resetSteerCharge = () => {
+    steerChargeDirectionRef.current = null;
+    steerChargeStartMsRef.current = null;
+    steerChargeJumpPendingRef.current = false;
+  };
+
+  const tryStartSteerCharge = (direction: SteeringChargeDirection, nowMs: number) => {
+    const activeDirection = steerChargeDirectionRef.current;
+    if (activeDirection !== null) return;
+
+    const lastTap = steerChargeTapRef.current;
+    const isDoubleTap =
+      lastTap.direction === direction &&
+      nowMs - lastTap.timestampMs <= STEER_CHARGE_DOUBLE_TAP_WINDOW_MS;
+
+    lastTap.direction = direction;
+    lastTap.timestampMs = nowMs;
+
+    if (!isDoubleTap) return;
+
+    steerChargeDirectionRef.current = direction;
+    steerChargeStartMsRef.current = nowMs;
+    steerChargeJumpPendingRef.current = true;
+  };
+
+  const releaseSteerCharge = ({
+    releasedDirection,
+    nowMs,
+    triggerBoost,
+  }: {
+    releasedDirection?: SteeringChargeDirection | null;
+    nowMs: number;
+    triggerBoost: boolean;
+  }) => {
+    const activeDirection = steerChargeDirectionRef.current;
+    const startMs = steerChargeStartMsRef.current;
+    if (activeDirection === null || startMs === null) return;
+    if (releasedDirection && releasedDirection !== activeDirection) return;
+
+    const chargeDurationMs = Math.max(0, nowMs - startMs);
+    resetSteerCharge();
+
+    steerChargeTapRef.current.direction = null;
+    steerChargeTapRef.current.timestampMs = 0;
+
+    if (!triggerBoost) return;
+
+    if (chargeDurationMs >= STEER_CHARGE_BIG_THRESHOLD_MS) {
+      activateBoost(
+        STEER_CHARGE_BIG_BOOST_STRENGTH,
+        STEER_CHARGE_BIG_BOOST_DURATION_MS,
+        'steer-big',
+      );
+      return;
+    }
+
+    if (chargeDurationMs >= STEER_CHARGE_NORMAL_THRESHOLD_MS) {
+      activateBoost(
+        STEER_CHARGE_NORMAL_BOOST_STRENGTH,
+        STEER_CHARGE_NORMAL_BOOST_DURATION_MS,
+        'steer-normal',
+      );
+    }
   };
 
   const activateBooster = () => {
@@ -1064,28 +1336,160 @@ export default function DrivableModel({
   }, [lakituCloned]);
 
   useFrame((_, delta) => {
-    const group = lakituGroupRef.current;
-    if (!group) return;
-
     const dt = Math.min(delta, 0.1);
-    const shouldBeVisible = lakituVisibleTargetRef.current;
-    const duration = shouldBeVisible ? LAKITU_FADE_IN_SECONDS : LAKITU_FADE_OUT_SECONDS;
-    const signedStep = duration > 0 ? dt / duration : 1;
-    lakituFadeRef.current = clamp(lakituFadeRef.current + (shouldBeVisible ? signedStep : -signedStep), 0, 1);
+    const group = lakituGroupRef.current;
+    if (group) {
+      const shouldBeVisible = lakituVisibleTargetRef.current;
+      const duration = shouldBeVisible ? LAKITU_FADE_IN_SECONDS : LAKITU_FADE_OUT_SECONDS;
+      const signedStep = duration > 0 ? dt / duration : 1;
+      lakituFadeRef.current = clamp(
+        lakituFadeRef.current + (shouldBeVisible ? signedStep : -signedStep),
+        0,
+        1,
+      );
 
-    if (!lakituInitializedRef.current) {
-      group.position.copy(lakituPositionTargetRef.current);
-      lakituInitializedRef.current = true;
-    } else {
-      const alpha = 1 - Math.exp(-LAKITU_POSITION_SMOOTHING * dt);
-      group.position.lerp(lakituPositionTargetRef.current, alpha);
+      if (!lakituInitializedRef.current) {
+        group.position.copy(lakituPositionTargetRef.current);
+        lakituInitializedRef.current = true;
+      } else {
+        const alpha = 1 - Math.exp(-LAKITU_POSITION_SMOOTHING * dt);
+        group.position.lerp(lakituPositionTargetRef.current, alpha);
+      }
+
+      const easedFade = smoothstep01(lakituFadeRef.current);
+      group.visible = easedFade > 0.001;
+      group.rotation.y = Math.PI;
+      const scaled = LAKITU_BASE_SCALE * easedFade;
+      group.scale.set(scaled, scaled, scaled);
     }
 
-    const easedFade = smoothstep01(lakituFadeRef.current);
-    group.visible = easedFade > 0.001;
-    group.rotation.y = Math.PI;
-    const scaled = LAKITU_BASE_SCALE * easedFade;
-    group.scale.set(scaled, scaled, scaled);
+    const nowMs = performance.now();
+    const orangeTrailActive = nowMs < flameTrailOrangeEndMsRef.current;
+    const steerChargeVisualActive =
+      steerChargeDirectionRef.current !== null &&
+      steerChargeStartMsRef.current !== null;
+    const steerChargeElapsedMs =
+      steerChargeStartMsRef.current === null ? 0 : Math.max(0, nowMs - steerChargeStartMsRef.current);
+    const steerChargeNormalReady =
+      steerChargeVisualActive &&
+      steerChargeElapsedMs >= STEER_CHARGE_NORMAL_THRESHOLD_MS &&
+      steerChargeElapsedMs < STEER_CHARGE_BIG_THRESHOLD_MS;
+    const steerChargeBigReady =
+      steerChargeVisualActive &&
+      steerChargeElapsedMs >= STEER_CHARGE_BIG_THRESHOLD_MS;
+    const blueTrailActive = steerChargeNormalReady || nowMs < flameTrailBlueEndMsRef.current;
+    const activeTrailColor: FlameTrailColor | null =
+      orangeTrailActive || steerChargeBigReady ? 'orange'
+      : blueTrailActive ? 'blue'
+      : null;
+
+    const body = bodyRef.current;
+    if (activeTrailColor && body) {
+      flameTrailSpawnRemainderRef.current += dt * FLAME_TRAIL_SPAWN_RATE_PER_EMITTER;
+      const spawnCountPerEmitter = Math.floor(flameTrailSpawnRemainderRef.current);
+      flameTrailSpawnRemainderRef.current -= spawnCountPerEmitter;
+
+      if (spawnCountPerEmitter > 0) {
+        const t = body.translation();
+        const r = body.rotation();
+        tmpFlameQuat.set(r.x, r.y, r.z, r.w).normalize();
+        tmpFlameForward.set(0, 0, 1).applyQuaternion(tmpFlameQuat).normalize();
+        tmpFlameRight.set(1, 0, 0).applyQuaternion(tmpFlameQuat).normalize();
+        tmpFlameUp.set(0, 1, 0).applyQuaternion(tmpFlameQuat).normalize();
+
+        const rearLeftMount = rearWheelMounts[0];
+        const rearRightMount = rearWheelMounts[1];
+
+        tmpFlamePos
+          .set(
+            visualRootPosition[0] + rearLeftMount[0],
+            visualRootPosition[1] + rearLeftMount[1],
+            visualRootPosition[2] + rearLeftMount[2],
+          )
+          .addScaledVector(tmpFlameUp, FLAME_TRAIL_EMIT_UP_OFFSET)
+          .addScaledVector(tmpFlameForward, -FLAME_TRAIL_EMIT_BACK_OFFSET)
+          .applyQuaternion(tmpFlameQuat);
+        const leftX = t.x + tmpFlamePos.x;
+        const leftY = t.y + tmpFlamePos.y;
+        const leftZ = t.z + tmpFlamePos.z;
+
+        tmpFlamePos
+          .set(
+            visualRootPosition[0] + rearRightMount[0],
+            visualRootPosition[1] + rearRightMount[1],
+            visualRootPosition[2] + rearRightMount[2],
+          )
+          .addScaledVector(tmpFlameUp, FLAME_TRAIL_EMIT_UP_OFFSET)
+          .addScaledVector(tmpFlameForward, -FLAME_TRAIL_EMIT_BACK_OFFSET)
+          .applyQuaternion(tmpFlameQuat);
+        const rightX = t.x + tmpFlamePos.x;
+        const rightY = t.y + tmpFlamePos.y;
+        const rightZ = t.z + tmpFlamePos.z;
+
+        for (let i = 0; i < spawnCountPerEmitter; i += 1) {
+          emitFlameParticle({
+            originX: leftX,
+            originY: leftY,
+            originZ: leftZ,
+            forwardX: tmpFlameForward.x,
+            forwardY: tmpFlameForward.y,
+            forwardZ: tmpFlameForward.z,
+            rightX: tmpFlameRight.x,
+            rightY: tmpFlameRight.y,
+            rightZ: tmpFlameRight.z,
+            color: activeTrailColor,
+          });
+          emitFlameParticle({
+            originX: rightX,
+            originY: rightY,
+            originZ: rightZ,
+            forwardX: tmpFlameForward.x,
+            forwardY: tmpFlameForward.y,
+            forwardZ: tmpFlameForward.z,
+            rightX: tmpFlameRight.x,
+            rightY: tmpFlameRight.y,
+            rightZ: tmpFlameRight.z,
+            color: activeTrailColor,
+          });
+        }
+      }
+    } else if (activeTrailColor === null) {
+      flameTrailSpawnRemainderRef.current = 0;
+    }
+
+    let hasParticleUpdates = false;
+    for (let i = 0; i < FLAME_TRAIL_MAX_PARTICLES; i += 1) {
+      if (flameTrailActiveRef.current[i] === 0) continue;
+      const i3 = i * 3;
+
+      const age = flameTrailAgeRef.current[i] + dt;
+      const life = flameTrailLifeRef.current[i];
+      flameTrailAgeRef.current[i] = age;
+
+      if (age >= life) {
+        setFlameParticleInactive(i);
+        hasParticleUpdates = true;
+        continue;
+      }
+
+      flameTrailVelocityRef.current[i3 + 1] += FLAME_TRAIL_GRAVITY * dt;
+      flameTrailPositions[i3] += flameTrailVelocityRef.current[i3] * dt;
+      flameTrailPositions[i3 + 1] += flameTrailVelocityRef.current[i3 + 1] * dt;
+      flameTrailPositions[i3 + 2] += flameTrailVelocityRef.current[i3 + 2] * dt;
+
+      const lifeAlpha = clamp(1 - age / life, 0, 1);
+      const [baseR, baseG, baseB] =
+        flameTrailTypeRef.current[i] === 1 ? FLAME_TRAIL_ORANGE_RGB : FLAME_TRAIL_BLUE_RGB;
+      flameTrailColors[i3] = baseR * lifeAlpha;
+      flameTrailColors[i3 + 1] = baseG * lifeAlpha;
+      flameTrailColors[i3 + 2] = baseB * lifeAlpha;
+      hasParticleUpdates = true;
+    }
+
+    if (hasParticleUpdates) {
+      flameTrailPositionAttr.needsUpdate = true;
+      flameTrailColorAttr.needsUpdate = true;
+    }
   });
 
   useEffect(() => {
@@ -1099,6 +1503,10 @@ export default function DrivableModel({
     startBoostChargeStartMsRef.current = null;
     startBoostConsumedRef.current = false;
     previousStartCountdownRef.current = null;
+    steerChargeTapRef.current.direction = null;
+    steerChargeTapRef.current.timestampMs = 0;
+    resetSteerCharge();
+    clearFlameTrail();
     lapTriggerDebounceRef.current.clear();
     speedRef.current = 0;
     verticalVelRef.current = 0;
@@ -1145,6 +1553,13 @@ export default function DrivableModel({
     visualRoot.position.set(visualRootPosition[0], visualRootPosition[1], visualRootPosition[2]);
   }, [visualRootPosition]);
 
+  useEffect(
+    () => () => {
+      flameTrailGeometry.dispose();
+    },
+    [flameTrailGeometry],
+  );
+
   useEffect(() => {
     const setKeyState = (key: string, pressed: boolean) => {
       if (bindingSets.forward.has(key)) keysRef.current.forward = pressed;
@@ -1158,6 +1573,10 @@ export default function DrivableModel({
       keysRef.current.back = false;
       keysRef.current.left = false;
       keysRef.current.right = false;
+      releaseSteerCharge({
+        nowMs: performance.now(),
+        triggerBoost: false,
+      });
     };
 
     const canChargeStartBoost = () =>
@@ -1182,7 +1601,26 @@ export default function DrivableModel({
         return;
       }
 
+      const steeringDirection = resolveSteeringDirectionFromKey(normalizedKey);
+      const activeSteerChargeDirection = steerChargeDirectionRef.current;
+      if (
+        steeringDirection !== null &&
+        activeSteerChargeDirection !== null &&
+        steeringDirection !== activeSteerChargeDirection
+      ) {
+        return;
+      }
+
+      const wasDirectionPressed =
+        steeringDirection === 'left' ? keysRef.current.left
+        : steeringDirection === 'right' ? keysRef.current.right
+        : false;
+
       setKeyState(normalizedKey, true);
+
+      if (steeringDirection && !wasDirectionPressed && !e.repeat) {
+        tryStartSteerCharge(steeringDirection, performance.now());
+      }
     };
 
     const up = (e: KeyboardEvent) => {
@@ -1201,7 +1639,20 @@ export default function DrivableModel({
         return;
       }
 
+      const steeringDirection = resolveSteeringDirectionFromKey(normalizedKey);
       setKeyState(normalizedKey, false);
+
+      if (steeringDirection) {
+        const isDirectionStillPressed =
+          steeringDirection === 'left' ? keysRef.current.left : keysRef.current.right;
+        if (!isDirectionStillPressed) {
+          releaseSteerCharge({
+            releasedDirection: steeringDirection,
+            nowMs: performance.now(),
+            triggerBoost: true,
+          });
+        }
+      }
     };
 
     window.addEventListener('keydown', down);
@@ -1265,6 +1716,10 @@ export default function DrivableModel({
       keysRef.current.back = false;
       keysRef.current.left = false;
       keysRef.current.right = false;
+      releaseSteerCharge({
+        nowMs,
+        triggerBoost: false,
+      });
       speedRef.current = 0;
       verticalVelRef.current = 0;
 
@@ -1345,7 +1800,7 @@ export default function DrivableModel({
         const startBoostDurationMs =
           START_BOOST_MIN_DURATION_MS +
           (START_BOOST_MAX_DURATION_MS - START_BOOST_MIN_DURATION_MS) * chargeRatio;
-        activateBoost(startBoostStrength, startBoostDurationMs);
+        activateBoost(startBoostStrength, startBoostDurationMs, 'start');
       }
 
       startBoostConsumedRef.current = true;
@@ -1359,6 +1814,10 @@ export default function DrivableModel({
     previousStartCountdownRef.current = startCountdownValue;
 
     if (controlsLocked || commandInputActive.current) {
+      releaseSteerCharge({
+        nowMs,
+        triggerBoost: false,
+      });
       const keepForwardDuringStartCharge = continueStartBoostCharge;
       keysRef.current.forward = keepForwardDuringStartCharge;
       keysRef.current.back = false;
@@ -1373,8 +1832,15 @@ export default function DrivableModel({
     const throttle = controlsLocked || commandInputActive.current
       ? 0
       : (keysRef.current.forward ? 1 : 0) + (keysRef.current.back ? -1 : 0);
+    const steerChargeDirection =
+      controlsLocked || commandInputActive.current ? null : steerChargeDirectionRef.current;
+    const steerChargeActive =
+      steerChargeDirection !== null &&
+      steerChargeStartMsRef.current !== null;
     const steer = controlsLocked || commandInputActive.current
       ? 0
+      : steerChargeActive ?
+          (steerChargeDirection === 'left' ? 1 : -1)
       : (keysRef.current.left ? 1 : 0) + (keysRef.current.right ? -1 : 0);
     const boostActive = nowMs < boostEndTimestampRef.current;
 
@@ -1391,6 +1857,12 @@ export default function DrivableModel({
     const probeDown = tmpDownDir;
     const hadAttachmentBeforeStep = attachmentStateRef.current !== 'detached';
     const wasGroundedAtStepStart = controller.computedGrounded();
+    if (steerChargeJumpPendingRef.current) {
+      if (wasGroundedAtStepStart) {
+        verticalVelRef.current = Math.min(verticalVelRef.current, -STEER_CHARGE_JUMP_SPEED);
+      }
+      steerChargeJumpPendingRef.current = false;
+    }
     const bodyRotationNow = body.rotation();
     tmpBodyQuat.set(bodyRotationNow.x, bodyRotationNow.y, bodyRotationNow.z, bodyRotationNow.w).normalize();
     const currentBodyUp = tmpPoseUp.set(0, 1, 0).applyQuaternion(tmpBodyQuat).normalize();
@@ -1623,7 +2095,8 @@ export default function DrivableModel({
 
     const steeringForwardLimit = Math.max(0.1, maxForward);
     const speedFactor = clamp(Math.abs(speedRef.current) / steeringForwardLimit, 0.2, 1.0);
-    const steerAngle = steerInput * maxYawRate * dtClamped * (speedRef.current >= 0 ? 1 : -1) * speedFactor;
+    const steerYawRate = maxYawRate + (steerChargeActive ? STEER_CHARGE_TURN_RATE_BONUS : 0);
+    const steerAngle = steerInput * steerYawRate * dtClamped * (speedRef.current >= 0 ? 1 : -1) * speedFactor;
     const steerAxis = isAttachmentActive ? tmpAttachmentNormal : worldUp;
     if (Math.abs(steerAngle) > 0.00001) {
       headingRef.current.applyAxisAngle(steerAxis, steerAngle);
@@ -2009,6 +2482,17 @@ export default function DrivableModel({
       <group ref={lakituGroupRef} visible={false} scale={[0, 0, 0]}>
         <primitive object={lakituCloned} />
       </group>
+      <points geometry={flameTrailGeometry} frustumCulled={false}>
+        <pointsMaterial
+          size={FLAME_TRAIL_PARTICLE_SIZE}
+          sizeAttenuation
+          transparent
+          opacity={0.95}
+          depthWrite={false}
+          vertexColors
+          blending={AdditiveBlending}
+        />
+      </points>
     </>
   );
 }
