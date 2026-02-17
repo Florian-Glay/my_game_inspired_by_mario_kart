@@ -60,6 +60,8 @@ export type CircuitConfig = {
   antiGravIn?: SurfaceTriggerConfig;
   antiGravOut?: SurfaceTriggerConfig;
   booster?: BoosterTriggerConfig;
+  lapStart?: SurfaceTriggerConfig;
+  lapCheckpoint?: SurfaceTriggerConfig;
   performance: CircuitPerformanceConfig;
   vehicleAttachment: VehicleAttachmentConfig;
 };
@@ -111,7 +113,7 @@ const GRAND_PRIX_BADGE_BASE_PATH = '/ui/grand-prix/badges';
 const GRAND_PRIX_COURSE_PREVIEW_BASE_PATH = '/ui/grand-prix/courses';
 
 function getGrandPrixCoursePreviewPath(previewIndex: number) {
-  return `${GRAND_PRIX_COURSE_PREVIEW_BASE_PATH}/preview-${String(previewIndex).padStart(2, '0')}.svg`;
+  return `${GRAND_PRIX_COURSE_PREVIEW_BASE_PATH}/preview-${String(previewIndex).padStart(2, '0')}.png`;
 }
 
 function createGrandPrix(
@@ -179,11 +181,14 @@ export const PLAYER_KEY_BINDINGS: Record<PlayerId, KeyBindings> = {
   },
 };
 
-export const CC_SPEEDS: Record<CcLevel, { maxForward: number; maxBackward: number }> = {
-  '50cc': { maxForward: 25, maxBackward: 16 },
-  '100cc': { maxForward: 40, maxBackward: 25 },
-  '150cc': { maxForward: 55, maxBackward: 34 },
-  '200cc': { maxForward: 70, maxBackward: 44 },
+export const CC_SPEEDS: Record<
+  CcLevel,
+  { maxForward: number; maxBackward: number; maxYawRate: number }
+> = {
+  '50cc': { maxForward: 25, maxBackward: 16, maxYawRate: 1.75 },
+  '100cc': { maxForward: 40, maxBackward: 25, maxYawRate: 1.75 },
+  '150cc': { maxForward: 55, maxBackward: 34, maxYawRate: 1.8 },
+  '200cc': { maxForward: 70, maxBackward: 44, maxYawRate: 2.0 },
 };
 
 const CULL_CONE_DOT_120 = Math.cos((60 * Math.PI) / 180);
@@ -286,6 +291,20 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       friction: 0,
       restitution: 0,
     },
+    lapStart: {
+      model: '/models/ds_mario_circuit_start.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: marioTransform,
+    },
+    lapCheckpoint: {
+      model: '/models/ds_mario_circuit_checkpoint.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: marioTransform,
+    },
     performance: {
       maxVisibleDistance: 320,
       cullConeDot: CULL_CONE_DOT_120,
@@ -341,6 +360,20 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       strength: 1.5,
       transform: stadiumTransformBooster,
     },
+    lapStart: {
+      model: '/models/stadium_start.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: stadiumTransform,
+    },
+    lapCheckpoint: {
+      model: '/models/stadium_checkpoint.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: stadiumTransform,
+    },
     performance: {
       maxVisibleDistance: 300,
       cullConeDot: CULL_CONE_DOT_120,
@@ -380,6 +413,20 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       model: '/models/super_bell_subway_boosters.glb',
       duration: 1,
       strength: 1.5,
+      transform: subwayTransform,
+    },
+    lapStart: {
+      model: '/models/super_bell_subway_start.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: subwayTransform,
+    },
+    lapCheckpoint: {
+      model: '/models/super_bell_subway_checkpoint.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
       transform: subwayTransform,
     },
     performance: {
@@ -423,6 +470,20 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       strength: 1.5,
       transform: toadHarborTransform,
     },
+    lapStart: {
+      model: '/models/toad_harbor_start.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: toadHarborTransform,
+    },
+    lapCheckpoint: {
+      model: '/models/toad_harbor_checkpoint.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: toadHarborTransform,
+    },
     performance: {
       maxVisibleDistance: 100,
       cullConeDot: CULL_CONE_DOT_120,
@@ -444,10 +505,10 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
 
 export const GRAND_PRIXS: Record<GrandPrixId, GrandPrixConfig> = {
   mushroom_cup: createGrandPrix('mushroom_cup', 'Coupe Champignon', 'Coupe Champignon', [
-    { origin: 'SNES', label: 'Circuit Mario 1', previewIndex: 1, circuitId: 'ds_mario_circuit' },
-    { origin: 'GBA', label: 'Stadium', previewIndex: 2, circuitId: 'stadium' },
-    { origin: 'N64', label: 'Vallee Yoshi', previewIndex: 3, circuitId: 'super_bell_subway' },
-    { origin: '3DS', label: 'Route Toad', previewIndex: 4, circuitId: 'ds_mario_circuit' },
+    { origin: 'SNES', label: 'Circuit Mario 1', previewIndex: 2, circuitId: 'ds_mario_circuit' },
+    { origin: 'GBA', label: 'Stadium', previewIndex: 1, circuitId: 'stadium' },
+    { origin: 'N64', label: 'Super Bell Subway', previewIndex: 3, circuitId: 'super_bell_subway' },
+    { origin: '3DS', label: 'Circuit Mario 1', previewIndex: 2, circuitId: 'ds_mario_circuit' },
   ]),
   flower_cup: createGrandPrix('flower_cup', 'Coupe Fleur', 'Coupe Fleur', [
     { origin: 'Wii', label: 'Stadium', previewIndex: 5, circuitId: 'stadium' },

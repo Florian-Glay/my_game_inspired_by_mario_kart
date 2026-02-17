@@ -81,5 +81,32 @@ export type RaceConfig = {
   mode: RaceMode;
   cc: CcLevel;
   circuit: CircuitId;
+  grandPrixId: GrandPrixId;
+  courseId: string;
+  courseLabel: string;
+  courseIndex: number;
+  totalCourses: number;
   players: RacePlayerConfig[];
+};
+
+export type CourseRankingEntry = {
+  playerId: PlayerId;
+  position: number;
+  lap: number;
+  checkpointReached: boolean;
+  finished: boolean;
+};
+
+export type CourseRaceResult = {
+  grandPrixId: GrandPrixId;
+  courseId: string;
+  courseLabel: string;
+  courseIndex: number;
+  ranking: CourseRankingEntry[];
+};
+
+export type GrandPrixStanding = {
+  playerId: PlayerId;
+  totalPosition: number;
+  coursePositions: number[];
 };

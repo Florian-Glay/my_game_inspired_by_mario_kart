@@ -6,12 +6,16 @@ import {
   unregisterBodyDrag,
   unregisterColliderDrag,
 } from '../state/dragRegistry';
-import { registerSurfaceTrigger, unregisterSurfaceTrigger } from '../state/surfaceTriggerRegistry';
+import {
+  registerSurfaceTrigger,
+  type SurfaceTriggerType,
+  unregisterSurfaceTrigger,
+} from '../state/surfaceTriggerRegistry';
 
 type SurfaceWithDragProps = RigidBodyProps & {
   drag: number;
   children: ReactNode;
-  surfaceTriggerType?: 'anti-grav-in' | 'anti-grav-out' | 'booster';
+  surfaceTriggerType?: SurfaceTriggerType;
   surfaceAttachmentKind?: 'road' | 'ext';
 };
 

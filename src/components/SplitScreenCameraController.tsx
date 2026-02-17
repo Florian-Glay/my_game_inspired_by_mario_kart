@@ -141,7 +141,7 @@ export function SplitScreenCameraController({
   );
 
   useFrame((state, delta) => {
-    if (gameMode.current !== 'run') {
+    if (gameMode.current === 'free') {
       gameMode.current = 'run';
     }
 

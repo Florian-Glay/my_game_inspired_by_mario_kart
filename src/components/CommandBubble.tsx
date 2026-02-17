@@ -25,6 +25,9 @@ export default function CommandBubble({ isMultiplayerRace = false }: CommandBubb
     } else if (cmd === 'gamemode run') {
       gameMode.current = 'run';
       setMessage('Mode: run');
+    } else if (cmd === 'gamemode win') {
+      gameMode.current = 'win';
+      setMessage('Mode: win');
     } else if (cmd === 'gamemode coor') {
       const yawRad = carRotationY.current;
       const yawDeg = (yawRad * 180) / Math.PI;

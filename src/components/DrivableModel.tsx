@@ -22,7 +22,7 @@ import { getBodyDrag, getColliderDrag, hasBodyDrag, hasColliderDrag } from '../s
 import { carPosition, carRotationY } from '../state/car';
 import { commandInputActive } from '../state/commandInput';
 import { gameMode } from '../state/gamemode';
-import { getSurfaceTriggerType } from '../state/surfaceTriggerRegistry';
+import { getSurfaceTriggerType, type SurfaceTriggerType } from '../state/surfaceTriggerRegistry';
 import type { CarPose, KeyBindings, PlayerId } from '../types/game';
 
 type Vec3 = [number, number, number];
@@ -74,8 +74,12 @@ type Props = {
   keyBindings?: KeyBindings;
   maxForward?: number;
   maxBackward?: number;
+  maxYawRate?: number;
   onPoseUpdate?: (playerId: PlayerId, pose: CarPose) => void;
   playerId?: PlayerId;
+  controlsLocked?: boolean;
+  startCountdownValue?: number | null;
+  onLapTrigger?: (playerId: PlayerId, triggerType: 'lap-start' | 'lap-checkpoint') => void;
   surfaceAttachment?: SurfaceAttachmentConfig;
   antiGravSwitchesEnabled?: boolean;
   booster?: BoosterConfig;
@@ -101,17 +105,17 @@ const COAST = 15;
 const MAX_YAW_RATE = 1.5; // rad/s
 const MAX_CLIMB_ANGLE_DEG = 60;
 // Let the car pass small mesh bumps/steps and only block on higher obstacles.
-const AUTO_STEP_HEIGHT_RATIO = 0.5;
-const AUTO_STEP_HEIGHT_MIN = 0.08;
-// Keep enough headroom for larger colliders (normal-scale assets) to still step over small ledges.
-const AUTO_STEP_HEIGHT_MAX = 1.2;
-const AUTO_STEP_MIN_WIDTH_RATIO = 0.35;
-const AUTO_STEP_MIN_WIDTH_MIN = 0.08;
+const AUTO_STEP_HEIGHT_RATIO = 0.75;
+const AUTO_STEP_HEIGHT_MIN = 0.3;
+// Keep walls blocking while allowing curb-like low obstacles.
+const AUTO_STEP_HEIGHT_MAX = 0.35;
+const AUTO_STEP_MIN_WIDTH_RATIO = 0.12;
+const AUTO_STEP_MIN_WIDTH_MIN = 0.02;
 // 0..1: 0 = no tilt (always upright), 1 = full tilt to ground normal
-const GROUND_TILT_FACTOR = 1;
+const GROUND_TILT_FACTOR = 0.82;
 // Stabilize triangle-to-triangle ground normal noise on mesh roads.
 const GROUND_NORMAL_SMOOTHING = 22;
-const GROUND_NORMAL_DEADZONE_DOT = Math.cos((1.2 * Math.PI) / 180);
+const GROUND_NORMAL_DEADZONE_DOT = Math.cos((2.5 * Math.PI) / 180);
 // Rotation smoothing (higher = snappier, lower = smoother). Used as a rate in an
 // exponential smoothing function to compute an interpolation alpha per-step.
 const ROTATION_SMOOTHING = 20;
@@ -124,13 +128,13 @@ const MODEL_Y_OFFSET = 0;
 // Visual-only smoothing to avoid abrupt "step pop" when autostep lifts the collider.
 const VISUAL_STEP_SMOOTHING_UP = 24;
 const VISUAL_STEP_SMOOTHING_DOWN = 30;
-const VISUAL_STEP_MAX_LAG = 0.12;
+const VISUAL_STEP_MAX_LAG = 0.05;
 // If the hit normal diverges too much from the current attached normal, treat this as a lateral wall.
 const WALL_COLLISION_ALIGN_DOT = Math.cos((88 * Math.PI) / 180);
 // In wall-guard mode keep loop slopes below vertical so side walls remain collisions.
 const WALL_GUARD_MAX_CLIMB_ANGLE_DEG = 86;
 const WALL_GUARD_SLIDE_MARGIN_DEG = 4;
-const MAX_GROUND_RAY_RETRIES = 6;
+const MAX_GROUND_RAY_RETRIES = 9;
 // When the car is significantly tilted, keep slope checks relative to the current car up-vector.
 const LOOPING_REFERENCE_WORLD_DOT = 0.96;
 // While detached during looping, allow a wider re-attach cone based on current car orientation.
@@ -199,12 +203,21 @@ const DEFAULT_BOOSTER: Required<Pick<BoosterConfig, 'duration' | 'strength'>> = 
   strength: 2,
 };
 const BOOSTER_RETRIGGER_COOLDOWN_MS = 150;
+const START_BOOST_CHARGE_FROM_COUNTDOWN = 2;
+const START_BOOST_MAX_CHARGE_MS = 2000;
+const START_BOOST_MIN_STRENGTH = 1.1;
+const START_BOOST_MAX_STRENGTH = 1.9;
+const START_BOOST_MIN_DURATION_MS = 500;
+const START_BOOST_MAX_DURATION_MS = 1200;
 
 const ROAD_SURFACE_RE = /(?:^|[-_])road(?:[-_]|$)/i;
 const EXT_SURFACE_RE = /(?:^|[-_])ext(?:[-_]|$)/i;
 const ANTI_GRAV_IN_SURFACE_RE = /anti[-_ ]?grav[-_ ]?in/i;
 const ANTI_GRAV_OUT_SURFACE_RE = /anti[-_ ]?grav[-_ ]?out/i;
 const BOOSTER_SURFACE_RE = /booster/i;
+const LAP_START_SURFACE_RE = /(?:^|[-_ ])start(?:[-_ ]|$)/i;
+const LAP_CHECKPOINT_SURFACE_RE = /checkpoint/i;
+const LAP_TRIGGER_RETRIGGER_COOLDOWN_MS = 220;
 
 const SHOULD_LOG_GROUND_CONTACT = PERF_PROFILE.debugGroundContact && import.meta.env.DEV;
 
@@ -225,8 +238,12 @@ export default function DrivableModel({
   keyBindings = DEFAULT_KEY_BINDINGS,
   maxForward = MAX_FWD,
   maxBackward = MAX_BACK,
+  maxYawRate = MAX_YAW_RATE,
   onPoseUpdate,
   playerId = 'p1',
+  controlsLocked = false,
+  startCountdownValue = null,
+  onLapTrigger,
   surfaceAttachment,
   antiGravSwitchesEnabled = false,
   booster,
@@ -277,10 +294,17 @@ export default function DrivableModel({
   const lastValidNormalRef = useRef(new Vector3(0, 1, 0));
   const antiGravEnabledRef = useRef(!antiGravSwitchesEnabled);
   const activeSurfaceTriggerZoneRef = useRef<'in' | 'out' | null>(null);
+  const activeLapTriggerKeyRef = useRef<string | null>(null);
   const boostEndTimestampRef = useRef(0);
+  const boostStrengthRef = useRef(1);
   const activeBoosterHandleRef = useRef<number | null>(null);
   const lastBoosterTriggerTimeRef = useRef(0);
+  const startBoostChargeMsRef = useRef(0);
+  const startBoostChargeStartMsRef = useRef<number | null>(null);
+  const startBoostConsumedRef = useRef(false);
+  const previousStartCountdownRef = useRef<number | null>(null);
   const lastGroundSurfaceKindRef = useRef<AttachmentSurfaceKind | null>(null);
+  const lapTriggerDebounceRef = useRef(new Map<string, number>());
   const hasLastRoadToExtPositionRef = useRef(false);
   const lastRoadToExtPositionRef = useRef(new Vector3());
   const hasLastRoadContactPositionRef = useRef(false);
@@ -617,13 +641,19 @@ export default function DrivableModel({
     }
   };
 
+  const isSupportedSurfaceTriggerType = (
+    triggerType: unknown,
+  ): triggerType is SurfaceTriggerType =>
+    triggerType === 'anti-grav-in' ||
+    triggerType === 'anti-grav-out' ||
+    triggerType === 'booster' ||
+    triggerType === 'lap-start' ||
+    triggerType === 'lap-checkpoint';
+
   const resolveSurfaceTriggerTypeFromUserData = (userData: unknown) => {
     if (!userData || typeof userData !== 'object') return null;
     const triggerType = (userData as any).surfaceTriggerType;
-    if (triggerType === 'anti-grav-in' || triggerType === 'anti-grav-out' || triggerType === 'booster') {
-      return triggerType;
-    }
-    return null;
+    return isSupportedSurfaceTriggerType(triggerType) ? triggerType : null;
   };
 
   const resolveSurfaceTriggerTypeFromCollider = (collider: RapierCollider | null | undefined) => {
@@ -632,7 +662,7 @@ export default function DrivableModel({
     const colliderHandle = resolveColliderHandle(collider);
     if (colliderHandle !== null) {
       const registryType = getSurfaceTriggerType(colliderHandle);
-      if (registryType === 'anti-grav-in' || registryType === 'anti-grav-out' || registryType === 'booster') {
+      if (isSupportedSurfaceTriggerType(registryType)) {
         return registryType;
       }
     }
@@ -648,6 +678,8 @@ export default function DrivableModel({
     if (ANTI_GRAV_IN_SURFACE_RE.test(surfaceName)) return 'anti-grav-in' as const;
     if (ANTI_GRAV_OUT_SURFACE_RE.test(surfaceName)) return 'anti-grav-out' as const;
     if (BOOSTER_SURFACE_RE.test(surfaceName)) return 'booster' as const;
+    if (LAP_CHECKPOINT_SURFACE_RE.test(surfaceName)) return 'lap-checkpoint' as const;
+    if (LAP_START_SURFACE_RE.test(surfaceName)) return 'lap-start' as const;
     return null;
   };
 
@@ -663,13 +695,21 @@ export default function DrivableModel({
     return candidateNames.find((name) => name.length > 0) ?? '';
   };
 
+  const activateBoost = (strength: number, durationMs: number) => {
+    const nowMs = performance.now();
+    const resolvedStrength = Math.max(1, strength);
+    const resolvedDurationMs = Math.max(120, durationMs);
+
+    boostEndTimestampRef.current = Math.max(boostEndTimestampRef.current, nowMs + resolvedDurationMs);
+    boostStrengthRef.current = Math.max(boostStrengthRef.current, resolvedStrength);
+
+    const minBoostedSpeed = Math.max(0.1, maxForward) * resolvedStrength;
+    speedRef.current = Math.max(minBoostedSpeed, Math.abs(speedRef.current) * resolvedStrength);
+  };
+
   const activateBooster = () => {
     if (!boosterSettings.enabled) return;
-    const nowMs = performance.now();
-    boostEndTimestampRef.current = nowMs + boosterSettings.durationMs;
-
-    const minBoostedSpeed = Math.max(0.1, maxForward) * boosterSettings.strength;
-    speedRef.current = Math.max(minBoostedSpeed, Math.abs(speedRef.current) * boosterSettings.strength);
+    activateBoost(boosterSettings.strength, boosterSettings.durationMs);
   };
 
   const activateBoosterFromCollider = (collider: RapierCollider | null | undefined, surfaceLabel: string) => {
@@ -694,6 +734,26 @@ export default function DrivableModel({
     );
   };
 
+  const notifyLapTriggerFromCollider = (
+    triggerType: 'lap-start' | 'lap-checkpoint',
+    collider: RapierCollider | null | undefined,
+    surfaceLabel: string,
+  ) => {
+    if (!onLapTrigger || controlsLocked) return;
+
+    const nowMs = performance.now();
+    const colliderHandle = resolveColliderHandle(collider);
+    const dedupeKey = `${triggerType}:${colliderHandle ?? surfaceLabel}`;
+    const lastTriggerMs = lapTriggerDebounceRef.current.get(dedupeKey) ?? 0;
+    if (nowMs - lastTriggerMs < LAP_TRIGGER_RETRIGGER_COOLDOWN_MS) return;
+
+    lapTriggerDebounceRef.current.set(dedupeKey, nowMs);
+    const triggerLabel = triggerType === 'lap-start' ? 'start' : 'checkpoint';
+    const resolvedSurfaceLabel = surfaceLabel.length > 0 ? surfaceLabel : `trigger-${triggerLabel}`;
+    console.log(`[lap][${playerId}] passage ${triggerLabel} (${resolvedSurfaceLabel})`);
+    onLapTrigger(playerId, triggerType);
+  };
+
   const applySurfaceTriggerFromPayload = (payload: CollisionPayload) => {
     const surfaceName = resolveSurfaceNameFromPayload(payload);
     const triggerType = resolveSurfaceTriggerTypeFromCollider(payload.other.collider);
@@ -701,6 +761,11 @@ export default function DrivableModel({
 
     if (triggerType === 'booster') {
       activateBoosterFromCollider(payload.other.collider, surfaceName);
+      return;
+    }
+
+    if (triggerType === 'lap-start' || triggerType === 'lap-checkpoint') {
+      notifyLapTriggerFromCollider(triggerType, payload.other.collider, surfaceName);
       return;
     }
 
@@ -736,6 +801,8 @@ export default function DrivableModel({
       (ANTI_GRAV_IN_SURFACE_RE.test(surfaceName) ? 'anti-grav-in' :
         ANTI_GRAV_OUT_SURFACE_RE.test(surfaceName) ? 'anti-grav-out'
         : BOOSTER_SURFACE_RE.test(surfaceName) ? 'booster'
+        : LAP_CHECKPOINT_SURFACE_RE.test(surfaceName) ? 'lap-checkpoint'
+        : LAP_START_SURFACE_RE.test(surfaceName) ? 'lap-start'
         : null);
     if (triggerType === null) return;
 
@@ -752,6 +819,8 @@ export default function DrivableModel({
       console.log(`[booster][${playerId}] sortie zone booster (${resolvedSurfaceLabel})`);
       return;
     }
+
+    if (triggerType === 'lap-start' || triggerType === 'lap-checkpoint') return;
 
     if (!antiGravSwitchesEnabled) return;
 
@@ -1023,8 +1092,14 @@ export default function DrivableModel({
     yawRef.current = initialRotation[1];
     headingRef.current.set(Math.sin(yawRef.current), 0, Math.cos(yawRef.current)).normalize();
     boostEndTimestampRef.current = 0;
+    boostStrengthRef.current = 1;
     activeBoosterHandleRef.current = null;
     lastBoosterTriggerTimeRef.current = 0;
+    startBoostChargeMsRef.current = 0;
+    startBoostChargeStartMsRef.current = null;
+    startBoostConsumedRef.current = false;
+    previousStartCountdownRef.current = null;
+    lapTriggerDebounceRef.current.clear();
     speedRef.current = 0;
     verticalVelRef.current = 0;
     attachmentStateRef.current = 'detached';
@@ -1032,6 +1107,7 @@ export default function DrivableModel({
     lastValidNormalRef.current.set(0, 1, 0);
     antiGravEnabledRef.current = !antiGravSwitchesEnabled;
     activeSurfaceTriggerZoneRef.current = null;
+    activeLapTriggerKeyRef.current = null;
     lastGroundSurfaceKindRef.current = null;
     hasLastRoadToExtPositionRef.current = false;
     hasLastRoadContactPositionRef.current = false;
@@ -1084,12 +1160,29 @@ export default function DrivableModel({
       keysRef.current.right = false;
     };
 
+    const canChargeStartBoost = () =>
+      controlsLocked &&
+      typeof startCountdownValue === 'number' &&
+      startCountdownValue > 0 &&
+      startCountdownValue <= START_BOOST_CHARGE_FROM_COUNTDOWN;
+
     const down = (e: KeyboardEvent) => {
       if (gameMode.current === 'free' || commandInputActive.current) {
         clearAll();
         return;
       }
-      setKeyState(e.key.toLowerCase(), true);
+
+      const normalizedKey = e.key.toLowerCase();
+      if (controlsLocked) {
+        if (canChargeStartBoost() && bindingSets.forward.has(normalizedKey)) {
+          keysRef.current.forward = true;
+        } else {
+          clearAll();
+        }
+        return;
+      }
+
+      setKeyState(normalizedKey, true);
     };
 
     const up = (e: KeyboardEvent) => {
@@ -1097,7 +1190,18 @@ export default function DrivableModel({
         clearAll();
         return;
       }
-      setKeyState(e.key.toLowerCase(), false);
+
+      const normalizedKey = e.key.toLowerCase();
+      if (controlsLocked) {
+        if (canChargeStartBoost() && bindingSets.forward.has(normalizedKey)) {
+          keysRef.current.forward = false;
+        } else {
+          clearAll();
+        }
+        return;
+      }
+
+      setKeyState(normalizedKey, false);
     };
 
     window.addEventListener('keydown', down);
@@ -1108,7 +1212,7 @@ export default function DrivableModel({
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', clearAll);
     };
-  }, [bindingSets]);
+  }, [bindingSets, controlsLocked, startCountdownValue]);
 
   useEffect(() => {
     const controller = new rapier.KinematicCharacterController(
@@ -1204,19 +1308,75 @@ export default function DrivableModel({
 
     setLakituTarget(tCurrent.x, tCurrent.y, tCurrent.z, false);
 
-    if (commandInputActive.current) {
-      keysRef.current.forward = false;
+    const canChargeStartBoost =
+      controlsLocked &&
+      !commandInputActive.current &&
+      typeof startCountdownValue === 'number' &&
+      startCountdownValue > 0 &&
+      startCountdownValue <= START_BOOST_CHARGE_FROM_COUNTDOWN;
+    const continueStartBoostCharge =
+      canChargeStartBoost &&
+      keysRef.current.forward;
+
+    if (continueStartBoostCharge) {
+      if (startBoostChargeStartMsRef.current === null) {
+        startBoostChargeStartMsRef.current = nowMs;
+      }
+    } else if (startBoostChargeStartMsRef.current !== null) {
+      startBoostChargeMsRef.current += nowMs - startBoostChargeStartMsRef.current;
+      startBoostChargeStartMsRef.current = null;
+    }
+
+    const justReachedCountdownZero =
+      startCountdownValue === 0 &&
+      previousStartCountdownRef.current !== 0;
+    if (justReachedCountdownZero && !startBoostConsumedRef.current) {
+      if (startBoostChargeStartMsRef.current !== null) {
+        startBoostChargeMsRef.current += nowMs - startBoostChargeStartMsRef.current;
+        startBoostChargeStartMsRef.current = null;
+      }
+
+      const chargeMs = clamp(startBoostChargeMsRef.current, 0, START_BOOST_MAX_CHARGE_MS);
+      if (chargeMs > 0) {
+        const chargeRatio = smoothstep01(chargeMs / START_BOOST_MAX_CHARGE_MS);
+        const startBoostStrength =
+          START_BOOST_MIN_STRENGTH +
+          (START_BOOST_MAX_STRENGTH - START_BOOST_MIN_STRENGTH) * chargeRatio;
+        const startBoostDurationMs =
+          START_BOOST_MIN_DURATION_MS +
+          (START_BOOST_MAX_DURATION_MS - START_BOOST_MIN_DURATION_MS) * chargeRatio;
+        activateBoost(startBoostStrength, startBoostDurationMs);
+      }
+
+      startBoostConsumedRef.current = true;
+    }
+
+    if (startCountdownValue === null) {
+      startBoostChargeMsRef.current = 0;
+      startBoostChargeStartMsRef.current = null;
+      startBoostConsumedRef.current = false;
+    }
+    previousStartCountdownRef.current = startCountdownValue;
+
+    if (controlsLocked || commandInputActive.current) {
+      const keepForwardDuringStartCharge = continueStartBoostCharge;
+      keysRef.current.forward = keepForwardDuringStartCharge;
       keysRef.current.back = false;
       keysRef.current.left = false;
       keysRef.current.right = false;
     }
-    const throttle = commandInputActive.current
+
+    if (nowMs >= boostEndTimestampRef.current) {
+      boostStrengthRef.current = 1;
+    }
+
+    const throttle = controlsLocked || commandInputActive.current
       ? 0
       : (keysRef.current.forward ? 1 : 0) + (keysRef.current.back ? -1 : 0);
-    const steer = commandInputActive.current
+    const steer = controlsLocked || commandInputActive.current
       ? 0
       : (keysRef.current.left ? 1 : 0) + (keysRef.current.right ? -1 : 0);
-    const boostActive = boosterSettings.enabled && nowMs < boostEndTimestampRef.current;
+    const boostActive = nowMs < boostEndTimestampRef.current;
 
     const attachmentCapabilityEnabled = surfaceAttachmentSettings.enabled || antiGravSwitchesEnabled;
     const attachmentFeatureEnabled =
@@ -1262,7 +1422,9 @@ export default function DrivableModel({
     const dragRayOrigin = buildRayOrigin(tCurrent.x, tCurrent.y, tCurrent.z, probeDown);
     currentExtraDragRef.current = sampleSurfaceDragAt(dragRayOrigin, probeDown, body, groundProbeDistance);
 
-    if (antiGravSwitchesEnabled || boosterSettings.enabled) {
+    const shouldSampleSurfaceTriggers =
+      antiGravSwitchesEnabled || boosterSettings.enabled || Boolean(onLapTrigger);
+    if (shouldSampleSurfaceTriggers) {
       const triggerHit = castSurfaceTriggerHit(dragRayOrigin, probeDown, body, groundProbeDistance);
       const triggerType = triggerHit ? resolveSurfaceTriggerTypeFromCollider(triggerHit.collider) : null;
 
@@ -1270,6 +1432,25 @@ export default function DrivableModel({
         activateBoosterFromCollider(triggerHit?.collider, resolveSurfaceNameFromCollider(triggerHit?.collider));
       } else {
         activeBoosterHandleRef.current = null;
+      }
+
+      if (onLapTrigger) {
+        const lapTriggerType =
+          triggerType === 'lap-start' ? 'lap-start'
+          : triggerType === 'lap-checkpoint' ? 'lap-checkpoint'
+          : null;
+
+        if (lapTriggerType) {
+          const surfaceLabel = resolveSurfaceNameFromCollider(triggerHit?.collider);
+          const triggerHandle = resolveColliderHandle(triggerHit?.collider);
+          const triggerKey = `${lapTriggerType}:${triggerHandle ?? surfaceLabel ?? 'unknown-lap-trigger'}`;
+          if (activeLapTriggerKeyRef.current !== triggerKey) {
+            notifyLapTriggerFromCollider(lapTriggerType, triggerHit?.collider, surfaceLabel);
+          }
+          activeLapTriggerKeyRef.current = triggerKey;
+        } else if (activeLapTriggerKeyRef.current !== null) {
+          activeLapTriggerKeyRef.current = null;
+        }
       }
 
       if (antiGravSwitchesEnabled) {
@@ -1297,6 +1478,13 @@ export default function DrivableModel({
         }
       } else if (activeSurfaceTriggerZoneRef.current !== null) {
         activeSurfaceTriggerZoneRef.current = null;
+      }
+    } else {
+      if (activeSurfaceTriggerZoneRef.current !== null) {
+        activeSurfaceTriggerZoneRef.current = null;
+      }
+      if (activeLapTriggerKeyRef.current !== null) {
+        activeLapTriggerKeyRef.current = null;
       }
     }
 
@@ -1409,12 +1597,13 @@ export default function DrivableModel({
     }
 
     // Speed control (simple, stable)
-    const forwardLimit = Math.max(0.1, maxForward) * (boostActive ? boosterSettings.strength : 1);
+    const activeBoostStrength = boostActive ? Math.max(1, boostStrengthRef.current) : 1;
+    const forwardLimit = Math.max(0.1, maxForward) * activeBoostStrength;
     const backwardLimit = -Math.max(0.1, maxBackward);
     const steerInput = steer;
 
     if (boostActive) {
-      const minimumBoostSpeed = Math.max(0.1, maxForward) * boosterSettings.strength;
+      const minimumBoostSpeed = Math.max(0.1, maxForward) * activeBoostStrength;
       speedRef.current = Math.max(speedRef.current, minimumBoostSpeed);
     } else if (throttle !== 0) speedRef.current += throttle * ACCEL * dtClamped;
     else {
@@ -1434,7 +1623,7 @@ export default function DrivableModel({
 
     const steeringForwardLimit = Math.max(0.1, maxForward);
     const speedFactor = clamp(Math.abs(speedRef.current) / steeringForwardLimit, 0.2, 1.0);
-    const steerAngle = steerInput * MAX_YAW_RATE * dtClamped * (speedRef.current >= 0 ? 1 : -1) * speedFactor;
+    const steerAngle = steerInput * maxYawRate * dtClamped * (speedRef.current >= 0 ? 1 : -1) * speedFactor;
     const steerAxis = isAttachmentActive ? tmpAttachmentNormal : worldUp;
     if (Math.abs(steerAngle) > 0.00001) {
       headingRef.current.applyAxisAngle(steerAxis, steerAngle);
@@ -1725,7 +1914,7 @@ export default function DrivableModel({
     if (!body) return;
 
     const nowMs = performance.now();
-    const boostActiveNow = boosterSettings.enabled && nowMs < boostEndTimestampRef.current;
+    const boostActiveNow = nowMs < boostEndTimestampRef.current;
     const t = body.translation();
     const visualRoot = visualRootRef.current;
     if (visualRoot) {

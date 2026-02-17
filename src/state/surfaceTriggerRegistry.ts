@@ -1,4 +1,9 @@
-type SurfaceTriggerType = 'anti-grav-in' | 'anti-grav-out' | 'booster';
+export type SurfaceTriggerType =
+  | 'anti-grav-in'
+  | 'anti-grav-out'
+  | 'booster'
+  | 'lap-start'
+  | 'lap-checkpoint';
 
 const colliderTriggerByHandle = new Map<number, SurfaceTriggerType>();
 
