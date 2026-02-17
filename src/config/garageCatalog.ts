@@ -52,48 +52,48 @@ export const WHEEL_SIZE_HEIGHT_PROFILES: Record<WheelSize, WheelSizeHeightProfil
   },
 };
 
-const DEFAULT_THUMBNAIL = '/ui/home-hero.png';
-const DEFAULT_CHARACTER_MODEL = '/models/mario.glb';
-const DEFAULT_VEHICLE_MODEL = '/models/exemple.glb';
-const DEFAULT_WHEEL_MODEL = '/models/exemple_wheel.glb';
+const DEFAULT_THUMBNAIL = 'ui/home-hero.png';
+const DEFAULT_CHARACTER_MODEL = 'models/mario.glb';
+const DEFAULT_VEHICLE_MODEL = 'models/exemple.glb';
+const DEFAULT_WHEEL_MODEL = 'models/exemple_wheel.glb';
 
 // Listes de modeles 3D utilises par le garage.
 // Le changement d'index dans le menu pointe vers l'element correspondant de ces listes.
 export const CHARACTER_MODEL_LIST = [
-  '/models/mario.glb',
+  'models/mario.glb',
 ] as const;
 
 export const VEHICLE_MODEL_LIST = [
-  '/models/exemple.glb',
-  '/models/standard_kart.glb',
+  'models/exemple.glb',
+  'models/standard_kart.glb',
 ] as const;
 
 export const WHEEL_MODEL_LIST = [
-  '/models/exemple_wheel.glb',
-  '/models/standard_tire.glb',
+  'models/exemple_wheel.glb',
+  'models/standard_tire.glb',
 ] as const;
 
 // Listes de miniatures (images UI) utilises par le menu de selection.
 // Chaque index correspond a l'index de l'element dans sa liste.
 export const CHARACTER_THUMBNAIL_LIST = [
-  '/ui/select/character/mario.png',
-  '/ui/100cc.png',
-  '/ui/150cc.png',
-  '/ui/200cc.png',
+  'ui/select/character/mario.png',
+  'ui/100cc.png',
+  'ui/150cc.png',
+  'ui/200cc.png',
 ] as const;
 
 export const VEHICLE_THUMBNAIL_LIST = [
-  '/ui/50cc.png',
-  '/ui/100cc.png',
-  '/ui/150cc.png',
-  '/ui/200cc.png',
+  'ui/50cc.png',
+  'ui/100cc.png',
+  'ui/150cc.png',
+  'ui/200cc.png',
 ] as const;
 
 export const WHEEL_THUMBNAIL_LIST = [
-  '/ui/grand-prix/badges/mushroom_cup.png',
-  '/ui/grand-prix/badges/flower_cup.png',
-  '/ui/grand-prix/badges/star_cup.png',
-  '/ui/grand-prix/badges/special_cup.png',
+  'ui/grand-prix/badges/mushroom_cup.png',
+  'ui/grand-prix/badges/flower_cup.png',
+  'ui/grand-prix/badges/star_cup.png',
+  'ui/grand-prix/badges/special_cup.png',
 ] as const;
 
 const CHARACTER_SCALE: Vec3 = [2, 2, 2];

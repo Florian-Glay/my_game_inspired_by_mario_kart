@@ -103,14 +103,14 @@ export type GrandPrixConfig = {
   courses: GrandPrixCourseSet;
 };
 
-export const HERO_IMAGE_PATH = '/ui/home-hero.png';
+export const HERO_IMAGE_PATH = 'ui/home-hero.png';
 
 export const CIRCUIT_ORDER: CircuitId[] = ['ds_mario_circuit', 'stadium', 'super_bell_subway'];
 
 export const CC_ORDER: CcLevel[] = ['50cc', '100cc', '150cc', '200cc'];
 
-const GRAND_PRIX_BADGE_BASE_PATH = '/ui/grand-prix/badges';
-const GRAND_PRIX_COURSE_PREVIEW_BASE_PATH = '/ui/grand-prix/courses';
+const GRAND_PRIX_BADGE_BASE_PATH = 'ui/grand-prix/badges';
+const GRAND_PRIX_COURSE_PREVIEW_BASE_PATH = 'ui/grand-prix/courses';
 
 function getGrandPrixCoursePreviewPath(previewIndex: number) {
   return `${GRAND_PRIX_COURSE_PREVIEW_BASE_PATH}/preview-${String(previewIndex).padStart(2, '0')}.png`;
@@ -280,26 +280,26 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     spawns: PLAYER_SPAWNS,
     spawnRotations: PLAYER_SPAWN_ROTATIONS,
     road: {
-      model: '/models/ds_mario_circuit_road.glb',
+      model: 'models/ds_mario_circuit_road.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
     },
     ext: {
-      model: '/models/ds_mario_circuit_ext.glb',
+      model: 'models/ds_mario_circuit_ext.glb',
       drag: 2,
       friction: 0,
       restitution: 0,
     },
     lapStart: {
-      model: '/models/ds_mario_circuit_start.glb',
+      model: 'models/ds_mario_circuit_start.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
       transform: marioTransform,
     },
     lapCheckpoint: {
-      model: '/models/ds_mario_circuit_checkpoint.glb',
+      model: 'models/ds_mario_circuit_checkpoint.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
@@ -329,46 +329,46 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     spawns: STADIUM_SPAWNS,
     spawnRotations: STADIUM_SPAWN_ROTATIONS,
     road: {
-      model: '/models/stadium_road.glb',
+      model: 'models/stadium_road.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
     },
     ext: {
-      model: '/models/stadium_ext.glb',
+      model: 'models/stadium_ext.glb',
       drag: 2,
       friction: 0,
       restitution: 0,
     },
     antiGravIn: {
-      model: '/models/stadium_antiGravIn.glb',
+      model: 'models/stadium_antiGravIn.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
       transform: stadiumTransformGravIn,
     },
     antiGravOut: {
-      model: '/models/stadium_antiGravOut.glb',
+      model: 'models/stadium_antiGravOut.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
       transform: stadiumTransformGravOut,
     },
     booster: {
-      model: '/models/stadium_boosters.glb',
+      model: 'models/stadium_boosters.glb',
       duration: 1,
       strength: 1.5,
       transform: stadiumTransformBooster,
     },
     lapStart: {
-      model: '/models/stadium_start.glb',
+      model: 'models/stadium_start.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
       transform: stadiumTransform,
     },
     lapCheckpoint: {
-      model: '/models/stadium_checkpoint.glb',
+      model: 'models/stadium_checkpoint.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
@@ -398,32 +398,32 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     spawns: SUBWAY_SPAWNS,
     spawnRotations: SUBWAY_SPAWN_ROTATIONS,
     road: {
-      model: '/models/super_bell_subway_road.glb',
+      model: 'models/super_bell_subway_road.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
     },
     ext: {
-      model: '/models/super_bell_subway_ext.glb',
+      model: 'models/super_bell_subway_ext.glb',
       drag: 2,
       friction: 0,
       restitution: 0,
     },
     booster: {
-      model: '/models/super_bell_subway_boosters.glb',
+      model: 'models/super_bell_subway_boosters.glb',
       duration: 1,
       strength: 1.5,
       transform: subwayTransform,
     },
     lapStart: {
-      model: '/models/super_bell_subway_start.glb',
+      model: 'models/super_bell_subway_start.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
       transform: subwayTransform,
     },
     lapCheckpoint: {
-      model: '/models/super_bell_subway_checkpoint.glb',
+      model: 'models/super_bell_subway_checkpoint.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
@@ -453,32 +453,32 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     spawns: TOAD_HARBOR_SPAWNS,
     spawnRotations: TOAD_HARBOR_SPAWN_ROTATIONS,
     road: {
-      model: '/models/toad_harbor_road.glb',
+      model: 'models/toad_harbor_road.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
     },
     ext: {
-      model: '/models/toad_harbor_ext.glb',
+      model: 'models/toad_harbor_ext.glb',
       drag: 2,
       friction: 0,
       restitution: 0,
     },
     booster: {
-      model: '/models/toad_harbor_boost.glb',
+      model: 'models/toad_harbor_boost.glb',
       duration: 1,
       strength: 1.5,
       transform: toadHarborTransform,
     },
     lapStart: {
-      model: '/models/toad_harbor_start.glb',
+      model: 'models/toad_harbor_start.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
       transform: toadHarborTransform,
     },
     lapCheckpoint: {
-      model: '/models/toad_harbor_checkpoint.glb',
+      model: 'models/toad_harbor_checkpoint.glb',
       drag: 0,
       friction: 0,
       restitution: 0,

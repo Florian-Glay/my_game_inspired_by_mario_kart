@@ -254,7 +254,7 @@ export default function DrivableModel({
   const { scene: vehicleScene } = useGLTF(vehicleModel) as unknown as { scene: Group };
   const { scene: characterScene } = useGLTF(characterModel) as unknown as { scene: Group };
   const { scene: wheelScene } = useGLTF(wheelModel) as unknown as { scene: Group };
-  const { scene: lakituScene } = useGLTF('/models/lakitu.glb') as unknown as { scene: Group };
+  const { scene: lakituScene } = useGLTF('models/lakitu.glb') as unknown as { scene: Group };
   const vehicleCloned = useMemo(() => SkeletonUtils.clone(vehicleScene) as Group, [vehicleScene]);
   const characterCloned = useMemo(
     () => SkeletonUtils.clone(characterScene) as Group,
@@ -2014,5 +2014,5 @@ export default function DrivableModel({
 }
 
 // required by drei loader typings (preload helper)
-useGLTF.preload('/models/lakitu.glb');
+useGLTF.preload('models/lakitu.glb');
 export const preloadDrivable = (url: string) => useGLTF.preload(url);

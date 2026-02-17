@@ -22,7 +22,7 @@ import { SplitScreenCameraController } from './SplitScreenCameraController';
 import { SurfaceWithDrag } from './SurfaceWithDrag';
 import TextureDebug from './TextureDebug';
 
-useGLTF.preload('/models/exemple.glb');
+useGLTF.preload('models/exemple.glb');
 const DAY_CLEAR_COLOR = '#7ec3ff';
 const SUN_POSITION: [number, number, number] = [220, 180, -360];
 const CLOUD_WRAP_X = 620;
