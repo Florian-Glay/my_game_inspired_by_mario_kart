@@ -626,14 +626,14 @@ export function Scene({
       ) : null}
 
       {isStartCountdownVisible ? (
-        <div className="pointer-events-none absolute inset-0 z-[68] flex items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 z-68 flex items-center justify-center">
           <div className="rounded-2xl border border-white/30 bg-[#041334]/62 px-10 py-7 text-center text-white shadow-[0_22px_52px_rgba(1,9,31,0.55)] backdrop-blur-sm">
             <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-white/80">Depart</div>
             <div className="mt-1 text-[clamp(4rem,12vw,8.5rem)] leading-none font-black tabular-nums">
               {startCountdownValue}
             </div>
             {showStartBoostHint ? (
-              <div className="mt-2 text-xs font-semibold uppercase tracking-[0.1em] text-[#ffe8a3]">
+              <div className="mt-2 text-xs font-semibold uppercase tracking-widest text-[#ffe8a3]">
                 {startBoostHint}
               </div>
             ) : null}
@@ -663,7 +663,7 @@ export function Scene({
       ) : null}
 
       {sceneReady && isCourseRankingVisible ? (
-        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-[#041334]/70 backdrop-blur-sm">
+        <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/70 backdrop-blur-sm">
           <div className="w-[min(92vw,640px)] rounded-2xl border border-white/35 bg-[#0a2d66]/88 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
             <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/80">
               Course {raceConfig.courseIndex + 1}/{raceConfig.totalCourses}
@@ -688,7 +688,7 @@ export function Scene({
             </div>
             <button
               type="button"
-              className="mt-5 w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-[0.1em] transition hover:bg-white/25"
+              className="mt-5 w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25"
               onClick={handleContinueAfterCourse}
             >
               Continuer
@@ -698,7 +698,7 @@ export function Scene({
       ) : null}
 
       {sceneReady && isCourseActionVisible ? (
-        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-[#041334]/70 backdrop-blur-sm">
+        <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/70 backdrop-blur-sm">
           <div className="w-[min(92vw,580px)] rounded-2xl border border-white/35 bg-[#0a2d66]/88 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
             <h2 className="text-2xl font-black">
               {hasNextCourse ? 'Course terminee' : 'Grand Prix termine'}
@@ -711,7 +711,7 @@ export function Scene({
             <div className="mt-5 grid gap-3">
               <button
                 type="button"
-                className="w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-[0.1em] transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={handlePrimaryAction}
                 disabled={menuBusy || isAdvancingCourse}
               >
@@ -723,7 +723,7 @@ export function Scene({
               </button>
               <button
                 type="button"
-                className="w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-[0.1em] transition hover:bg-[#1c376f]"
+                className="w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-[#1c376f]"
                 onClick={onRaceBack}
               >
                 Retour au Menu
@@ -734,7 +734,7 @@ export function Scene({
       ) : null}
 
       {sceneReady && isGrandPrixResultVisible ? (
-        <div className="absolute inset-0 z-[70] flex items-center justify-center bg-[#041334]/74 backdrop-blur-sm">
+        <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/74 backdrop-blur-sm">
           <div className="w-[min(94vw,700px)] rounded-2xl border border-white/35 bg-[#0a2d66]/90 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
             <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/80">
               Resultat Final Grand Prix
@@ -761,7 +761,7 @@ export function Scene({
             </div>
             <button
               type="button"
-              className="mt-5 w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-[0.1em] transition hover:bg-[#1c376f]"
+              className="mt-5 w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-[#1c376f]"
               onClick={onRaceBack}
             >
               Retour au Menu
