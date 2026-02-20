@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useGLTF, useProgress } from '@react-three/drei';
+import { useGLTF } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
 import {
   Suspense,
@@ -129,6 +129,15 @@ type PlayerLapProgress = {
 
 type RaceOverlayStep = 'none' | 'course-ranking' | 'course-actions' | 'grand-prix-result';
 
+type LiveScoreboardEntry = {
+  participantId: RaceParticipantId;
+  displayName: string;
+  position: number;
+  completedLaps: number;
+  checkpoint: boolean;
+  finished: boolean;
+};
+
 function MovingClouds() {
   const rootRef = useRef<Group | null>(null);
   const cloudSeeds = useMemo<CloudSeed[]>(
@@ -228,7 +237,31 @@ const START_COUNTDOWN_INITIAL = 3;
 const START_COUNTDOWN_CHARGE_HINT_FROM = 2;
 const START_COUNTDOWN_TICK_MS = 1000;
 const START_COUNTDOWN_ZERO_HOLD_MS = 450;
+const LOADING_OVERLAY_FADE_MS = 500;
+const LIVE_SCOREBOARD_REFRESH_MS = 120;
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
+
+const clampValue = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const distanceBetweenPoints = (
+  left: readonly [number, number, number],
+  right: readonly [number, number, number],
+) =>
+  Math.hypot(
+    left[0] - right[0],
+    left[1] - right[1],
+    left[2] - right[2],
+  );
+const distanceFromPoseToPoint = (
+  pose: CarPose | null | undefined,
+  point: readonly [number, number, number],
+) => {
+  if (!pose) return Number.POSITIVE_INFINITY;
+  return Math.hypot(
+    pose.x - point[0],
+    pose.y - point[1],
+    pose.z - point[2],
+  );
+};
 
 function createInitialLapProgress(
   participants: RaceConfig['participants'],
@@ -270,10 +303,12 @@ export function Scene({
   const [controlsLocked, setControlsLocked] = useState(true);
   const [startCountdownValue, setStartCountdownValue] = useState<number | null>(null);
   const [menuBusy, setMenuBusy] = useState(false);
+  const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(true);
+  const [loadingOverlayFading, setLoadingOverlayFading] = useState(false);
+  const [liveScoreboardTick, setLiveScoreboardTick] = useState(0);
   const courseResultSentRef = useRef(false);
   const startCountdownStartedRef = useRef(false);
   const winModeHandledRef = useRef(false);
-  const { progress, active } = useProgress();
   const circuitPhysicsKey = [
     raceConfig.circuit,
     circuit.road.model,
@@ -344,8 +379,30 @@ export function Scene({
         .filter((ref): ref is MutableRefObject<CarPose> => Boolean(ref)),
     [humanParticipants, poseRefsByParticipant],
   );
+  const participantOrder = useMemo(
+    () => new Map(raceConfig.participants.map((participant, index) => [participant.id, index])),
+    [raceConfig.participants],
+  );
+  const lapStartMarker = useMemo<readonly [number, number, number]>(() => {
+    const startPosition = circuit.lapStart?.transform.position;
+    if (startPosition) return [startPosition[0], startPosition[1], startPosition[2]];
+    return [0, 0, 0];
+  }, [circuit.lapStart?.transform.position]);
+  const lapCheckpointMarker = useMemo<readonly [number, number, number]>(() => {
+    const checkpointPosition = circuit.lapCheckpoint?.transform.position;
+    if (checkpointPosition) {
+      return [checkpointPosition[0], checkpointPosition[1], checkpointPosition[2]];
+    }
+    return lapStartMarker;
+  }, [circuit.lapCheckpoint?.transform.position, lapStartMarker]);
+  const lapSegmentDistance = useMemo(
+    () => Math.max(1, distanceBetweenPoints(lapStartMarker, lapCheckpointMarker)),
+    [lapCheckpointMarker, lapStartMarker],
+  );
   const roadGroupRef = useRef<Group | null>(null);
   const extGroupRef = useRef<Group | null>(null);
+  const sceneReady =
+    assetsReady && roadModelReady && extModelReady && physicsWarmupReady && textureDebugReady;
 
   useEffect(() => {
     roadGroupRef.current = null;
@@ -355,6 +412,8 @@ export function Scene({
     setRoadModelReady(false);
     setExtModelReady(false);
     setTextureDebugReady(!textureDebugEnabled);
+    setLoadingOverlayVisible(true);
+    setLoadingOverlayFading(false);
   }, [assetGateKey, circuitPhysicsKey, textureDebugEnabled]);
 
   useEffect(() => {
@@ -365,6 +424,7 @@ export function Scene({
     setControlsLocked(true);
     setStartCountdownValue(null);
     setMenuBusy(false);
+    setLiveScoreboardTick(0);
     courseResultSentRef.current = false;
     startCountdownStartedRef.current = false;
     winModeHandledRef.current = false;
@@ -376,6 +436,20 @@ export function Scene({
       gameMode.current = 'run';
     }
   }, [raceConfig.humanCount]);
+
+  useEffect(() => {
+    if (!sceneReady) {
+      setLoadingOverlayVisible(true);
+      setLoadingOverlayFading(false);
+      return;
+    }
+
+    setLoadingOverlayFading(true);
+    const fadeTimer = window.setTimeout(() => {
+      setLoadingOverlayVisible(false);
+    }, LOADING_OVERLAY_FADE_MS);
+    return () => window.clearTimeout(fadeTimer);
+  }, [sceneReady]);
 
   const handlePoseUpdate = useCallback(
     (participantId: RaceParticipantId, pose: CarPose) => {
@@ -583,18 +657,9 @@ export function Scene({
   const handleTextureDebugReady = useCallback(() => {
     setTextureDebugReady((prev) => (prev ? prev : true));
   }, []);
-  const loadingPercent = Math.min(100, Math.max(0, Math.round(progress)));
-  const sceneReady =
-    assetsReady && roadModelReady && extModelReady && physicsWarmupReady && textureDebugReady;
-  const loadingMessage =
-    !assetsReady ? 'Chargement des assets...'
-    : !physicsWarmupReady ? 'Initialisation physique...'
-    : !(roadModelReady && extModelReady) ? 'Assemblage de la scene...'
-    : !textureDebugReady ? 'Validation debug...'
-    : 'Pret';
-  const loadingValue = !assetsReady ? (active ? `${loadingPercent}%` : '100%') : loadingMessage;
+  const isLoadingOverlayActive = loadingOverlayVisible;
   const isStartCountdownVisible =
-    sceneReady && overlayStep === 'none' && startCountdownValue !== null;
+    sceneReady && !isLoadingOverlayActive && overlayStep === 'none' && startCountdownValue !== null;
   const showStartBoostHint =
     typeof startCountdownValue === 'number' &&
     startCountdownValue > 0 &&
@@ -603,27 +668,85 @@ export function Scene({
     raceConfig.humanCount === 1 ?
       'Maintiens Z pour charger le boost de depart'
     : 'Maintiens acceleration pour charger le boost de depart';
-  const lapSummary = raceConfig.participants.map((participant) => {
-    const progress = lapProgressByPlayer[participant.id] ?? FALLBACK_PROGRESS;
-    return {
-      participantId: participant.id,
-      displayName: participant.displayName,
-      completedLaps: Math.min(Math.max(progress.lap - 1, 0), 3),
-      checkpoint: progress.checkpoint,
-    };
-  });
+  const startCountdownLabel =
+    startCountdownValue === 0 ? 'Partez'
+    : typeof startCountdownValue === 'number' ? String(startCountdownValue)
+    : '';
+  const liveScoreboard = useMemo<LiveScoreboardEntry[]>(() => {
+    const hasCheckpoint = Boolean(circuit.lapCheckpoint);
+    const ranking = raceConfig.participants.map((participant) => {
+      const progress = lapProgressByPlayer[participant.id] ?? FALLBACK_PROGRESS;
+      const completedLaps = Math.min(Math.max(progress.lap - 1, 0), 3);
+      const pose = poseRefsByParticipant[participant.id]?.current;
+      const targetMarker = progress.checkpoint ? lapStartMarker : lapCheckpointMarker;
+      const distanceToTarget =
+        hasCheckpoint ? distanceFromPoseToPoint(pose, targetMarker) : Number.POSITIVE_INFINITY;
+      const segmentProgress =
+        hasCheckpoint ? clampValue(1 - distanceToTarget / lapSegmentDistance, 0, 0.999) : 0;
+      const progressionScore =
+        completedLaps * 2 + (progress.checkpoint ? 1 : 0) + (progress.finished ? 1 : segmentProgress);
+
+      return {
+        participantId: participant.id,
+        displayName: participant.displayName,
+        completedLaps,
+        checkpoint: progress.checkpoint,
+        finished: progress.finished,
+        finishTimestamp: progress.finishTimestamp ?? Number.POSITIVE_INFINITY,
+        progressionScore,
+      };
+    });
+
+    ranking.sort((left, right) => {
+      if (left.finished !== right.finished) return left.finished ? -1 : 1;
+      if (left.finished && right.finished && left.finishTimestamp !== right.finishTimestamp) {
+        return left.finishTimestamp - right.finishTimestamp;
+      }
+      if (left.progressionScore !== right.progressionScore) {
+        return right.progressionScore - left.progressionScore;
+      }
+      return (
+        (participantOrder.get(left.participantId) ?? 0) -
+        (participantOrder.get(right.participantId) ?? 0)
+      );
+    });
+
+    return ranking.map(({ finishTimestamp: _ignoredTime, progressionScore: _ignoredScore, ...entry }, index) => ({
+      ...entry,
+      position: index + 1,
+    }));
+  }, [
+    circuit.lapCheckpoint,
+    lapCheckpointMarker,
+    lapProgressByPlayer,
+    lapSegmentDistance,
+    lapStartMarker,
+    liveScoreboardTick,
+    participantOrder,
+    poseRefsByParticipant,
+    raceConfig.participants,
+  ]);
   const isCourseRankingVisible = overlayStep === 'course-ranking';
   const isCourseActionVisible = overlayStep === 'course-actions';
   const isGrandPrixResultVisible = overlayStep === 'grand-prix-result';
   const shouldRenderRaceWorld = !isGrandPrixResultVisible;
 
   useEffect(() => {
-    if (!sceneReady || overlayStep !== 'none') return;
+    if (!sceneReady || isLoadingOverlayActive || overlayStep !== 'none') return;
     if (startCountdownStartedRef.current) return;
 
     startCountdownStartedRef.current = true;
     setStartCountdownValue(START_COUNTDOWN_INITIAL);
-  }, [overlayStep, sceneReady]);
+  }, [isLoadingOverlayActive, overlayStep, sceneReady]);
+
+  useEffect(() => {
+    if (!sceneReady || isLoadingOverlayActive || overlayStep !== 'none') return;
+
+    const timerId = window.setInterval(() => {
+      setLiveScoreboardTick((prev) => (prev + 1) % 1_000_000);
+    }, LIVE_SCOREBOARD_REFRESH_MS);
+    return () => window.clearInterval(timerId);
+  }, [isLoadingOverlayActive, overlayStep, sceneReady]);
 
   useEffect(() => {
     if (startCountdownValue === null) return;
@@ -651,22 +774,38 @@ export function Scene({
         Retour
       </button>
       {raceConfig.humanCount === 2 ? <div className="split-divider" aria-hidden /> : null}
-      {!sceneReady ? (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0b1730]/82 backdrop-blur-sm">
-          <div className="rounded-xl border border-white/30 bg-black/25 px-6 py-4 text-center text-white shadow-2xl">
-            <div className="text-xs font-bold tracking-[0.18em] uppercase opacity-85">Chargement 3D</div>
-            <div className="mt-2 text-2xl font-black">{loadingValue}</div>
-            <div className="mt-2 text-[11px] opacity-75">{loadingMessage}</div>
-          </div>
+      {loadingOverlayVisible ? (
+        <div
+          className={`absolute inset-0 z-[80] transition-opacity duration-500 ${
+            loadingOverlayFading ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          <img
+            src="/ui/grand-prix/courses/preview-00.png"
+            alt=""
+            aria-hidden
+            className="h-full w-full object-cover"
+          />
+          <img
+            src="/ui/MK8-Line-Yoshi-Singing.gif"
+            alt=""
+            aria-hidden
+            className="pointer-events-none absolute bottom-4 right-4 w-[clamp(120px,18vw,240px)] max-w-[40vw] object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.45)]"
+          />
         </div>
       ) : null}
 
       {isStartCountdownVisible ? (
-        <div className="pointer-events-none absolute inset-0 z-68 flex items-center justify-center">
-          <div className="rounded-2xl border border-white/30 bg-[#041334]/62 px-10 py-7 text-center text-white shadow-[0_22px_52px_rgba(1,9,31,0.55)] backdrop-blur-sm">
-            <div className="text-[10px] font-bold uppercase tracking-[0.24em] text-white/80">Depart</div>
-            <div className="mt-1 text-[clamp(4rem,12vw,8.5rem)] leading-none font-black tabular-nums">
-              {startCountdownValue}
+        <div className="pointer-events-none absolute inset-0 z-[68] flex items-center justify-center">
+          <div className="text-center text-white">
+            <div
+              className={`leading-none font-black drop-shadow-[0_14px_34px_rgba(1,8,26,0.75)] ${
+                startCountdownValue === 0 ?
+                  'text-[clamp(2.8rem,10vw,6.2rem)] uppercase tracking-[0.08em]'
+                : 'text-[clamp(4rem,12vw,8.5rem)] tabular-nums'
+              }`}
+            >
+              {startCountdownLabel}
             </div>
             {showStartBoostHint ? (
               <div className="mt-2 text-xs font-semibold uppercase tracking-widest text-[#ffe8a3]">
@@ -677,20 +816,25 @@ export function Scene({
         </div>
       ) : null}
 
-      {sceneReady && overlayStep === 'none' ? (
-        <div className="absolute right-4 top-4 z-40 min-w-[180px] rounded-xl border border-white/30 bg-[#0a214f]/72 p-3 text-white shadow-2xl backdrop-blur-sm">
+      {sceneReady && !isLoadingOverlayActive && overlayStep === 'none' ? (
+        <div className="absolute right-4 top-4 z-40 min-w-[230px] rounded-xl border border-white/30 bg-[#0a214f]/72 p-3 text-white shadow-2xl backdrop-blur-sm">
           <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/85">
-            Tours effectues
+            Classement live
           </div>
           <div className="mt-2 max-h-[52vh] space-y-1.5 overflow-y-auto pr-1">
-            {lapSummary.map((entry) => (
-              <div key={`lap-${entry.participantId}`} className="flex items-center justify-between text-xs">
-                <span className="font-semibold">{entry.displayName}</span>
+            {liveScoreboard.map((entry) => (
+              <div key={`lap-${entry.participantId}`} className="flex items-center justify-between gap-2 text-xs">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="w-[1.75rem] font-black text-[#ffd670]">#{entry.position}</span>
+                  <span className="truncate font-semibold">{entry.displayName}</span>
+                </div>
                 <span className="font-black tracking-wide">
-                  {entry.completedLaps}/3
-                  <span className="ml-1 font-medium text-white/75">
-                    {entry.checkpoint ? 'CP OK' : 'CP OFF'}
-                  </span>
+                  {entry.finished ? 'Arrive' : `${entry.completedLaps}/3`}
+                  {!entry.finished ? (
+                    <span className="ml-1 font-medium text-white/75">
+                      {entry.checkpoint ? 'CP OK' : 'CP OFF'}
+                    </span>
+                  ) : null}
                 </span>
               </div>
             ))}
