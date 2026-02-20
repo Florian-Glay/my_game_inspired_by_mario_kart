@@ -40,6 +40,11 @@ export function hasColliderDrag(handle: number) {
   return colliderDragMap.has(handle);
 }
 
+export function clearDragRegistry() {
+  bodyDragMap.clear();
+  colliderDragMap.clear();
+}
+
 export default {
   bodyDragMap,
   colliderDragMap,

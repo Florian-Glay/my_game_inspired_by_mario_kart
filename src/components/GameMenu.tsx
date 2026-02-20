@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CHARACTERS,
   VEHICLES,
@@ -10,16 +10,18 @@ import {
   GRAND_PRIX_ORDER,
   GRAND_PRIXS,
   HERO_IMAGE_PATH,
+  MAX_LOCAL_HUMANS,
 } from '../config/raceCatalog';
 import type {
   CcLevel,
   GameScreen,
   GrandPrixId,
-  PlayerId,
+  HumanPlayerSlotId,
   PlayerLoadoutSelection,
   RaceMode,
 } from '../types/game';
 import { GaragePreview } from './GaragePreview';
+import { MenuParticleField } from './MenuParticleField';
 
 type MenuScreen = Exclude<GameScreen, 'race'>;
 type MenuMotionState = 'home' | 'home-exit' | 'submenu' | 'submenu-exit';
@@ -27,15 +29,16 @@ type ExitMotionState = Extract<MenuMotionState, 'home-exit' | 'submenu-exit'>;
 type StableMotionState = Extract<MenuMotionState, 'home' | 'submenu'>;
 
 const HOME_PANEL_TRANSITION_MS = 420;
+const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 
 type GameMenuProps = {
   screen: MenuScreen;
   mode: RaceMode | null;
   cc: CcLevel | null;
-  p1Loadout: PlayerLoadoutSelection | null;
-  p2Loadout: PlayerLoadoutSelection | null;
+  humanCount: number | null;
+  humanLoadoutsBySlot: Partial<Record<HumanPlayerSlotId, PlayerLoadoutSelection>>;
   activeLoadout: PlayerLoadoutSelection | null;
-  activeCharacterPlayer: PlayerId;
+  activeHumanSlot: HumanPlayerSlotId;
   selectedGrandPrixId: GrandPrixId | null;
   errorMessage: string | null;
   isCheckingAssets: boolean;
@@ -43,6 +46,7 @@ type GameMenuProps = {
   onSelectMode: (mode: RaceMode) => void;
   onOpenConfig: () => void;
   onSelectCc: (cc: CcLevel) => void;
+  onSelectHumanCount: (count: number) => void;
   onCycleCharacter: (direction: -1 | 1) => void;
   onCycleVehicle: (direction: -1 | 1) => void;
   onCycleWheel: (direction: -1 | 1) => void;
@@ -78,6 +82,16 @@ type CatalogPreviewItem = {
   label: string;
   thumbnail: string;
 };
+
+function getHumanLabel(slot: HumanPlayerSlotId) {
+  return `Joueur ${HUMAN_SLOT_ORDER.indexOf(slot) + 1}`;
+}
+
+function getSelectedHumanSlots(humanCount: number | null) {
+  if (!humanCount) return [];
+  const clamped = Math.min(Math.max(humanCount, 1), MAX_LOCAL_HUMANS);
+  return HUMAN_SLOT_ORDER.slice(0, clamped);
+}
 
 function getAdjacentCatalogItems<T extends CatalogPreviewItem>(
   items: readonly T[],
@@ -216,10 +230,10 @@ export function GameMenu({
   screen,
   mode,
   cc,
-  p1Loadout,
-  p2Loadout,
+  humanCount,
+  humanLoadoutsBySlot,
   activeLoadout,
-  activeCharacterPlayer,
+  activeHumanSlot,
   selectedGrandPrixId,
   errorMessage,
   isCheckingAssets,
@@ -227,6 +241,7 @@ export function GameMenu({
   onSelectMode,
   onOpenConfig,
   onSelectCc,
+  onSelectHumanCount,
   onCycleCharacter,
   onCycleVehicle,
   onCycleWheel,
@@ -240,7 +255,8 @@ export function GameMenu({
   );
   const transitionTimerRef = useRef<number | null>(null);
   const transitionSourceScreenRef = useRef<MenuScreen>(screen);
-  const currentPlayerLabel = activeCharacterPlayer === 'p1' ? 'Joueur 1' : 'Joueur 2';
+  const currentPlayerLabel = getHumanLabel(activeHumanSlot);
+  const selectedHumanSlots = getSelectedHumanSlots(humanCount);
   const isTransitioning = motionState === 'home-exit' || motionState === 'submenu-exit';
   const displayedScreen = isTransitioning ? transitionSourceScreenRef.current : screen;
   const showBack = displayedScreen !== 'home';
@@ -265,6 +281,7 @@ export function GameMenu({
         origin: 'N/A',
         label: `Course ${index + 1}`,
         previewImage: HERO_IMAGE_PATH,
+        circuitId: 'ds_mario_circuit' as const,
       }));
 
   const clearTransitionTimer = () => {
@@ -321,10 +338,9 @@ export function GameMenu({
     runScreenTransition('submenu-exit', 'submenu', action);
 
   const canAdvanceToCircuit =
-    mode === 'solo' ? Boolean(p1Loadout)
-    : mode === 'multi' ?
-      activeCharacterPlayer === 'p2' && Boolean(p1Loadout && p2Loadout)
-    : false;
+    selectedHumanSlots.length > 0 &&
+    selectedHumanSlots[selectedHumanSlots.length - 1] === activeHumanSlot &&
+    selectedHumanSlots.every((slot) => Boolean(humanLoadoutsBySlot[slot]));
 
   const handleConfirmLoadoutClick = () => {
     if (canAdvanceToCircuit) {
@@ -337,7 +353,7 @@ export function GameMenu({
   const handleBackClick = () => {
     if (isTransitioning) return;
 
-    if (screen === 'characters' && mode === 'multi' && activeCharacterPlayer === 'p2') {
+    if (screen === 'characters' && activeHumanSlot !== 'p1') {
       onBack();
       return;
     }
@@ -347,7 +363,7 @@ export function GameMenu({
       return;
     }
 
-    if (screen === 'characters' || screen === 'circuit') {
+    if (screen === 'playercount' || screen === 'characters' || screen === 'circuit') {
       runBackwardTransitionToSubmenu(onBack);
       return;
     }
@@ -358,8 +374,7 @@ export function GameMenu({
   return (
     <div className="mk-menu-screen">
       <div className="mk-menu-background" />
-      <div className="mk-menu-particle-field" aria-hidden />
-      <div className="mk-menu-particle-field mk-menu-particle-field--far" aria-hidden />
+      <MenuParticleField />
       <div
         className={`mk-menu-overlay mk-menu-overlay--${motionState} ${displayedScreen === 'characters' ? 'mk-menu-overlay--garage' : ''} ${
           isTransitioning ? 'is-transitioning' : ''
@@ -423,6 +438,12 @@ export function GameMenu({
                 <div>
                   <strong>P2 clavier:</strong> Fleches directionnelles
                 </div>
+                <div>
+                  <strong>P3 clavier:</strong> IJKL
+                </div>
+                <div>
+                  <strong>P4 clavier:</strong> Numpad 8/4/5/6
+                </div>
               </div>
             </div>
           )}
@@ -445,18 +466,37 @@ export function GameMenu({
             </div>
           )}
 
+          {displayedScreen === 'playercount' && (
+            <div className="mk-menu-list mk-menu-list--animated">
+              {[2, 3, 4].map((count) => (
+                <button
+                  key={count}
+                  type="button"
+                  className={`mk-main-btn ${humanCount === count ? 'is-active' : ''}`}
+                  onClick={() => runForwardTransition(() => onSelectHumanCount(count))}
+                >
+                  <span className="mk-main-btn-icon">
+                    <img src="ui/multi.png" alt={`${count} joueurs`} />
+                  </span>
+                  <span className="mk-main-btn-label">{count} JOUEURS</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           {displayedScreen === 'characters' && (
             <div className="mk-garage-layout mk-card--animated">
               <div className="mk-garage-selector mk-card">
-                <h2>{mode === 'multi' ? `${currentPlayerLabel} - Selection` : 'Selection personnage'}</h2>
+                <h2>{mode === 'solo' ? 'Joueur 1 - Selection' : `${currentPlayerLabel} - Selection`}</h2>
                 <p>Choisis un personnage, un vehicule et un type de roues.</p>
 
-                {mode === 'multi' ? (
-                  <div className="mk-character-tags">
-                    <span className="mk-tag p1">P1 {p1Loadout ? 'pret' : 'en cours'}</span>
-                    <span className="mk-tag p2">P2 {p2Loadout ? 'pret' : 'en cours'}</span>
-                  </div>
-                ) : null}
+                <div className="mk-character-tags">
+                  {selectedHumanSlots.map((slot) => (
+                    <span key={slot} className={`mk-tag ${slot}`}>
+                      {getHumanLabel(slot)} {humanLoadoutsBySlot[slot] ? 'pret' : 'en cours'}
+                    </span>
+                  ))}
+                </div>
 
                 <div className="mk-garage-sections">
                   <GarageSectionCard

@@ -18,3 +18,7 @@ export function unregisterSurfaceTrigger(handle: number) {
 export function getSurfaceTriggerType(handle: number) {
   return colliderTriggerByHandle.get(handle);
 }
+
+export function clearSurfaceTriggerRegistry() {
+  colliderTriggerByHandle.clear();
+}

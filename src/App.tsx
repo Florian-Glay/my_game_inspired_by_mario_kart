@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CommandBubble from './components/CommandBubble';
 import { GameMenu } from './components/GameMenu';
 import { Scene } from './components/Scene';
@@ -15,27 +15,38 @@ import {
   CIRCUITS,
   GRAND_PRIX_ORDER,
   GRAND_PRIXS,
+  MAX_LOCAL_HUMANS,
   PLAYER_KEY_BINDINGS,
+  TOTAL_RACE_PARTICIPANTS,
 } from './config/raceCatalog';
+import { clearDragRegistry } from './state/dragRegistry';
 import { gameMode } from './state/gamemode';
+import { clearSurfaceTriggerRegistry } from './state/surfaceTriggerRegistry';
 import type {
   CcLevel,
-  CircuitId,
   CourseRaceResult,
   GameScreen,
   GrandPrixId,
   GrandPrixStanding,
-  PlayerId,
+  HumanPlayerSlotId,
   PlayerLoadoutSelection,
   RaceConfig,
   RaceMode,
+  RaceParticipantConfig,
 } from './types/game';
+import {
+  getRaceAssetUrls,
+  scheduleAllKnownModelCacheClear,
+  scheduleGLTFAssetCacheClear,
+} from './utils/raceAssetMemory';
 
 type GrandPrixProgressState = {
   grandPrixId: GrandPrixId;
   currentCourseIndex: number;
   courseResults: CourseRaceResult[];
 };
+
+const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 
 async function checkAssetAvailability(url: string) {
   try {
@@ -53,19 +64,6 @@ async function checkAssetAvailability(url: string) {
   }
 }
 
-function getCircuitAssetUrls(circuitId: CircuitId) {
-  const circuit = CIRCUITS[circuitId];
-  return [
-    circuit.road.model,
-    circuit.ext.model,
-    circuit.antiGravIn?.model,
-    circuit.antiGravOut?.model,
-    circuit.booster?.model,
-    circuit.lapStart?.model,
-    circuit.lapCheckpoint?.model,
-  ].filter((modelPath): modelPath is string => Boolean(modelPath));
-}
-
 async function getMissingAssetUrls(urls: string[]) {
   const deduplicated = Array.from(new Set(urls));
   const checks = await Promise.all(
@@ -78,24 +76,67 @@ async function getMissingAssetUrls(urls: string[]) {
   return checks.filter((entry) => !entry.exists).map((entry) => entry.modelPath);
 }
 
+function getHumanSlots(humanCount: number) {
+  return HUMAN_SLOT_ORDER.slice(0, Math.min(Math.max(humanCount, 1), MAX_LOCAL_HUMANS));
+}
+
+function getHumanDisplayName(slot: HumanPlayerSlotId) {
+  return `Joueur ${HUMAN_SLOT_ORDER.indexOf(slot) + 1}`;
+}
+
+function createRandomLoadoutSelection(): PlayerLoadoutSelection {
+  const character = CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)] ?? CHARACTERS[0];
+  const vehicle = VEHICLES[Math.floor(Math.random() * VEHICLES.length)] ?? VEHICLES[0];
+  const wheel = WHEELS[Math.floor(Math.random() * WHEELS.length)] ?? WHEELS[0];
+
+  return {
+    characterId: character?.id ?? '',
+    vehicleId: vehicle?.id ?? '',
+    wheelId: wheel?.id ?? '',
+  };
+}
+
+function shuffleParticipants(participants: RaceParticipantConfig[]) {
+  const shuffled = [...participants];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = shuffled[i];
+    shuffled[i] = shuffled[j];
+    shuffled[j] = tmp;
+  }
+  return shuffled;
+}
+
 export function App() {
   const [screen, setScreen] = useState<GameScreen>('home');
   const [mode, setMode] = useState<RaceMode | null>(null);
   const [cc, setCc] = useState<CcLevel | null>(null);
-  const [p1Loadout, setP1Loadout] = useState<PlayerLoadoutSelection | null>(null);
-  const [p2Loadout, setP2Loadout] = useState<PlayerLoadoutSelection | null>(null);
-  const [activeCharacterPlayer, setActiveCharacterPlayer] = useState<PlayerId>('p1');
+  const [humanCount, setHumanCount] = useState<number | null>(null);
+  const [humanLoadoutsBySlot, setHumanLoadoutsBySlot] = useState<
+    Partial<Record<HumanPlayerSlotId, PlayerLoadoutSelection>>
+  >({});
+  const [activeHumanSlot, setActiveHumanSlot] = useState<HumanPlayerSlotId>('p1');
   const [selectedGrandPrixId, setSelectedGrandPrixId] = useState<GrandPrixId | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isCheckingAssets, setIsCheckingAssets] = useState(false);
   const [raceConfig, setRaceConfig] = useState<RaceConfig | null>(null);
   const [grandPrixProgress, setGrandPrixProgress] = useState<GrandPrixProgressState | null>(null);
+  const loadedRaceAssetUrlsRef = useRef<Set<string>>(new Set());
+  const pendingCacheClearCancelRef = useRef<(() => void) | null>(null);
 
-  const activeLoadout = activeCharacterPlayer === 'p1' ? p1Loadout : p2Loadout;
+  useEffect(
+    () => () => {
+      pendingCacheClearCancelRef.current?.();
+      pendingCacheClearCancelRef.current = null;
+    },
+    [],
+  );
+
+  const activeLoadout = humanLoadoutsBySlot[activeHumanSlot] ?? null;
 
   const isMultiplayerRace = useMemo(
-    () => screen === 'race' && raceConfig?.mode === 'multi',
-    [raceConfig?.mode, screen],
+    () => screen === 'race' && (raceConfig?.humanCount ?? 1) > 1,
+    [raceConfig?.humanCount, screen],
   );
 
   const selectedGrandPrix =
@@ -108,14 +149,17 @@ export function App() {
       (a, b) => a.courseIndex - b.courseIndex,
     );
 
-    const standings = raceConfig.players.map((player) => {
+    const standings = raceConfig.participants.map((participant) => {
       const coursePositions = orderedResults.map((result) => {
-        const playerEntry = result.ranking.find((entry) => entry.playerId === player.id);
-        return playerEntry?.position ?? raceConfig.players.length;
+        const participantEntry = result.ranking.find(
+          (entry) => entry.participantId === participant.id,
+        );
+        return participantEntry?.position ?? raceConfig.participants.length;
       });
       const totalPosition = coursePositions.reduce((sum, value) => sum + value, 0);
       return {
-        playerId: player.id,
+        participantId: participant.id,
+        displayName: participant.displayName,
         totalPosition,
         coursePositions,
       };
@@ -128,19 +172,41 @@ export function App() {
       const leftLast = left.coursePositions[left.coursePositions.length - 1] ?? Number.MAX_SAFE_INTEGER;
       const rightLast = right.coursePositions[right.coursePositions.length - 1] ?? Number.MAX_SAFE_INTEGER;
       if (leftLast !== rightLast) return leftLast - rightLast;
-      return left.playerId.localeCompare(right.playerId);
+      return left.participantId.localeCompare(right.participantId);
     });
 
     return standings;
   }, [grandPrixProgress, raceConfig]);
 
   const resetToHome = () => {
+    const completedGrandPrix =
+      raceConfig &&
+      raceConfig.courseIndex + 1 >= raceConfig.totalCourses &&
+      grandPrixProgress?.grandPrixId === raceConfig.grandPrixId &&
+      grandPrixProgress.courseResults.length >= raceConfig.totalCourses;
+
+    pendingCacheClearCancelRef.current?.();
+    pendingCacheClearCancelRef.current = scheduleAllKnownModelCacheClear({
+      chunkSize: 1,
+      intervalMs: 18,
+    });
+    loadedRaceAssetUrlsRef.current.clear();
+    clearDragRegistry();
+    clearSurfaceTriggerRegistry();
+
+    if (completedGrandPrix) {
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 40);
+      return;
+    }
+
     setScreen('home');
     setMode(null);
     setCc(null);
-    setP1Loadout(null);
-    setP2Loadout(null);
-    setActiveCharacterPlayer('p1');
+    setHumanCount(null);
+    setHumanLoadoutsBySlot({});
+    setActiveHumanSlot('p1');
     setSelectedGrandPrixId(null);
     setErrorMessage(null);
     setIsCheckingAssets(false);
@@ -159,17 +225,36 @@ export function App() {
 
     if (screen === 'cc') {
       setMode(null);
+      setHumanCount(null);
+      setHumanLoadoutsBySlot({});
       setGrandPrixProgress(null);
       setScreen('home');
       return;
     }
 
+    if (screen === 'playercount') {
+      setHumanCount(null);
+      setHumanLoadoutsBySlot({});
+      setScreen('cc');
+      return;
+    }
+
     if (screen === 'characters') {
-      if (mode === 'multi' && activeCharacterPlayer === 'p2') {
-        setP2Loadout(null);
-        setActiveCharacterPlayer('p1');
+      const slots = humanCount ? getHumanSlots(humanCount) : [];
+      const activeIndex = slots.indexOf(activeHumanSlot);
+      if (activeIndex > 0) {
+        const previousSlot = slots[activeIndex - 1];
+        if (previousSlot) {
+          setActiveHumanSlot(previousSlot);
+          return;
+        }
+      }
+
+      if (mode === 'multi') {
+        setScreen('playercount');
         return;
       }
+
       setScreen('cc');
       return;
     }
@@ -177,18 +262,22 @@ export function App() {
     if (screen === 'circuit') {
       setGrandPrixProgress(null);
       setScreen('characters');
-      setActiveCharacterPlayer(mode === 'multi' ? 'p2' : 'p1');
+      if (humanCount) {
+        const slots = getHumanSlots(humanCount);
+        const lastSlot = slots[slots.length - 1];
+        if (lastSlot) setActiveHumanSlot(lastSlot);
+      }
     }
   };
 
   const handleSelectMode = (nextMode: RaceMode) => {
     setMode(nextMode);
     setCc(null);
-    setP1Loadout(null);
-    setP2Loadout(null);
+    setHumanCount(nextMode === 'solo' ? 1 : null);
+    setHumanLoadoutsBySlot({});
     setSelectedGrandPrixId(null);
     setErrorMessage(null);
-    setActiveCharacterPlayer('p1');
+    setActiveHumanSlot('p1');
     setRaceConfig(null);
     setGrandPrixProgress(null);
     setScreen('cc');
@@ -202,12 +291,38 @@ export function App() {
 
   const handleSelectCc = (nextCc: CcLevel) => {
     setCc(nextCc);
-    setP1Loadout(getDefaultLoadoutSelection());
-    setP2Loadout(null);
     setSelectedGrandPrixId(GRAND_PRIX_ORDER[0] ?? null);
     setGrandPrixProgress(null);
     setErrorMessage(null);
-    setActiveCharacterPlayer('p1');
+    setActiveHumanSlot('p1');
+
+    if (mode === 'solo') {
+      setHumanCount(1);
+      setHumanLoadoutsBySlot({
+        p1: humanLoadoutsBySlot.p1 ?? getDefaultLoadoutSelection(),
+      });
+      setScreen('characters');
+      return;
+    }
+
+    setHumanCount(null);
+    setHumanLoadoutsBySlot({});
+    setScreen('playercount');
+  };
+
+  const handleSelectHumanCount = (nextCount: number) => {
+    const clampedCount = Math.min(Math.max(nextCount, 2), MAX_LOCAL_HUMANS);
+    const slots = getHumanSlots(clampedCount);
+    const nextLoadouts: Partial<Record<HumanPlayerSlotId, PlayerLoadoutSelection>> = {};
+    for (const slot of slots) {
+      nextLoadouts[slot] = humanLoadoutsBySlot[slot] ?? getDefaultLoadoutSelection();
+    }
+
+    setHumanCount(clampedCount);
+    setHumanLoadoutsBySlot(nextLoadouts);
+    setGrandPrixProgress(null);
+    setErrorMessage(null);
+    setActiveHumanSlot('p1');
     setScreen('characters');
   };
 
@@ -218,12 +333,10 @@ export function App() {
     setSelectedGrandPrixId(GRAND_PRIX_ORDER[0] ?? null);
     setGrandPrixProgress(null);
 
-    if (activeCharacterPlayer === 'p1') {
-      setP1Loadout((current) => updater(current ?? getDefaultLoadoutSelection()));
-      return;
-    }
-
-    setP2Loadout((current) => updater(current ?? getDefaultLoadoutSelection()));
+    setHumanLoadoutsBySlot((current) => ({
+      ...current,
+      [activeHumanSlot]: updater(current[activeHumanSlot] ?? getDefaultLoadoutSelection()),
+    }));
   };
 
   const handleCycleCharacter = (direction: -1 | 1) => {
@@ -251,33 +364,24 @@ export function App() {
   };
 
   const handleConfirmLoadout = () => {
-    if (!mode) return;
+    if (!mode || !humanCount) return;
 
     setErrorMessage(null);
     setSelectedGrandPrixId((current) => current ?? GRAND_PRIX_ORDER[0] ?? null);
 
-    if (mode === 'solo') {
-      if (!p1Loadout) {
-        setErrorMessage('Selection joueur 1 incomplete.');
-        return;
-      }
-      setActiveCharacterPlayer('p1');
-      setScreen('circuit');
+    const slots = getHumanSlots(humanCount);
+    const currentSlotLoadout = humanLoadoutsBySlot[activeHumanSlot];
+    if (!currentSlotLoadout) {
+      setErrorMessage(`${getHumanDisplayName(activeHumanSlot)}: selection incomplete.`);
       return;
     }
 
-    if (activeCharacterPlayer === 'p1') {
-      if (!p1Loadout) {
-        setErrorMessage('Selection joueur 1 incomplete.');
-        return;
-      }
-      setP2Loadout((current) => current ?? getDefaultLoadoutSelection());
-      setActiveCharacterPlayer('p2');
-      return;
-    }
+    const activeIndex = slots.indexOf(activeHumanSlot);
+    if (activeIndex < 0) return;
 
-    if (!p2Loadout) {
-      setErrorMessage('Selection joueur 2 incomplete.');
+    const nextSlot = slots[activeIndex + 1];
+    if (nextSlot) {
+      setActiveHumanSlot(nextSlot);
       return;
     }
 
@@ -292,7 +396,7 @@ export function App() {
 
   const buildRaceConfigForCourseIndex = useCallback(
     (courseIndex: number): RaceConfig | null => {
-      if (!mode || !cc || !selectedGrandPrixId || !p1Loadout) return null;
+      if (!mode || !cc || !selectedGrandPrixId || !humanCount) return null;
 
       const currentGrandPrix = GRAND_PRIXS[selectedGrandPrixId];
       const selectedCourse = currentGrandPrix?.courses[courseIndex];
@@ -301,61 +405,88 @@ export function App() {
         return null;
       }
 
-      if (mode === 'multi' && !p2Loadout) return null;
-
-      const p1Character = getCatalogItemById(CHARACTERS, p1Loadout.characterId);
-      const p1Vehicle = getCatalogItemById(VEHICLES, p1Loadout.vehicleId);
-      const p1Wheel = getCatalogItemById(WHEELS, p1Loadout.wheelId);
       const circuitConfig = CIRCUITS[selectedCircuit];
-      const p1WheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[p1Wheel.size];
+      if (circuitConfig.spawnSlots.length < TOTAL_RACE_PARTICIPANTS) {
+        return null;
+      }
 
-      const players: RaceConfig['players'] = [
-        {
-          id: 'p1',
-          loadout: p1Loadout,
-          vehicleModel: p1Vehicle.model,
-          vehicleScale: p1Vehicle.scale,
-          characterModel: p1Character.model,
-          characterScale: p1Character.scale,
-          wheelModel: p1Wheel.model,
-          wheelScale: p1Wheel.scale,
-          characterMount: p1Vehicle.characterMount,
-          wheelMounts: p1Vehicle.wheelMounts,
-          chassisLift: p1WheelProfile.chassisLift,
-          driverLift: p1WheelProfile.driverLift,
-          spawn: mode === 'multi' ? circuitConfig.spawns.p1 : circuitConfig.spawns.solo,
-          spawnRotation:
-            mode === 'multi' ? circuitConfig.spawnRotations.p1 : circuitConfig.spawnRotations.solo,
-          keyBindings: PLAYER_KEY_BINDINGS.p1,
-        },
-      ];
+      const humanSlots = getHumanSlots(humanCount);
+      const humanParticipants: RaceParticipantConfig[] = [];
+      for (const slot of humanSlots) {
+        const loadout = humanLoadoutsBySlot[slot];
+        if (!loadout) return null;
 
-      if (mode === 'multi' && p2Loadout) {
-        const p2Character = getCatalogItemById(CHARACTERS, p2Loadout.characterId);
-        const p2Vehicle = getCatalogItemById(VEHICLES, p2Loadout.vehicleId);
-        const p2Wheel = getCatalogItemById(WHEELS, p2Loadout.wheelId);
-        const p2WheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[p2Wheel.size];
-        players.push({
-          id: 'p2',
-          loadout: p2Loadout,
-          vehicleModel: p2Vehicle.model,
-          vehicleScale: p2Vehicle.scale,
-          characterModel: p2Character.model,
-          characterScale: p2Character.scale,
-          wheelModel: p2Wheel.model,
-          wheelScale: p2Wheel.scale,
-          characterMount: p2Vehicle.characterMount,
-          wheelMounts: p2Vehicle.wheelMounts,
-          chassisLift: p2WheelProfile.chassisLift,
-          driverLift: p2WheelProfile.driverLift,
-          spawn: circuitConfig.spawns.p2,
-          spawnRotation: circuitConfig.spawnRotations.p2,
-          keyBindings: PLAYER_KEY_BINDINGS.p2,
+        const character = getCatalogItemById(CHARACTERS, loadout.characterId);
+        const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
+        const wheel = getCatalogItemById(WHEELS, loadout.wheelId);
+        const wheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[wheel.size];
+
+        humanParticipants.push({
+          id: `human-${slot}`,
+          displayName: getHumanDisplayName(slot),
+          kind: 'human',
+          humanSlotId: slot,
+          controlMode: 'human',
+          loadout,
+          vehicleModel: vehicle.model,
+          vehicleScale: vehicle.scale,
+          characterModel: character.model,
+          characterScale: character.scale,
+          wheelModel: wheel.model,
+          wheelScale: wheel.scale,
+          characterMount: vehicle.characterMount,
+          wheelMounts: vehicle.wheelMounts,
+          chassisLift: wheelProfile.chassisLift,
+          driverLift: wheelProfile.driverLift,
+          spawn: [0, 0, 0],
+          spawnRotation: [0, 0, 0],
+          keyBindings: PLAYER_KEY_BINDINGS[slot],
         });
       }
 
+      const botParticipants: RaceParticipantConfig[] = Array.from(
+        { length: TOTAL_RACE_PARTICIPANTS - humanParticipants.length },
+        (_, index) => {
+          const loadout = createRandomLoadoutSelection();
+          const character = getCatalogItemById(CHARACTERS, loadout.characterId);
+          const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
+          const wheel = getCatalogItemById(WHEELS, loadout.wheelId);
+          const wheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[wheel.size];
+          return {
+            id: `bot-${index + 1}`,
+            displayName: `Bot ${index + 1}`,
+            kind: 'bot',
+            controlMode: 'autopilot',
+            loadout,
+            vehicleModel: vehicle.model,
+            vehicleScale: vehicle.scale,
+            characterModel: character.model,
+            characterScale: character.scale,
+            wheelModel: wheel.model,
+            wheelScale: wheel.scale,
+            characterMount: vehicle.characterMount,
+            wheelMounts: vehicle.wheelMounts,
+            chassisLift: wheelProfile.chassisLift,
+            driverLift: wheelProfile.driverLift,
+            spawn: [0, 0, 0],
+            spawnRotation: [0, 0, 0],
+          };
+        },
+      );
+
+      const shuffledParticipants = shuffleParticipants([...humanParticipants, ...botParticipants]);
+      const participants = shuffledParticipants.map((participant, index) => {
+        const spawnSlot = circuitConfig.spawnSlots[index];
+        return {
+          ...participant,
+          spawn: spawnSlot.position,
+          spawnRotation: spawnSlot.rotation,
+        };
+      });
+
       return {
         mode,
+        humanCount,
         cc,
         circuit: selectedCircuit,
         grandPrixId: selectedGrandPrixId,
@@ -363,10 +494,10 @@ export function App() {
         courseLabel: selectedCourse.label,
         courseIndex,
         totalCourses: currentGrandPrix.courses.length,
-        players,
+        participants,
       };
     },
-    [cc, mode, p1Loadout, p2Loadout, selectedGrandPrixId],
+    [cc, humanCount, humanLoadoutsBySlot, mode, selectedGrandPrixId],
   );
 
   const launchCourseAtIndex = useCallback(
@@ -380,14 +511,7 @@ export function App() {
       setIsCheckingAssets(true);
       setErrorMessage(null);
       try {
-        const requiredAssetUrls = [
-          ...getCircuitAssetUrls(nextRaceConfig.circuit),
-          ...nextRaceConfig.players.flatMap((player) => [
-            player.characterModel,
-            player.vehicleModel,
-            player.wheelModel,
-          ]),
-        ];
+        const requiredAssetUrls = getRaceAssetUrls(nextRaceConfig);
 
         const missingAssets = await getMissingAssetUrls(requiredAssetUrls);
         if (missingAssets.length > 0) {
@@ -395,6 +519,16 @@ export function App() {
           return false;
         }
 
+        const nextAssetSet = new Set(requiredAssetUrls);
+        const staleAssetUrls = Array.from(loadedRaceAssetUrlsRef.current).filter(
+          (url) => !nextAssetSet.has(url),
+        );
+        pendingCacheClearCancelRef.current?.();
+        pendingCacheClearCancelRef.current = scheduleGLTFAssetCacheClear(staleAssetUrls, {
+          chunkSize: 1,
+          intervalMs: 24,
+        });
+        loadedRaceAssetUrlsRef.current = nextAssetSet;
         setRaceConfig(nextRaceConfig);
         setScreen('race');
         gameMode.current = 'run';
@@ -407,9 +541,17 @@ export function App() {
   );
 
   const handleConfirmGrandPrix = async () => {
-    if (!mode || !cc || !selectedGrandPrixId || !p1Loadout) {
+    if (!mode || !cc || !selectedGrandPrixId || !humanCount) {
       setErrorMessage('Selection incomplete avant lancement.');
       return;
+    }
+
+    const requiredSlots = getHumanSlots(humanCount);
+    for (const slot of requiredSlots) {
+      if (!humanLoadoutsBySlot[slot]) {
+        setErrorMessage(`${getHumanDisplayName(slot)} doit confirmer sa selection.`);
+        return;
+      }
     }
 
     const selectedCup = GRAND_PRIXS[selectedGrandPrixId];
@@ -429,11 +571,6 @@ export function App() {
         firstCourse,
       });
       setErrorMessage('Circuit de depart invalide pour ce Grand Prix.');
-      return;
-    }
-
-    if (mode === 'multi' && !p2Loadout) {
-      setErrorMessage('Le joueur 2 doit confirmer sa selection.');
       return;
     }
 
@@ -493,11 +630,21 @@ export function App() {
     raceConfig ? raceConfig.courseIndex + 1 < raceConfig.totalCourses : false;
 
   const menuScreen: Exclude<GameScreen, 'race'> = screen === 'race' ? 'home' : screen;
+  const sceneKey =
+    raceConfig ?
+      [
+        raceConfig.grandPrixId,
+        raceConfig.courseId,
+        raceConfig.courseIndex,
+        raceConfig.circuit,
+      ].join('|')
+    : 'no-race';
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-black">
       {screen === 'race' && raceConfig ? (
         <Scene
+          key={sceneKey}
           raceConfig={raceConfig}
           onRaceBack={resetToHome}
           onCourseFinished={handleCourseFinished}
@@ -511,10 +658,10 @@ export function App() {
           screen={menuScreen}
           mode={mode}
           cc={cc}
-          p1Loadout={p1Loadout}
-          p2Loadout={p2Loadout}
+          humanCount={humanCount}
+          humanLoadoutsBySlot={humanLoadoutsBySlot}
           activeLoadout={activeLoadout}
-          activeCharacterPlayer={activeCharacterPlayer}
+          activeHumanSlot={activeHumanSlot}
           selectedGrandPrixId={selectedGrandPrix?.id ?? selectedGrandPrixId}
           errorMessage={errorMessage}
           isCheckingAssets={isCheckingAssets}
@@ -522,6 +669,7 @@ export function App() {
           onSelectMode={handleSelectMode}
           onOpenConfig={handleOpenConfig}
           onSelectCc={handleSelectCc}
+          onSelectHumanCount={handleSelectHumanCount}
           onCycleCharacter={handleCycleCharacter}
           onCycleVehicle={handleCycleVehicle}
           onCycleWheel={handleCycleWheel}

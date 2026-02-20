@@ -1,4 +1,4 @@
-export type GameScreen = 'home' | 'config' | 'cc' | 'characters' | 'circuit' | 'race';
+export type GameScreen = 'home' | 'config' | 'cc' | 'playercount' | 'characters' | 'circuit' | 'race';
 
 export type RaceMode = 'solo' | 'multi';
 
@@ -20,7 +20,10 @@ export type GrandPrixId =
   | 'crossing_cup'
   | 'bell_cup';
 
-export type PlayerId = 'p1' | 'p2';
+export type HumanPlayerSlotId = 'p1' | 'p2' | 'p3' | 'p4';
+export type RaceParticipantId = string;
+export type RaceParticipantKind = 'human' | 'bot';
+export type ParticipantControlMode = 'human' | 'autopilot';
 
 export type Vec3 = [number, number, number];
 
@@ -59,8 +62,12 @@ export type CarPose = {
   qw?: number;
 };
 
-export type RacePlayerConfig = {
-  id: PlayerId;
+export type RaceParticipantConfig = {
+  id: RaceParticipantId;
+  displayName: string;
+  kind: RaceParticipantKind;
+  humanSlotId?: HumanPlayerSlotId;
+  controlMode: ParticipantControlMode;
   loadout: PlayerLoadoutSelection;
   vehicleModel: string;
   vehicleScale: Vec3;
@@ -74,11 +81,12 @@ export type RacePlayerConfig = {
   driverLift: number;
   spawn: Vec3;
   spawnRotation: Vec3;
-  keyBindings: KeyBindings;
+  keyBindings?: KeyBindings;
 };
 
 export type RaceConfig = {
   mode: RaceMode;
+  humanCount: number;
   cc: CcLevel;
   circuit: CircuitId;
   grandPrixId: GrandPrixId;
@@ -86,11 +94,12 @@ export type RaceConfig = {
   courseLabel: string;
   courseIndex: number;
   totalCourses: number;
-  players: RacePlayerConfig[];
+  participants: RaceParticipantConfig[];
 };
 
 export type CourseRankingEntry = {
-  playerId: PlayerId;
+  participantId: RaceParticipantId;
+  displayName: string;
   position: number;
   lap: number;
   checkpointReached: boolean;
@@ -106,7 +115,8 @@ export type CourseRaceResult = {
 };
 
 export type GrandPrixStanding = {
-  playerId: PlayerId;
+  participantId: RaceParticipantId;
+  displayName: string;
   totalPosition: number;
   coursePositions: number[];
 };

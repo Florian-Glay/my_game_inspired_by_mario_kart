@@ -5,21 +5,19 @@ import type { BufferGeometry, Group, Mesh } from 'three';
 import { Sphere, Vector3 } from 'three';
 import type { CircuitPerformanceConfig } from '../config/raceCatalog';
 import { PERF_PROFILE } from '../config/performanceProfile';
-import type { CarPose, RaceMode } from '../types/game';
+import type { CarPose } from '../types/game';
 
 type CircuitMeshCullingControllerProps = {
   roadGroupRef: MutableRefObject<Group | null>;
   extGroupRef: MutableRefObject<Group | null>;
-  p1PoseRef: MutableRefObject<CarPose>;
-  p2PoseRef: MutableRefObject<CarPose>;
-  mode: RaceMode;
+  viewerPoseRefs: MutableRefObject<CarPose>[];
   performance: CircuitPerformanceConfig;
 };
 
 type MeshEntry = {
   mesh: Mesh;
-  localSphere: Sphere;
-  worldSphere: Sphere;
+  worldCenter: Vector3;
+  worldRadius: number;
 };
 
 const CULL_DISTANCE_MARGIN = 18;
@@ -97,9 +95,7 @@ function isMeshVisibleFromPose(
 export function CircuitMeshCullingController({
   roadGroupRef,
   extGroupRef,
-  p1PoseRef,
-  p2PoseRef,
-  mode,
+  viewerPoseRefs,
   performance,
 }: CircuitMeshCullingControllerProps) {
   const frameRef = useRef(0);
@@ -109,12 +105,22 @@ export function CircuitMeshCullingController({
   const tmpToMesh = useMemo(() => new Vector3(), []);
   const tmpToMeshPlanar = useMemo(() => new Vector3(), []);
   const tmpForward = useMemo(() => new Vector3(), []);
+  const reusableSphere = useMemo(() => new Sphere(), []);
+  const coneHalfAngle = useMemo(() => {
+    const cullConeDot = Number.isFinite(performance.cullConeDot)
+      ? Math.max(-1, Math.min(1, performance.cullConeDot))
+      : DEFAULT_CULL_CONE_DOT;
+    return Math.acos(cullConeDot);
+  }, [performance.cullConeDot]);
 
   const refreshMeshEntries = () => {
     const roadGroup = roadGroupRef.current;
     const extGroup = extGroupRef.current;
 
     if (!roadGroup || !extGroup) return;
+
+    roadGroup.updateWorldMatrix(true, true);
+    extGroup.updateWorldMatrix(true, true);
 
     const entries: MeshEntry[] = [];
     const register = (candidate: unknown) => {
@@ -127,11 +133,12 @@ export function CircuitMeshCullingController({
       const geometry = mesh.geometry;
       if (!geometry.boundingSphere) geometry.computeBoundingSphere();
       if (!geometry.boundingSphere) return;
+      reusableSphere.copy(geometry.boundingSphere).applyMatrix4(mesh.matrixWorld);
 
       entries.push({
         mesh,
-        localSphere: geometry.boundingSphere.clone(),
-        worldSphere: new Sphere(),
+        worldCenter: reusableSphere.center.clone(),
+        worldRadius: reusableSphere.radius,
       });
     };
 
@@ -161,37 +168,22 @@ export function CircuitMeshCullingController({
 
     const entries = meshEntriesRef.current;
     if (entries.length === 0) return;
-
-    const cullConeDot = Number.isFinite(performance.cullConeDot)
-      ? Math.max(-1, Math.min(1, performance.cullConeDot))
-      : DEFAULT_CULL_CONE_DOT;
-    const coneHalfAngle = Math.acos(cullConeDot);
-    const p1Pose = p1PoseRef.current;
-    const p2Pose = p2PoseRef.current;
+    if (viewerPoseRefs.length === 0) return;
 
     for (const entry of entries) {
-      entry.worldSphere.copy(entry.localSphere).applyMatrix4(entry.mesh.matrixWorld);
-      const center = entry.worldSphere.center;
-      const radius = entry.worldSphere.radius;
+      const center = entry.worldCenter;
+      const radius = entry.worldRadius;
       const maxDistanceWithRadius = performance.maxVisibleDistance + radius + CULL_DISTANCE_MARGIN;
       const nearDistance = Math.max(0, performance.cullNearDistance);
 
-      const visibleForP1 = isMeshVisibleFromPose(
-        center,
-        p1Pose,
-        radius,
-        maxDistanceWithRadius,
-        nearDistance,
-        coneHalfAngle,
-        tmpToMesh,
-        tmpToMeshPlanar,
-        tmpForward,
-      );
-      const visibleForP2 =
-        mode === 'multi' ?
+      let visible = false;
+      for (let viewerIndex = 0; viewerIndex < viewerPoseRefs.length; viewerIndex += 1) {
+        const pose = viewerPoseRefs[viewerIndex]?.current;
+        if (!pose) continue;
+        if (
           isMeshVisibleFromPose(
             center,
-            p2Pose,
+            pose,
             radius,
             maxDistanceWithRadius,
             nearDistance,
@@ -200,9 +192,13 @@ export function CircuitMeshCullingController({
             tmpToMeshPlanar,
             tmpForward,
           )
-        : false;
+        ) {
+          visible = true;
+          break;
+        }
+      }
 
-      entry.mesh.visible = visibleForP1 || visibleForP2;
+      entry.mesh.visible = visible;
     }
   });
 

@@ -2,8 +2,8 @@ import type {
   CcLevel,
   CircuitId,
   GrandPrixId,
+  HumanPlayerSlotId,
   KeyBindings,
-  PlayerId,
   Vec3,
 } from '../types/game';
 
@@ -53,8 +53,7 @@ export type CircuitConfig = {
   id: CircuitId;
   label: string;
   transform: TransformConfig;
-  spawns: Record<'solo' | PlayerId, Vec3>;
-  spawnRotations: Record<'solo' | PlayerId, Vec3>;
+  spawnSlots: SpawnSlot[];
   road: SurfaceConfig;
   ext: SurfaceConfig;
   antiGravIn?: SurfaceTriggerConfig;
@@ -64,6 +63,11 @@ export type CircuitConfig = {
   lapCheckpoint?: SurfaceTriggerConfig;
   performance: CircuitPerformanceConfig;
   vehicleAttachment: VehicleAttachmentConfig;
+};
+
+export type SpawnSlot = {
+  position: Vec3;
+  rotation: Vec3;
 };
 
 export type GrandPrixCoursePreview = {
@@ -108,6 +112,8 @@ export const HERO_IMAGE_PATH = 'ui/home-hero.png';
 export const CIRCUIT_ORDER: CircuitId[] = ['ds_mario_circuit', 'stadium', 'super_bell_subway'];
 
 export const CC_ORDER: CcLevel[] = ['50cc', '100cc', '150cc', '200cc'];
+export const TOTAL_RACE_PARTICIPANTS = 12;
+export const MAX_LOCAL_HUMANS = 4;
 
 const GRAND_PRIX_BADGE_BASE_PATH = 'ui/grand-prix/badges';
 const GRAND_PRIX_COURSE_PREVIEW_BASE_PATH = 'ui/grand-prix/courses';
@@ -154,30 +160,30 @@ export const GRAND_PRIX_ORDER: GrandPrixId[] = [
   'bell_cup',
 ];
 
-export const PLAYER_SPAWNS: Record<'solo' | PlayerId, Vec3> = {
-  solo: [130.442, -45.402, -94.665],
-  p1: [-2, 1, 0],
-  p2: [2, 1, 0],
-};
-
-export const PLAYER_SPAWN_ROTATIONS: Record<'solo' | PlayerId, Vec3> = {
-  solo: [0, 1.348, 0],
-  p1: [0, 0, 0],
-  p2: [0, 0, 0],
-};
-
-export const PLAYER_KEY_BINDINGS: Record<PlayerId, KeyBindings> = {
+export const PLAYER_KEY_BINDINGS: Record<HumanPlayerSlotId, KeyBindings> = {
   p1: {
-    forward: ['z', 'w'],
-    back: ['s'],
-    left: ['q', 'a'],
-    right: ['d'],
+    forward: ['z', 'w', 'arrowup'],
+    back: ['s', 'arrowdown'],
+    left: ['q', 'a', 'arrowleft'],
+    right: ['d', 'arrowright'],
   },
   p2: {
     forward: ['arrowup'],
     back: ['arrowdown'],
     left: ['arrowleft'],
     right: ['arrowright'],
+  },
+  p3: {
+    forward: ['i'],
+    back: ['k'],
+    left: ['j'],
+    right: ['l'],
+  },
+  p4: {
+    forward: ['numpad8', '8'],
+    back: ['numpad5', '5'],
+    left: ['numpad4', '4'],
+    right: ['numpad6', '6'],
   },
 };
 
@@ -223,35 +229,10 @@ const stadiumTransform = {
   scale: [3, 3, 3] as Vec3,
 };
 
-const STADIUM_SPAWNS: Record<'solo' | PlayerId, Vec3> = {
-  solo: [20.246, 80, 240.126],
-  p1: [-2, 6, 0],
-  p2: [2, 6, 0],
-};
-
-
-const STADIUM_SPAWN_ROTATIONS: Record<'solo' | PlayerId, Vec3> = {
-  solo: [0, Math.PI, 0],
-  p1: [0, 0, 0],
-  p2: [0, 0, 0],
-};
-
 const subwayTransform = {
   position: [0, 0, 0] as Vec3,
   rotation: [0, 0, 0] as Vec3,
   scale: [3, 3, 3] as Vec3,
-};
-
-const SUBWAY_SPAWNS: Record<'solo' | PlayerId, Vec3> = {
-  solo: [-75, 73, 100],
-  p1:  [-75, 73, 100],
-  p2: [2, 6, 0],
-};
-
-const SUBWAY_SPAWN_ROTATIONS: Record<'solo' | PlayerId, Vec3> = {
-  solo: [0, 1.564, 0],
-  p1: [0, 1.564, 0],
-  p2: [0, 0, 0],
 };
 
 const toadHarborTransform = {
@@ -260,25 +241,72 @@ const toadHarborTransform = {
   scale: [0.1, 0.1, 0.1] as Vec3,
 };
 
-const TOAD_HARBOR_SPAWNS: Record<'solo' | PlayerId, Vec3> = {
-  solo: [-75, 100, 100],
-  p1:  [-75, 73, 100],
-  p2: [2, 6, 0],
-};
+const DS_MARIO_CIRCUIT_SPAWN_SLOTS: SpawnSlot[] = [
+  { position: [130.442, -45.402, -94.665], rotation: [0, 1.348, 0] },
+  { position: [128.242, -45.402, -94.665], rotation: [0, 1.348, 0] },
+  { position: [132.642, -45.402, -94.665], rotation: [0, 1.348, 0] },
+  { position: [126.042, -45.402, -94.665], rotation: [0, 1.348, 0] },
+  { position: [130.442, -45.402, -97.665], rotation: [0, 1.348, 0] },
+  { position: [128.242, -45.402, -97.665], rotation: [0, 1.348, 0] },
+  { position: [132.642, -45.402, -97.665], rotation: [0, 1.348, 0] },
+  { position: [126.042, -45.402, -97.665], rotation: [0, 1.348, 0] },
+  { position: [130.442, -45.402, -100.665], rotation: [0, 1.348, 0] },
+  { position: [128.242, -45.402, -100.665], rotation: [0, 1.348, 0] },
+  { position: [132.642, -45.402, -100.665], rotation: [0, 1.348, 0] },
+  { position: [126.042, -45.402, -100.665], rotation: [0, 1.348, 0] },
+];
 
-const TOAD_HARBOR_SPAWN_ROTATIONS: Record<'solo' | PlayerId, Vec3> = {
-  solo: [0, 1.564, 0],
-  p1: [0, 1.564, 0],
-  p2: [0, 0, 0],
-};
+const STADIUM_SPAWN_SLOTS: SpawnSlot[] = [
+  { position: [20.246, 80, 240.126], rotation: [0, Math.PI, 0] },
+  { position: [18.046, 80, 240.126], rotation: [0, Math.PI, 0] },
+  { position: [22.446, 80, 240.126], rotation: [0, Math.PI, 0] },
+  { position: [15.846, 80, 240.126], rotation: [0, Math.PI, 0] },
+  { position: [20.246, 80, 243.126], rotation: [0, Math.PI, 0] },
+  { position: [18.046, 80, 243.126], rotation: [0, Math.PI, 0] },
+  { position: [22.446, 80, 243.126], rotation: [0, Math.PI, 0] },
+  { position: [15.846, 80, 243.126], rotation: [0, Math.PI, 0] },
+  { position: [20.246, 80, 246.126], rotation: [0, Math.PI, 0] },
+  { position: [18.046, 80, 246.126], rotation: [0, Math.PI, 0] },
+  { position: [22.446, 80, 246.126], rotation: [0, Math.PI, 0] },
+  { position: [15.846, 80, 246.126], rotation: [0, Math.PI, 0] },
+];
+
+const SUBWAY_SPAWN_SLOTS: SpawnSlot[] = [
+  { position: [-75, 73, 100], rotation: [0, 1.564, 0] },
+  { position: [-77.2, 73, 100], rotation: [0, 1.564, 0] },
+  { position: [-72.8, 73, 100], rotation: [0, 1.564, 0] },
+  { position: [-79.4, 73, 100], rotation: [0, 1.564, 0] },
+  { position: [-75, 73, 103], rotation: [0, 1.564, 0] },
+  { position: [-77.2, 73, 103], rotation: [0, 1.564, 0] },
+  { position: [-72.8, 73, 103], rotation: [0, 1.564, 0] },
+  { position: [-79.4, 73, 103], rotation: [0, 1.564, 0] },
+  { position: [-75, 73, 106], rotation: [0, 1.564, 0] },
+  { position: [-77.2, 73, 106], rotation: [0, 1.564, 0] },
+  { position: [-72.8, 73, 106], rotation: [0, 1.564, 0] },
+  { position: [-79.4, 73, 106], rotation: [0, 1.564, 0] },
+];
+
+const TOAD_HARBOR_SPAWN_SLOTS: SpawnSlot[] = [
+  { position: [-75, 100, 100], rotation: [0, 1.564, 0] },
+  { position: [-77.2, 100, 100], rotation: [0, 1.564, 0] },
+  { position: [-72.8, 100, 100], rotation: [0, 1.564, 0] },
+  { position: [-79.4, 100, 100], rotation: [0, 1.564, 0] },
+  { position: [-75, 100, 103], rotation: [0, 1.564, 0] },
+  { position: [-77.2, 100, 103], rotation: [0, 1.564, 0] },
+  { position: [-72.8, 100, 103], rotation: [0, 1.564, 0] },
+  { position: [-79.4, 100, 103], rotation: [0, 1.564, 0] },
+  { position: [-75, 100, 106], rotation: [0, 1.564, 0] },
+  { position: [-77.2, 100, 106], rotation: [0, 1.564, 0] },
+  { position: [-72.8, 100, 106], rotation: [0, 1.564, 0] },
+  { position: [-79.4, 100, 106], rotation: [0, 1.564, 0] },
+];
 
 export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
   ds_mario_circuit: {
     id: 'ds_mario_circuit',
     label: 'DS Mario Circuit',
     transform: marioTransform,
-    spawns: PLAYER_SPAWNS,
-    spawnRotations: PLAYER_SPAWN_ROTATIONS,
+    spawnSlots: DS_MARIO_CIRCUIT_SPAWN_SLOTS,
     road: {
       model: 'models/ds_mario_circuit_road.glb',
       drag: 0,
@@ -326,8 +354,7 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     id: 'stadium',
     label: 'stadium',
     transform: stadiumTransform,
-    spawns: STADIUM_SPAWNS,
-    spawnRotations: STADIUM_SPAWN_ROTATIONS,
+    spawnSlots: STADIUM_SPAWN_SLOTS,
     road: {
       model: 'models/stadium_road.glb',
       drag: 0,
@@ -395,8 +422,7 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     id: 'super_bell_subway',
     label: 'DS super_bell_subway Ridge',
     transform: subwayTransform,
-    spawns: SUBWAY_SPAWNS,
-    spawnRotations: SUBWAY_SPAWN_ROTATIONS,
+    spawnSlots: SUBWAY_SPAWN_SLOTS,
     road: {
       model: 'models/super_bell_subway_road.glb',
       drag: 0,
@@ -450,8 +476,7 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     id: 'toad_harbor',
     label: 'DS Toad Harbor',
     transform: toadHarborTransform,
-    spawns: TOAD_HARBOR_SPAWNS,
-    spawnRotations: TOAD_HARBOR_SPAWN_ROTATIONS,
+    spawnSlots: TOAD_HARBOR_SPAWN_SLOTS,
     road: {
       model: 'models/toad_harbor_road.glb',
       drag: 0,

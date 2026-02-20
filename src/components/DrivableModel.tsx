@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
-import type { Group } from 'three';
+import type { Group, PointsMaterial } from 'three';
 import {
   AdditiveBlending,
   Box3,
@@ -32,7 +32,13 @@ import { carPosition, carRotationY } from '../state/car';
 import { commandInputActive } from '../state/commandInput';
 import { gameMode } from '../state/gamemode';
 import { getSurfaceTriggerType, type SurfaceTriggerType } from '../state/surfaceTriggerRegistry';
-import type { CarPose, KeyBindings, PlayerId } from '../types/game';
+import { computeBotAutopilotInput } from '../ai/botAutopilot';
+import type {
+  CarPose,
+  KeyBindings,
+  ParticipantControlMode,
+  RaceParticipantId,
+} from '../types/game';
 
 type Vec3 = [number, number, number];
 type RapierVec = { x: number; y: number; z: number };
@@ -86,11 +92,15 @@ type Props = {
   maxForward?: number;
   maxBackward?: number;
   maxYawRate?: number;
-  onPoseUpdate?: (playerId: PlayerId, pose: CarPose) => void;
-  playerId?: PlayerId;
+  controlMode?: ParticipantControlMode;
+  onPoseUpdate?: (participantId: RaceParticipantId, pose: CarPose) => void;
+  participantId?: RaceParticipantId;
   controlsLocked?: boolean;
   startCountdownValue?: number | null;
-  onLapTrigger?: (playerId: PlayerId, triggerType: 'lap-start' | 'lap-checkpoint') => void;
+  onLapTrigger?: (
+    participantId: RaceParticipantId,
+    triggerType: 'lap-start' | 'lap-checkpoint'
+  ) => void;
   surfaceAttachment?: SurfaceAttachmentConfig;
   antiGravSwitchesEnabled?: boolean;
   booster?: BoosterConfig;
@@ -274,8 +284,9 @@ export default function DrivableModel({
   maxForward = MAX_FWD,
   maxBackward = MAX_BACK,
   maxYawRate = MAX_YAW_RATE,
+  controlMode = 'human',
   onPoseUpdate,
-  playerId = 'p1',
+  participantId = 'participant-1',
   controlsLocked = false,
   startCountdownValue = null,
   onLapTrigger,
@@ -541,6 +552,7 @@ export default function DrivableModel({
   const flameTrailLifeRef = useRef(new Float32Array(FLAME_TRAIL_MAX_PARTICLES));
   const flameTrailTypeRef = useRef(new Uint8Array(FLAME_TRAIL_MAX_PARTICLES));
   const flameTrailActiveRef = useRef(new Uint8Array(FLAME_TRAIL_MAX_PARTICLES));
+  const flameTrailMaterialRef = useRef<PointsMaterial | null>(null);
   const flameTrailGeometry = useMemo(() => {
     const geometry = new BufferGeometry();
     const positionAttr = new BufferAttribute(flameTrailPositions, 3);
@@ -1002,7 +1014,7 @@ export default function DrivableModel({
 
     const resolvedSurfaceLabel = surfaceLabel.length > 0 ? surfaceLabel : 'trigger-booster';
     console.log(
-      `[booster][${playerId}] entree zone booster (${resolvedSurfaceLabel}) -> x${boosterSettings.strength} ${Math.round(boosterSettings.durationMs)}ms`,
+      `[booster][${participantId}] entree zone booster (${resolvedSurfaceLabel}) -> x${boosterSettings.strength} ${Math.round(boosterSettings.durationMs)}ms`,
     );
   };
 
@@ -1022,8 +1034,8 @@ export default function DrivableModel({
     lapTriggerDebounceRef.current.set(dedupeKey, nowMs);
     const triggerLabel = triggerType === 'lap-start' ? 'start' : 'checkpoint';
     const resolvedSurfaceLabel = surfaceLabel.length > 0 ? surfaceLabel : `trigger-${triggerLabel}`;
-    console.log(`[lap][${playerId}] passage ${triggerLabel} (${resolvedSurfaceLabel})`);
-    onLapTrigger(playerId, triggerType);
+    console.log(`[lap][${participantId}] passage ${triggerLabel} (${resolvedSurfaceLabel})`);
+    onLapTrigger(participantId, triggerType);
   };
 
   const applySurfaceTriggerFromPayload = (payload: CollisionPayload) => {
@@ -1046,13 +1058,13 @@ export default function DrivableModel({
     const zoneKind = triggerType === 'anti-grav-in' ? 'in' : 'out';
     const resolvedSurfaceLabel = surfaceName.length > 0 ? surfaceName : `trigger-${zoneKind}`;
     if (zoneKind === 'in') {
-      console.log(`[anti-grav][${playerId}] entree zone looping (${resolvedSurfaceLabel}) -> mode ON`);
+      console.log(`[anti-grav][${participantId}] entree zone looping (${resolvedSurfaceLabel}) -> mode ON`);
       setAntiGravEnabled(true);
       return;
     }
 
     if (zoneKind === 'out') {
-      console.log(`[anti-grav][${playerId}] entree zone sortie looping (${resolvedSurfaceLabel}) -> mode OFF`);
+      console.log(`[anti-grav][${participantId}] entree zone sortie looping (${resolvedSurfaceLabel}) -> mode OFF`);
       setAntiGravEnabled(false);
     }
   };
@@ -1088,7 +1100,7 @@ export default function DrivableModel({
         activeBoosterHandleRef.current = null;
       }
       const resolvedSurfaceLabel = surfaceName.length > 0 ? surfaceName : 'trigger-booster';
-      console.log(`[booster][${playerId}] sortie zone booster (${resolvedSurfaceLabel})`);
+      console.log(`[booster][${participantId}] sortie zone booster (${resolvedSurfaceLabel})`);
       return;
     }
 
@@ -1098,7 +1110,7 @@ export default function DrivableModel({
 
     const zoneKind = triggerType === 'anti-grav-in' ? 'in' : 'out';
     const resolvedSurfaceLabel = surfaceName.length > 0 ? surfaceName : `trigger-${zoneKind}`;
-    console.log(`[anti-grav][${playerId}] sortie zone looping (${resolvedSurfaceLabel})`);
+    console.log(`[anti-grav][${participantId}] sortie zone looping (${resolvedSurfaceLabel})`);
   };
 
   const isAttachmentSurfaceAllowed = (collider: RapierCollider | null | undefined) => {
@@ -1555,6 +1567,8 @@ export default function DrivableModel({
 
   useEffect(
     () => () => {
+      clearFlameTrail();
+      flameTrailMaterialRef.current?.dispose();
       flameTrailGeometry.dispose();
     },
     [flameTrailGeometry],
@@ -1578,6 +1592,11 @@ export default function DrivableModel({
         triggerBoost: false,
       });
     };
+
+    if (controlMode !== 'human') {
+      clearAll();
+      return undefined;
+    }
 
     const canChargeStartBoost = () =>
       controlsLocked &&
@@ -1663,7 +1682,7 @@ export default function DrivableModel({
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', clearAll);
     };
-  }, [bindingSets, controlsLocked, startCountdownValue]);
+  }, [bindingSets, controlMode, controlsLocked, startCountdownValue]);
 
   useEffect(() => {
     const controller = new rapier.KinematicCharacterController(
@@ -1710,6 +1729,22 @@ export default function DrivableModel({
 
     const nowMs = performance.now();
     const tCurrent = body.translation();
+
+    if (controlMode === 'autopilot') {
+      const autopilotInput = computeBotAutopilotInput({
+        participantId,
+        pose: {
+          x: tCurrent.x,
+          y: tCurrent.y,
+          z: tCurrent.z,
+          yaw: yawRef.current,
+        },
+      });
+      keysRef.current.forward = autopilotInput.forward;
+      keysRef.current.back = autopilotInput.back;
+      keysRef.current.left = autopilotInput.left;
+      keysRef.current.right = autopilotInput.right;
+    }
 
     if (rescueActiveRef.current) {
       keysRef.current.forward = false;
@@ -1935,14 +1970,14 @@ export default function DrivableModel({
         if (triggerZone !== prevTriggerZone) {
           if (prevTriggerZone !== null) {
             const prevLabel = prevTriggerZone === 'in' ? 'trigger-in' : 'trigger-out';
-            console.log(`[anti-grav][${playerId}] sortie zone looping (${prevLabel})`);
+            console.log(`[anti-grav][${participantId}] sortie zone looping (${prevLabel})`);
           }
 
           if (triggerZone === 'in') {
-            console.log(`[anti-grav][${playerId}] entree zone looping (trigger-in) -> mode ON`);
+            console.log(`[anti-grav][${participantId}] entree zone looping (trigger-in) -> mode ON`);
             setAntiGravEnabled(true);
           } else if (triggerZone === 'out') {
-            console.log(`[anti-grav][${playerId}] entree zone sortie looping (trigger-out) -> mode OFF`);
+            console.log(`[anti-grav][${participantId}] entree zone sortie looping (trigger-out) -> mode OFF`);
             setAntiGravEnabled(false);
           }
 
@@ -2353,7 +2388,7 @@ export default function DrivableModel({
         const resolvedSurfaceName = surfaceName && surfaceName.length > 0 ? surfaceName : 'unknown-surface';
 
         console.log(
-          `[ground][${playerId}] collider=${resolvedColliderName} handle=${currentGroundHandle} surface=${resolvedSurfaceName} drag=${surfaceDrag}`,
+          `[ground][${participantId}] collider=${resolvedColliderName} handle=${currentGroundHandle} surface=${resolvedSurfaceName} drag=${surfaceDrag}`,
         );
       }
     }
@@ -2436,12 +2471,12 @@ export default function DrivableModel({
       qw: tmpBodyQuat.w,
     };
 
-    if (playerId === 'p1') {
+    if (controlMode === 'human' && participantId === 'human-p1') {
       carPosition.set(t.x, t.y, t.z);
       carRotationY.current = yawRef.current;
     }
 
-    onPoseUpdate?.(playerId, pose);
+    onPoseUpdate?.(participantId, pose);
   });
 
   return (
@@ -2484,6 +2519,7 @@ export default function DrivableModel({
       </group>
       <points geometry={flameTrailGeometry} frustumCulled={false}>
         <pointsMaterial
+          ref={flameTrailMaterialRef}
           size={FLAME_TRAIL_PARTICLE_SIZE}
           sizeAttenuation
           transparent

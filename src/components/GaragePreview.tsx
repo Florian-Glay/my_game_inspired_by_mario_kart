@@ -107,15 +107,3 @@ export function GaragePreview({ loadout }: GaragePreviewProps) {
     </div>
   );
 }
-
-const PREVIEW_MODEL_URLS = Array.from(
-  new Set([
-    ...CHARACTERS.map((entry) => entry.model),
-    ...VEHICLES.map((entry) => entry.model),
-    ...WHEELS.map((entry) => entry.model),
-  ]),
-);
-
-for (const url of PREVIEW_MODEL_URLS) {
-  useGLTF.preload(url);
-}

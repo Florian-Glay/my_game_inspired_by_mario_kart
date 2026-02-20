@@ -1,7 +1,15 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useGLTF, useProgress } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from 'react';
 import { Color, PCFSoftShadowMap, type Group } from 'three';
 import { CC_SPEEDS, CIRCUITS } from '../config/raceCatalog';
 import { PERF_PROFILE } from '../config/performanceProfile';
@@ -11,14 +19,15 @@ import type {
   CourseRaceResult,
   CourseRankingEntry,
   GrandPrixStanding,
-  PlayerId,
+  HumanPlayerSlotId,
   RaceConfig,
+  RaceParticipantId,
 } from '../types/game';
 import { CameraController } from './CameraController';
 import { CircuitMeshCullingController } from './CircuitMeshCullingController';
 import DrivableModel from './DrivableModel';
+import { LocalMultiviewCameraController } from './LocalMultiviewCameraController';
 import Model from './Model';
-import { SplitScreenCameraController } from './SplitScreenCameraController';
 import { SurfaceWithDrag } from './SurfaceWithDrag';
 import TextureDebug from './TextureDebug';
 
@@ -219,16 +228,15 @@ const START_COUNTDOWN_INITIAL = 3;
 const START_COUNTDOWN_CHARGE_HINT_FROM = 2;
 const START_COUNTDOWN_TICK_MS = 1000;
 const START_COUNTDOWN_ZERO_HOLD_MS = 450;
+const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 
-function getPlayerLabel(playerId: PlayerId) {
-  return playerId === 'p1' ? 'Joueur 1' : 'Joueur 2';
-}
-
-function createInitialLapProgress(players: RaceConfig['players']) {
-  return players.reduce<Record<PlayerId, PlayerLapProgress>>((acc, player) => {
-    acc[player.id] = { ...FALLBACK_PROGRESS };
+function createInitialLapProgress(
+  participants: RaceConfig['participants'],
+) {
+  return participants.reduce<Record<RaceParticipantId, PlayerLapProgress>>((acc, participant) => {
+    acc[participant.id] = { ...FALLBACK_PROGRESS };
     return acc;
-  }, {} as Record<PlayerId, PlayerLapProgress>);
+  }, {});
 }
 
 export function Scene({
@@ -250,13 +258,13 @@ export function Scene({
   const [extModelReady, setExtModelReady] = useState(false);
   const [textureDebugReady, setTextureDebugReady] = useState(!textureDebugEnabled);
   const initialLapProgress = useMemo(
-    () => createInitialLapProgress(raceConfig.players),
-    [raceConfig.players],
+    () => createInitialLapProgress(raceConfig.participants),
+    [raceConfig.participants],
   );
-  const [lapProgressByPlayer, setLapProgressByPlayer] = useState<Record<PlayerId, PlayerLapProgress>>(
+  const [lapProgressByPlayer, setLapProgressByPlayer] = useState<Record<RaceParticipantId, PlayerLapProgress>>(
     initialLapProgress,
   );
-  const lapProgressRef = useRef<Record<PlayerId, PlayerLapProgress>>(initialLapProgress);
+  const lapProgressRef = useRef<Record<RaceParticipantId, PlayerLapProgress>>(initialLapProgress);
   const [courseRanking, setCourseRanking] = useState<CourseRankingEntry[]>([]);
   const [overlayStep, setOverlayStep] = useState<RaceOverlayStep>('none');
   const [controlsLocked, setControlsLocked] = useState(true);
@@ -283,7 +291,7 @@ export function Scene({
     if (circuit.booster?.model) urls.push(circuit.booster.model);
     if (circuit.lapStart?.model) urls.push(circuit.lapStart.model);
     if (circuit.lapCheckpoint?.model) urls.push(circuit.lapCheckpoint.model);
-    for (const player of raceConfig.players) {
+    for (const player of raceConfig.participants) {
       urls.push(player.vehicleModel);
       urls.push(player.characterModel);
       urls.push(player.wheelModel);
@@ -297,33 +305,47 @@ export function Scene({
     circuit.lapStart?.model,
     circuit.ext.model,
     circuit.road.model,
-    raceConfig.players,
+    raceConfig.participants,
   ]);
   const assetGateKey = useMemo(() => requiredAssetUrls.join('|'), [requiredAssetUrls]);
-
-  const p1Spawn = raceConfig.players.find((player) => player.id === 'p1')?.spawn ?? [0, 1, 0];
-  const p2Spawn = raceConfig.players.find((player) => player.id === 'p2')?.spawn ?? [2, 1, 0];
-  const p1SpawnRotation = raceConfig.players.find((player) => player.id === 'p1')?.spawnRotation ?? [0, 0, 0];
-  const p2SpawnRotation = raceConfig.players.find((player) => player.id === 'p2')?.spawnRotation ?? [0, 0, 0];
-
-  const p1InitialPose = useMemo<CarPose>(
-    () => ({ x: p1Spawn[0], y: p1Spawn[1], z: p1Spawn[2], yaw: p1SpawnRotation[1] }),
-    [p1Spawn, p1SpawnRotation],
+  const humanParticipants = useMemo(
+    () =>
+      raceConfig.participants
+        .filter((participant) => participant.kind === 'human')
+        .sort((left, right) => {
+          const leftOrder =
+            left.humanSlotId ? HUMAN_SLOT_ORDER.indexOf(left.humanSlotId) : Number.MAX_SAFE_INTEGER;
+          const rightOrder =
+            right.humanSlotId ? HUMAN_SLOT_ORDER.indexOf(right.humanSlotId) : Number.MAX_SAFE_INTEGER;
+          return leftOrder - rightOrder;
+        }),
+    [raceConfig.participants],
   );
-  const p2InitialPose = useMemo<CarPose>(
-    () => ({ x: p2Spawn[0], y: p2Spawn[1], z: p2Spawn[2], yaw: p2SpawnRotation[1] }),
-    [p2Spawn, p2SpawnRotation],
+  const poseRefsByParticipant = useMemo<
+    Record<RaceParticipantId, MutableRefObject<CarPose>>
+  >(() => {
+    const refs: Record<RaceParticipantId, MutableRefObject<CarPose>> = {};
+    for (const participant of raceConfig.participants) {
+      refs[participant.id] = {
+        current: {
+          x: participant.spawn[0],
+          y: participant.spawn[1],
+          z: participant.spawn[2],
+          yaw: participant.spawnRotation[1],
+        },
+      };
+    }
+    return refs;
+  }, [raceConfig.participants]);
+  const viewerPoseRefs = useMemo(
+    () =>
+      humanParticipants
+        .map((participant) => poseRefsByParticipant[participant.id])
+        .filter((ref): ref is MutableRefObject<CarPose> => Boolean(ref)),
+    [humanParticipants, poseRefsByParticipant],
   );
-
-  const p1PoseRef = useRef<CarPose>(p1InitialPose);
-  const p2PoseRef = useRef<CarPose>(p2InitialPose);
   const roadGroupRef = useRef<Group | null>(null);
   const extGroupRef = useRef<Group | null>(null);
-
-  useEffect(() => {
-    p1PoseRef.current = p1InitialPose;
-    p2PoseRef.current = p2InitialPose;
-  }, [p1InitialPose, p2InitialPose]);
 
   useEffect(() => {
     roadGroupRef.current = null;
@@ -350,29 +372,33 @@ export function Scene({
   }, [initialLapProgress, raceConfig.courseId]);
 
   useEffect(() => {
-    if (raceConfig.mode === 'multi' && gameMode.current === 'free') {
+    if (raceConfig.humanCount > 1 && gameMode.current === 'free') {
       gameMode.current = 'run';
     }
-  }, [raceConfig.mode]);
+  }, [raceConfig.humanCount]);
 
-  const handlePoseUpdate = (playerId: PlayerId, pose: CarPose) => {
-    if (playerId === 'p1') {
-      p1PoseRef.current = pose;
-      return;
-    }
-    p2PoseRef.current = pose;
-  };
+  const handlePoseUpdate = useCallback(
+    (participantId: RaceParticipantId, pose: CarPose) => {
+      const poseRef = poseRefsByParticipant[participantId];
+      if (!poseRef) return;
+      poseRef.current = pose;
+    },
+    [poseRefsByParticipant],
+  );
 
   const finalizeCourse = useCallback(
-    (progressByPlayer: Record<PlayerId, PlayerLapProgress>) => {
+    (progressByPlayer: Record<RaceParticipantId, PlayerLapProgress>) => {
       if (courseResultSentRef.current) return;
       courseResultSentRef.current = true;
 
-      const playerOrder = new Map(raceConfig.players.map((player, index) => [player.id, index]));
-      const rankingWithTime = raceConfig.players.map((player) => {
-        const progress = progressByPlayer[player.id] ?? FALLBACK_PROGRESS;
+      const participantOrder = new Map(
+        raceConfig.participants.map((participant, index) => [participant.id, index]),
+      );
+      const rankingWithTime = raceConfig.participants.map((participant) => {
+        const progress = progressByPlayer[participant.id] ?? FALLBACK_PROGRESS;
         return {
-          playerId: player.id,
+          participantId: participant.id,
+          displayName: participant.displayName,
           lap: progress.lap,
           checkpointReached: progress.checkpoint,
           finished: progress.finished,
@@ -389,7 +415,10 @@ export function Scene({
         if (left.checkpointReached !== right.checkpointReached) {
           return left.checkpointReached ? -1 : 1;
         }
-        return (playerOrder.get(left.playerId) ?? 0) - (playerOrder.get(right.playerId) ?? 0);
+        return (
+          (participantOrder.get(left.participantId) ?? 0) -
+          (participantOrder.get(right.participantId) ?? 0)
+        );
       });
 
       const ranking: CourseRankingEntry[] = rankingWithTime.map(
@@ -416,7 +445,7 @@ export function Scene({
       raceConfig.courseIndex,
       raceConfig.courseLabel,
       raceConfig.grandPrixId,
-      raceConfig.players,
+      raceConfig.participants,
     ],
   );
 
@@ -424,7 +453,7 @@ export function Scene({
     if (overlayStep !== 'none') return false;
 
     const nowMs = performance.now();
-    const nextProgress = raceConfig.players.reduce<Record<PlayerId, PlayerLapProgress>>(
+    const nextProgress = raceConfig.participants.reduce<Record<RaceParticipantId, PlayerLapProgress>>(
       (acc, player, index) => {
         const current = lapProgressRef.current[player.id] ?? FALLBACK_PROGRESS;
         acc[player.id] =
@@ -446,7 +475,7 @@ export function Scene({
     setLapProgressByPlayer(nextProgress);
     finalizeCourse(nextProgress);
     return true;
-  }, [finalizeCourse, overlayStep, raceConfig.players]);
+  }, [finalizeCourse, overlayStep, raceConfig.participants]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -466,17 +495,17 @@ export function Scene({
   }, [validateAllLapsFromWinMode]);
 
   const handleLapTrigger = useCallback(
-    (playerId: PlayerId, triggerType: LapTriggerType) => {
+    (participantId: RaceParticipantId, triggerType: LapTriggerType) => {
       if (controlsLocked || overlayStep !== 'none') return;
 
-      const currentPlayerProgress = lapProgressRef.current[playerId];
+      const currentPlayerProgress = lapProgressRef.current[participantId];
       if (!currentPlayerProgress || currentPlayerProgress.finished) return;
 
       if (triggerType === 'lap-checkpoint') {
         if (currentPlayerProgress.checkpoint) return;
         const nextProgress = {
           ...lapProgressRef.current,
-          [playerId]: {
+          [participantId]: {
             ...currentPlayerProgress,
             checkpoint: true,
           },
@@ -492,7 +521,7 @@ export function Scene({
       const hasFinished = nextLap >= 4;
       const nextProgress = {
         ...lapProgressRef.current,
-        [playerId]: {
+        [participantId]: {
           ...currentPlayerProgress,
           lap: nextLap,
           checkpoint: false,
@@ -505,10 +534,15 @@ export function Scene({
       setLapProgressByPlayer(nextProgress);
 
       if (hasFinished) {
-        finalizeCourse(nextProgress);
+        const allHumansFinished = raceConfig.participants
+          .filter((participant) => participant.kind === 'human')
+          .every((participant) => nextProgress[participant.id]?.finished);
+        if (allHumansFinished) {
+          finalizeCourse(nextProgress);
+        }
       }
     },
-    [controlsLocked, finalizeCourse, overlayStep],
+    [controlsLocked, finalizeCourse, overlayStep, raceConfig.participants],
   );
 
   const handleContinueAfterCourse = useCallback(() => {
@@ -566,13 +600,14 @@ export function Scene({
     startCountdownValue > 0 &&
     startCountdownValue <= START_COUNTDOWN_CHARGE_HINT_FROM;
   const startBoostHint =
-    raceConfig.mode === 'solo' ?
+    raceConfig.humanCount === 1 ?
       'Maintiens Z pour charger le boost de depart'
     : 'Maintiens acceleration pour charger le boost de depart';
-  const lapSummary = raceConfig.players.map((player) => {
-    const progress = lapProgressByPlayer[player.id] ?? FALLBACK_PROGRESS;
+  const lapSummary = raceConfig.participants.map((participant) => {
+    const progress = lapProgressByPlayer[participant.id] ?? FALLBACK_PROGRESS;
     return {
-      playerId: player.id,
+      participantId: participant.id,
+      displayName: participant.displayName,
       completedLaps: Math.min(Math.max(progress.lap - 1, 0), 3),
       checkpoint: progress.checkpoint,
     };
@@ -580,6 +615,7 @@ export function Scene({
   const isCourseRankingVisible = overlayStep === 'course-ranking';
   const isCourseActionVisible = overlayStep === 'course-actions';
   const isGrandPrixResultVisible = overlayStep === 'grand-prix-result';
+  const shouldRenderRaceWorld = !isGrandPrixResultVisible;
 
   useEffect(() => {
     if (!sceneReady || overlayStep !== 'none') return;
@@ -614,7 +650,7 @@ export function Scene({
       <button type="button" className="mk-back-btn" onClick={onRaceBack}>
         Retour
       </button>
-      {raceConfig.mode === 'multi' ? <div className="split-divider" aria-hidden /> : null}
+      {raceConfig.humanCount === 2 ? <div className="split-divider" aria-hidden /> : null}
       {!sceneReady ? (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0b1730]/82 backdrop-blur-sm">
           <div className="rounded-xl border border-white/30 bg-black/25 px-6 py-4 text-center text-white shadow-2xl">
@@ -646,10 +682,10 @@ export function Scene({
           <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/85">
             Tours effectues
           </div>
-          <div className="mt-2 space-y-1.5">
+          <div className="mt-2 max-h-[52vh] space-y-1.5 overflow-y-auto pr-1">
             {lapSummary.map((entry) => (
-              <div key={`lap-${entry.playerId}`} className="flex items-center justify-between text-xs">
-                <span className="font-semibold">{getPlayerLabel(entry.playerId)}</span>
+              <div key={`lap-${entry.participantId}`} className="flex items-center justify-between text-xs">
+                <span className="font-semibold">{entry.displayName}</span>
                 <span className="font-black tracking-wide">
                   {entry.completedLaps}/3
                   <span className="ml-1 font-medium text-white/75">
@@ -669,15 +705,15 @@ export function Scene({
               Course {raceConfig.courseIndex + 1}/{raceConfig.totalCourses}
             </div>
             <h2 className="mt-2 text-2xl font-black">Classement de la course</h2>
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 max-h-[56vh] space-y-2 overflow-y-auto pr-1">
               {courseRanking.map((entry) => (
                 <div
-                  key={`course-rank-${entry.playerId}`}
+                  key={`course-rank-${entry.participantId}`}
                   className="flex items-center justify-between rounded-lg border border-white/20 bg-white/10 px-3 py-2"
                 >
                   <div className="flex items-center gap-3">
                     <span className="text-lg font-black text-[#ffd670]">#{entry.position}</span>
-                    <span className="text-sm font-bold">{getPlayerLabel(entry.playerId)}</span>
+                    <span className="text-sm font-bold">{entry.displayName}</span>
                   </div>
                   <div className="text-xs font-semibold text-white/85">
                     Tour {Math.min(entry.lap, 4)}/4
@@ -740,15 +776,15 @@ export function Scene({
               Resultat Final Grand Prix
             </div>
             <h2 className="mt-2 text-2xl font-black">Classement cumule</h2>
-            <div className="mt-4 space-y-2">
+            <div className="mt-4 max-h-[56vh] space-y-2 overflow-y-auto pr-1">
               {grandPrixStandings.map((standing, index) => (
                 <div
-                  key={`grand-prix-rank-${standing.playerId}`}
+                  key={`grand-prix-rank-${standing.participantId}`}
                   className="flex items-center justify-between rounded-lg border border-white/20 bg-white/10 px-3 py-2"
                 >
                   <div className="flex items-center gap-3">
                     <span className="text-lg font-black text-[#ffd670]">#{index + 1}</span>
-                    <span className="text-sm font-bold">{getPlayerLabel(standing.playerId)}</span>
+                    <span className="text-sm font-bold">{standing.displayName}</span>
                   </div>
                   <div className="text-right text-xs font-semibold text-white/90">
                     <div>Total: {standing.totalPosition}</div>
@@ -770,43 +806,44 @@ export function Scene({
         </div>
       ) : null}
 
-      <Canvas
-        shadows
-        dpr={PERF_PROFILE.dpr}
-        gl={{ antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false }}
-        camera={{ position: [8, 3, 8], fov: 80, near: PERF_PROFILE.cameraNear, far: PERF_PROFILE.cameraFar }}
-        style={{ background: DAY_CLEAR_COLOR }}
-        onCreated={(state) => {
-          state.gl.localClippingEnabled = true;
-          state.gl.shadowMap.enabled = true;
-          state.gl.shadowMap.type = PCFSoftShadowMap;
-        }}
-      >
-        <RaceEnvironmentEnforcer />
-        <Suspense fallback={<LoadingFallback />}>
-          <SceneAssetGate key={assetGateKey} urls={requiredAssetUrls} onReady={handleAssetsReady} />
-          {assetsReady ? (
-            <Physics key={circuitPhysicsKey} gravity={[0, -9.81, 0]} colliders={false}>
-            <PhysicsWarmupGate enabled={assetsReady} framesToWait={physicsWarmupFrames} onReady={handlePhysicsWarmupReady} />
-            <ambientLight intensity={0.5} color="#fff4dc" />
-            <hemisphereLight args={['#9fd5ff', '#e0b784', 0.62]} />
-            <directionalLight
-              position={[170, 260, -130]}
-              intensity={1.45}
-              color="#ffe0ad"
-              castShadow
-              shadow-mapSize-width={2048}
-              shadow-mapSize-height={2048}
-              shadow-camera-near={1}
-              shadow-camera-far={1000}
-              shadow-camera-left={-320}
-              shadow-camera-right={320}
-              shadow-camera-top={320}
-              shadow-camera-bottom={-320}
-              shadow-bias={-0.00014}
-              shadow-normalBias={0.03}
-            />
-            <directionalLight position={[-180, 120, 240]} intensity={0.42} color="#b9dcff" />
+      {shouldRenderRaceWorld ? (
+        <Canvas
+          shadows
+          dpr={PERF_PROFILE.dpr}
+          gl={{ antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false }}
+          camera={{ position: [8, 3, 8], fov: 80, near: PERF_PROFILE.cameraNear, far: PERF_PROFILE.cameraFar }}
+          style={{ background: DAY_CLEAR_COLOR }}
+          onCreated={(state) => {
+            state.gl.localClippingEnabled = true;
+            state.gl.shadowMap.enabled = true;
+            state.gl.shadowMap.type = PCFSoftShadowMap;
+          }}
+        >
+          <RaceEnvironmentEnforcer />
+          <Suspense fallback={<LoadingFallback />}>
+            <SceneAssetGate key={assetGateKey} urls={requiredAssetUrls} onReady={handleAssetsReady} />
+            {assetsReady ? (
+              <Physics key={circuitPhysicsKey} gravity={[0, -9.81, 0]} colliders={false}>
+              <PhysicsWarmupGate enabled={assetsReady} framesToWait={physicsWarmupFrames} onReady={handlePhysicsWarmupReady} />
+              <ambientLight intensity={0.5} color="#fff4dc" />
+              <hemisphereLight args={['#9fd5ff', '#e0b784', 0.62]} />
+              <directionalLight
+                position={[170, 260, -130]}
+                intensity={1.45}
+                color="#ffe0ad"
+                castShadow
+                shadow-mapSize-width={2048}
+                shadow-mapSize-height={2048}
+                shadow-camera-near={1}
+                shadow-camera-far={1000}
+                shadow-camera-left={-320}
+                shadow-camera-right={320}
+                shadow-camera-top={320}
+                shadow-camera-bottom={-320}
+                shadow-bias={-0.00014}
+                shadow-normalBias={0.03}
+              />
+              <directionalLight position={[-180, 120, 240]} intensity={0.42} color="#b9dcff" />
 
             <group position={SUN_POSITION}>
               <mesh>
@@ -978,23 +1015,24 @@ export function Scene({
               </SurfaceWithDrag>
             : null}
 
-            {raceConfig.players.map((player) => (
+            {raceConfig.participants.map((participant) => (
               <DrivableModel
-                key={player.id}
-                playerId={player.id}
-                vehicleModel={player.vehicleModel}
-                characterModel={player.characterModel}
-                wheelModel={player.wheelModel}
-                vehicleScale={player.vehicleScale}
-                characterScale={player.characterScale}
-                wheelScale={player.wheelScale}
-                characterMount={player.characterMount}
-                wheelMounts={player.wheelMounts}
-                chassisLift={player.chassisLift}
-                driverLift={player.driverLift}
-                position={player.spawn}
-                rotation={player.spawnRotation}
-                keyBindings={player.keyBindings}
+                key={participant.id}
+                participantId={participant.id}
+                controlMode={participant.controlMode}
+                vehicleModel={participant.vehicleModel}
+                characterModel={participant.characterModel}
+                wheelModel={participant.wheelModel}
+                vehicleScale={participant.vehicleScale}
+                characterScale={participant.characterScale}
+                wheelScale={participant.wheelScale}
+                characterMount={participant.characterMount}
+                wheelMounts={participant.wheelMounts}
+                chassisLift={participant.chassisLift}
+                driverLift={participant.driverLift}
+                position={participant.spawn}
+                rotation={participant.spawnRotation}
+                keyBindings={participant.keyBindings}
                 maxForward={speedProfile.maxForward}
                 maxBackward={speedProfile.maxBackward}
                 maxYawRate={speedProfile.maxYawRate}
@@ -1011,31 +1049,29 @@ export function Scene({
             <CircuitMeshCullingController
               roadGroupRef={roadGroupRef}
               extGroupRef={extGroupRef}
-              p1PoseRef={p1PoseRef}
-              p2PoseRef={p2PoseRef}
-              mode={raceConfig.mode}
+              viewerPoseRefs={viewerPoseRefs}
               performance={circuit.performance}
             />
 
-            {raceConfig.mode === 'multi' ?
-              <SplitScreenCameraController
-                leftPoseRef={p1PoseRef}
-                rightPoseRef={p2PoseRef}
+            {viewerPoseRefs.length > 1 ?
+              <LocalMultiviewCameraController
+                viewerPoseRefs={viewerPoseRefs}
                 clipPlaneOffset={PERF_PROFILE.clipPlaneOffset}
                 enableClipPlane={PERF_PROFILE.enableCameraClipPlane}
               />
             :
               <CameraController
-                targetPoseRef={p1PoseRef}
+                targetPoseRef={viewerPoseRefs[0]}
                 clipPlaneOffset={PERF_PROFILE.clipPlaneOffset}
                 enableClipPlane={PERF_PROFILE.enableCameraClipPlane}
               />}
 
-            {textureDebugEnabled ? <TextureDebug onReady={handleTextureDebugReady} /> : null}
-            </Physics>
-          ) : null}
-        </Suspense>
-      </Canvas>
+              {textureDebugEnabled ? <TextureDebug onReady={handleTextureDebugReady} /> : null}
+              </Physics>
+            ) : null}
+          </Suspense>
+        </Canvas>
+      ) : null}
     </div>
   );
 }
