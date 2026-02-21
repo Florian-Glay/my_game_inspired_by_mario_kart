@@ -377,6 +377,7 @@ export default function DrivableModel({
   const rescueStartQuatRef = useRef(new Quaternion());
   const lakituGroupRef = useRef<Group | null>(null);
   const visualRootRef = useRef<Group | null>(null);
+  const poseAnchorRef = useRef<Group | null>(null);
   const lakituFadeRef = useRef(0);
   const lakituVisibleTargetRef = useRef(false);
   const lakituPositionTargetRef = useRef(new Vector3());
@@ -523,6 +524,23 @@ export default function DrivableModel({
     ],
     [chassisLift, colliderFit.colliderOffset],
   );
+  const publishedPoseRef = useRef<CarPose>({
+    x: spawnPosition[0],
+    y: spawnPosition[1],
+    z: spawnPosition[2],
+    yaw: initialRotation[1],
+    boostActive: false,
+    forwardX: Math.sin(initialRotation[1]),
+    forwardY: 0,
+    forwardZ: Math.cos(initialRotation[1]),
+    upX: 0,
+    upY: 1,
+    upZ: 0,
+    qx: 0,
+    qy: 0,
+    qz: 0,
+    qw: 1,
+  });
 
   const effectiveWheelMounts = useMemo<[Vec3, Vec3, Vec3, Vec3]>(
     () => wheelMounts ?? DEFAULT_WHEEL_MOUNTS,
@@ -589,6 +607,8 @@ export default function DrivableModel({
   const tmpBodyQuat = useMemo(() => new Quaternion(), []);
   const tmpPoseForward = useMemo(() => new Vector3(), []);
   const tmpPoseUp = useMemo(() => new Vector3(), []);
+  const tmpRenderPosePosition = useMemo(() => new Vector3(), []);
+  const tmpRenderPoseQuat = useMemo(() => new Quaternion(), []);
   const tmpDesiredUp = useMemo(() => new Vector3(), []);
   const tmpRescuePos = useMemo(() => new Vector3(), []);
   const tmpFlamePos = useMemo(() => new Vector3(), []);
@@ -1323,12 +1343,60 @@ export default function DrivableModel({
     );
   };
 
+  const publishRenderedPose = (boostActiveNow: boolean) => {
+    const shouldSyncFallbackCamera = controlMode === 'human' && participantId === 'human-p1';
+    if (!onPoseUpdate && !shouldSyncFallbackCamera) return;
+
+    const anchor = poseAnchorRef.current;
+    const body = bodyRef.current;
+    if (!anchor && !body) return;
+
+    if (anchor) {
+      anchor.getWorldPosition(tmpRenderPosePosition);
+      anchor.getWorldQuaternion(tmpRenderPoseQuat).normalize();
+    } else if (body) {
+      const t = body.translation();
+      const r = body.rotation();
+      tmpRenderPosePosition.set(t.x, t.y, t.z);
+      tmpRenderPoseQuat.set(r.x, r.y, r.z, r.w).normalize();
+    }
+
+    tmpPoseForward.set(0, 0, 1).applyQuaternion(tmpRenderPoseQuat).normalize();
+    tmpPoseUp.set(0, 1, 0).applyQuaternion(tmpRenderPoseQuat).normalize();
+    const yaw = Math.atan2(tmpPoseForward.x, tmpPoseForward.z);
+
+    const pose = publishedPoseRef.current;
+    pose.x = tmpRenderPosePosition.x;
+    pose.y = tmpRenderPosePosition.y;
+    pose.z = tmpRenderPosePosition.z;
+    pose.yaw = yaw;
+    pose.boostActive = boostActiveNow;
+    pose.forwardX = tmpPoseForward.x;
+    pose.forwardY = tmpPoseForward.y;
+    pose.forwardZ = tmpPoseForward.z;
+    pose.upX = tmpPoseUp.x;
+    pose.upY = tmpPoseUp.y;
+    pose.upZ = tmpPoseUp.z;
+    pose.qx = tmpRenderPoseQuat.x;
+    pose.qy = tmpRenderPoseQuat.y;
+    pose.qz = tmpRenderPoseQuat.z;
+    pose.qw = tmpRenderPoseQuat.w;
+
+    if (shouldSyncFallbackCamera) {
+      carPosition.copy(tmpRenderPosePosition);
+      carRotationY.current = yaw;
+    }
+
+    onPoseUpdate?.(participantId, pose);
+  };
+
   useEffect(() => {
+    const enableDynamicShadows = controlMode === 'human';
     const applyShadows = (root: Group) => {
       root.traverse((child: any) => {
         if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
+          child.castShadow = enableDynamicShadows;
+          child.receiveShadow = enableDynamicShadows;
         }
       });
     };
@@ -1336,16 +1404,17 @@ export default function DrivableModel({
     applyShadows(vehicleCloned);
     applyShadows(characterCloned);
     wheelObjects.forEach((wheelObject) => applyShadows(wheelObject));
-  }, [characterCloned, vehicleCloned, wheelObjects]);
+  }, [characterCloned, controlMode, vehicleCloned, wheelObjects]);
 
   useEffect(() => {
+    const enableLakituShadows = controlMode === 'human';
     lakituCloned.traverse((child: any) => {
       if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
+        child.castShadow = enableLakituShadows;
+        child.receiveShadow = enableLakituShadows;
       }
     });
-  }, [lakituCloned]);
+  }, [controlMode, lakituCloned]);
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.1);
@@ -1502,6 +1571,8 @@ export default function DrivableModel({
       flameTrailPositionAttr.needsUpdate = true;
       flameTrailColorAttr.needsUpdate = true;
     }
+
+    publishRenderedPose(nowMs < boostEndTimestampRef.current);
   });
 
   useEffect(() => {
@@ -1553,6 +1624,22 @@ export default function DrivableModel({
 
     smoothedGroundNormalRef.current.copy(worldUp);
     smoothedVisualBodyYRef.current = null;
+    const pose = publishedPoseRef.current;
+    pose.x = spawnPosition[0];
+    pose.y = spawnPosition[1];
+    pose.z = spawnPosition[2];
+    pose.yaw = initialRotation[1];
+    pose.boostActive = false;
+    pose.forwardX = Math.sin(initialRotation[1]);
+    pose.forwardY = 0;
+    pose.forwardZ = Math.cos(initialRotation[1]);
+    pose.upX = 0;
+    pose.upY = 1;
+    pose.upZ = 0;
+    pose.qx = 0;
+    pose.qy = 0;
+    pose.qz = 0;
+    pose.qw = 1;
     const visualRoot = visualRootRef.current;
     if (visualRoot) {
       visualRoot.position.set(visualRootPosition[0], visualRootPosition[1], visualRootPosition[2]);
@@ -2421,8 +2508,6 @@ export default function DrivableModel({
     const body = bodyRef.current;
     if (!body) return;
 
-    const nowMs = performance.now();
-    const boostActiveNow = nowMs < boostEndTimestampRef.current;
     const t = body.translation();
     const visualRoot = visualRootRef.current;
     if (visualRoot) {
@@ -2447,36 +2532,6 @@ export default function DrivableModel({
         visualRootPosition[2],
       );
     }
-
-    const r = body.rotation();
-    tmpBodyQuat.set(r.x, r.y, r.z, r.w).normalize();
-    tmpPoseForward.set(0, 0, 1).applyQuaternion(tmpBodyQuat).normalize();
-    tmpPoseUp.set(0, 1, 0).applyQuaternion(tmpBodyQuat).normalize();
-
-    const pose: CarPose = {
-      x: t.x,
-      y: t.y,
-      z: t.z,
-      yaw: yawRef.current,
-      boostActive: boostActiveNow,
-      forwardX: tmpPoseForward.x,
-      forwardY: tmpPoseForward.y,
-      forwardZ: tmpPoseForward.z,
-      upX: tmpPoseUp.x,
-      upY: tmpPoseUp.y,
-      upZ: tmpPoseUp.z,
-      qx: tmpBodyQuat.x,
-      qy: tmpBodyQuat.y,
-      qz: tmpBodyQuat.z,
-      qw: tmpBodyQuat.w,
-    };
-
-    if (controlMode === 'human' && participantId === 'human-p1') {
-      carPosition.set(t.x, t.y, t.z);
-      carRotationY.current = yawRef.current;
-    }
-
-    onPoseUpdate?.(participantId, pose);
   });
 
   return (
@@ -2498,6 +2553,7 @@ export default function DrivableModel({
           onIntersectionEnter={handleAntiGravIntersectionEnter}
           onIntersectionExit={handleAntiGravIntersectionExit}
         />
+        <group ref={poseAnchorRef} />
         <group ref={visualRootRef} position={visualRootPosition}>
           <primitive object={vehicleCloned} scale={vehicleScale} />
           <group position={characterMountWithLift}>

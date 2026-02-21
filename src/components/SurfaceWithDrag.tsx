@@ -29,15 +29,16 @@ export function SurfaceWithDrag({
   const ref = useRef<RapierRigidBody | null>(null);
 
   useEffect(() => {
-    let frameId = 0;
-    let frameCount = 0;
-    let stableFrameCount = 0;
+    let timerId: number | null = null;
+    let attemptCount = 0;
+    let stableAttemptCount = 0;
     let lastObservedColliderCount = -1;
     let registeredBodyHandle: number | null = null;
     const registeredColliderHandles = new Set<number>();
     const registeredSurfaceTriggerHandles = new Set<number>();
-    const MAX_REGISTRATION_FRAMES = 600;
-    const REQUIRED_STABLE_FRAMES = 20;
+    const MAX_REGISTRATION_ATTEMPTS = 40;
+    const REQUIRED_STABLE_ATTEMPTS = 3;
+    const REGISTRATION_RETRY_MS = 40;
 
     const isValidHandle = (value: unknown): value is number =>
       typeof value === 'number' && Number.isFinite(value) && Number.isSafeInteger(value) && value >= 0;
@@ -119,27 +120,29 @@ export function SurfaceWithDrag({
 
     const tick = () => {
       const colliderCount = syncRegistration();
-      frameCount += 1;
+      attemptCount += 1;
 
       const registrationCaughtUp = colliderCount > 0 && registeredColliderHandles.size >= colliderCount;
-      if (registrationCaughtUp && colliderCount === lastObservedColliderCount) stableFrameCount += 1;
-      else stableFrameCount = 0;
+      if (registrationCaughtUp && colliderCount === lastObservedColliderCount) stableAttemptCount += 1;
+      else stableAttemptCount = 0;
 
       lastObservedColliderCount = colliderCount;
 
-      const shouldKeepTrying =
-        frameCount < MAX_REGISTRATION_FRAMES &&
-        (registeredBodyHandle === null || !registrationCaughtUp || stableFrameCount < REQUIRED_STABLE_FRAMES);
+      const registrationComplete =
+        registeredBodyHandle !== null &&
+        registrationCaughtUp &&
+        stableAttemptCount >= REQUIRED_STABLE_ATTEMPTS;
+      const shouldKeepTrying = attemptCount < MAX_REGISTRATION_ATTEMPTS && !registrationComplete;
 
       if (shouldKeepTrying) {
-        frameId = window.requestAnimationFrame(tick);
+        timerId = window.setTimeout(tick, REGISTRATION_RETRY_MS);
       }
     };
 
     tick();
 
     return () => {
-      if (frameId) window.cancelAnimationFrame(frameId);
+      if (timerId !== null) window.clearTimeout(timerId);
       if (registeredBodyHandle !== null) unregisterBodyDrag(registeredBodyHandle);
       registeredColliderHandles.forEach((handle) => unregisterColliderDrag(handle));
       registeredSurfaceTriggerHandles.forEach((handle) => unregisterSurfaceTrigger(handle));

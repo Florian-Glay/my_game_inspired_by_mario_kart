@@ -19,6 +19,7 @@ import {
   PLAYER_KEY_BINDINGS,
   TOTAL_RACE_PARTICIPANTS,
 } from './config/raceCatalog';
+import { PERF_PROFILE } from './config/performanceProfile';
 import { clearDragRegistry } from './state/dragRegistry';
 import { gameMode } from './state/gamemode';
 import { clearSurfaceTriggerRegistry } from './state/surfaceTriggerRegistry';
@@ -35,6 +36,7 @@ import type {
   RaceParticipantConfig,
 } from './types/game';
 import {
+  clearGLTFAssetCacheEntries,
   getRaceAssetUrls,
   scheduleAllKnownModelCacheClear,
   scheduleGLTFAssetCacheClear,
@@ -187,8 +189,8 @@ export function App() {
 
     pendingCacheClearCancelRef.current?.();
     pendingCacheClearCancelRef.current = scheduleAllKnownModelCacheClear({
-      chunkSize: 1,
-      intervalMs: 18,
+      chunkSize: 6,
+      intervalMs: 8,
     });
     loadedRaceAssetUrlsRef.current.clear();
     clearDragRegistry();
@@ -406,9 +408,6 @@ export function App() {
       }
 
       const circuitConfig = CIRCUITS[selectedCircuit];
-      if (circuitConfig.spawnSlots.length < TOTAL_RACE_PARTICIPANTS) {
-        return null;
-      }
 
       const humanSlots = getHumanSlots(humanCount);
       const humanParticipants: RaceParticipantConfig[] = [];
@@ -444,8 +443,18 @@ export function App() {
         });
       }
 
+      const desiredParticipantCount = Math.max(
+        humanParticipants.length,
+        PERF_PROFILE.simulateBots ?
+          Math.min(TOTAL_RACE_PARTICIPANTS, Math.max(humanCount, PERF_PROFILE.maxRaceParticipants))
+        : humanParticipants.length,
+      );
+      if (circuitConfig.spawnSlots.length < desiredParticipantCount) {
+        return null;
+      }
+
       const botParticipants: RaceParticipantConfig[] = Array.from(
-        { length: TOTAL_RACE_PARTICIPANTS - humanParticipants.length },
+        { length: desiredParticipantCount - humanParticipants.length },
         (_, index) => {
           const loadout = createRandomLoadoutSelection();
           const character = getCatalogItemById(CHARACTERS, loadout.characterId);
@@ -474,8 +483,11 @@ export function App() {
         },
       );
 
-      const shuffledParticipants = shuffleParticipants([...humanParticipants, ...botParticipants]);
-      const participants = shuffledParticipants.map((participant, index) => {
+      const participantPool =
+        PERF_PROFILE.simulateBots ?
+          shuffleParticipants([...humanParticipants, ...botParticipants])
+        : [...humanParticipants];
+      const participants = participantPool.map((participant, index) => {
         const spawnSlot = circuitConfig.spawnSlots[index];
         return {
           ...participant,
@@ -524,10 +536,23 @@ export function App() {
           (url) => !nextAssetSet.has(url),
         );
         pendingCacheClearCancelRef.current?.();
-        pendingCacheClearCancelRef.current = scheduleGLTFAssetCacheClear(staleAssetUrls, {
-          chunkSize: 1,
-          intervalMs: 24,
-        });
+
+        // Clear most stale assets immediately while loading the next course,
+        // then finish the remainder asynchronously to avoid long per-frame work.
+        const immediateChunkSize = 24;
+        const immediateUrls = staleAssetUrls.slice(0, immediateChunkSize);
+        const deferredUrls = staleAssetUrls.slice(immediateChunkSize);
+        if (immediateUrls.length > 0) {
+          clearGLTFAssetCacheEntries(immediateUrls);
+        }
+        pendingCacheClearCancelRef.current =
+          deferredUrls.length > 0 ?
+            scheduleGLTFAssetCacheClear(deferredUrls, {
+              chunkSize: 6,
+              intervalMs: 8,
+            })
+          : null;
+
         loadedRaceAssetUrlsRef.current = nextAssetSet;
         setRaceConfig(nextRaceConfig);
         setScreen('race');

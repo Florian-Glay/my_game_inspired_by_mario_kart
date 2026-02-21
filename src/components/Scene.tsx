@@ -37,6 +37,8 @@ const SUN_POSITION: [number, number, number] = [220, 180, -360];
 const CLOUD_WRAP_X = 620;
 const CLOUD_FAR_Z = -420;
 const CLOUD_NEAR_Z = 160;
+const TINY_VIEWPORT_AREA = 420_000;
+const MEDIUM_VIEWPORT_AREA = 820_000;
 
 type SceneProps = {
   raceConfig: RaceConfig;
@@ -109,6 +111,33 @@ function RaceEnvironmentEnforcer() {
   return null;
 }
 
+function AdaptiveViewportPerformance() {
+  const { size, setDpr } = useThree();
+  const lastDprRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const width = Math.max(1, size.width);
+    const height = Math.max(1, size.height);
+    const viewportArea = width * height;
+    const minDpr = PERF_PROFILE.dpr[0];
+    const maxDpr = PERF_PROFILE.dpr[1];
+
+    const targetDpr =
+      viewportArea <= TINY_VIEWPORT_AREA ?
+        minDpr
+      : viewportArea <= MEDIUM_VIEWPORT_AREA ?
+        Math.max(minDpr, Math.min(maxDpr, 0.65))
+      : maxDpr;
+
+    if (lastDprRef.current !== targetDpr) {
+      lastDprRef.current = targetDpr;
+      setDpr(targetDpr);
+    }
+  }, [setDpr, size.height, size.width]);
+
+  return null;
+}
+
 type CloudSeed = {
   x: number;
   y: number;
@@ -142,7 +171,7 @@ function MovingClouds() {
   const rootRef = useRef<Group | null>(null);
   const cloudSeeds = useMemo<CloudSeed[]>(
     () =>
-      Array.from({ length: 16 }, (_, index) => {
+      Array.from({ length: 10 }, (_, index) => {
         const lane = index % 4;
         const band = Math.floor(index / 4);
         return {
@@ -238,7 +267,7 @@ const START_COUNTDOWN_CHARGE_HINT_FROM = 2;
 const START_COUNTDOWN_TICK_MS = 1000;
 const START_COUNTDOWN_ZERO_HOLD_MS = 450;
 const LOADING_OVERLAY_FADE_MS = 500;
-const LIVE_SCOREBOARD_REFRESH_MS = 120;
+const LIVE_SCOREBOARD_REFRESH_MS = 280;
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 
 const clampValue = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -378,6 +407,13 @@ export function Scene({
         .map((participant) => poseRefsByParticipant[participant.id])
         .filter((ref): ref is MutableRefObject<CarPose> => Boolean(ref)),
     [humanParticipants, poseRefsByParticipant],
+  );
+  const drivableParticipants = useMemo(
+    () =>
+      PERF_PROFILE.simulateBots ?
+        raceConfig.participants
+      : raceConfig.participants.filter((participant) => participant.kind === 'human'),
+    [raceConfig.participants],
   );
   const participantOrder = useMemo(
     () => new Map(raceConfig.participants.map((participant, index) => [participant.id, index])),
@@ -954,7 +990,7 @@ export function Scene({
         <Canvas
           shadows
           dpr={PERF_PROFILE.dpr}
-          gl={{ antialias: true, powerPreference: 'high-performance', alpha: false, stencil: false }}
+          gl={{ antialias: false, powerPreference: 'high-performance', alpha: false, stencil: false }}
           camera={{ position: [8, 3, 8], fov: 80, near: PERF_PROFILE.cameraNear, far: PERF_PROFILE.cameraFar }}
           style={{ background: DAY_CLEAR_COLOR }}
           onCreated={(state) => {
@@ -964,6 +1000,7 @@ export function Scene({
           }}
         >
           <RaceEnvironmentEnforcer />
+          <AdaptiveViewportPerformance />
           <Suspense fallback={<LoadingFallback />}>
             <SceneAssetGate key={assetGateKey} urls={requiredAssetUrls} onReady={handleAssetsReady} />
             {assetsReady ? (
@@ -976,8 +1013,8 @@ export function Scene({
                 intensity={1.45}
                 color="#ffe0ad"
                 castShadow
-                shadow-mapSize-width={2048}
-                shadow-mapSize-height={2048}
+                shadow-mapSize-width={1024}
+                shadow-mapSize-height={1024}
                 shadow-camera-near={1}
                 shadow-camera-far={1000}
                 shadow-camera-left={-320}
@@ -1159,7 +1196,7 @@ export function Scene({
               </SurfaceWithDrag>
             : null}
 
-            {raceConfig.participants.map((participant) => (
+            {drivableParticipants.map((participant) => (
               <DrivableModel
                 key={participant.id}
                 participantId={participant.id}

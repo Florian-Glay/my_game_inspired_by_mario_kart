@@ -99,6 +99,7 @@ export function CircuitMeshCullingController({
   performance,
 }: CircuitMeshCullingControllerProps) {
   const frameRef = useRef(0);
+  const nextEntryIndexRef = useRef(0);
   const meshEntriesRef = useRef<MeshEntry[]>([]);
   const rootsRef = useRef<{ road: Group | null; ext: Group | null }>({ road: null, ext: null });
 
@@ -146,6 +147,7 @@ export function CircuitMeshCullingController({
     extGroup.traverse(register);
 
     meshEntriesRef.current = entries;
+    nextEntryIndexRef.current = 0;
     rootsRef.current = { road: roadGroup, ext: extGroup };
   };
 
@@ -170,7 +172,14 @@ export function CircuitMeshCullingController({
     if (entries.length === 0) return;
     if (viewerPoseRefs.length === 0) return;
 
-    for (const entry of entries) {
+    const totalEntries = entries.length;
+    const divisor = Math.max(1, Math.floor(PERF_PROFILE.cullBatchDivisor));
+    const batchSize = Math.max(64, Math.ceil(totalEntries / divisor));
+    let index = nextEntryIndexRef.current % totalEntries;
+    const maxToProcess = Math.min(totalEntries, batchSize);
+
+    for (let processed = 0; processed < maxToProcess; processed += 1) {
+      const entry = entries[index];
       const center = entry.worldCenter;
       const radius = entry.worldRadius;
       const maxDistanceWithRadius = performance.maxVisibleDistance + radius + CULL_DISTANCE_MARGIN;
@@ -198,8 +207,13 @@ export function CircuitMeshCullingController({
         }
       }
 
-      entry.mesh.visible = visible;
+      if (entry.mesh.visible !== visible) {
+        entry.mesh.visible = visible;
+      }
+      index = (index + 1) % totalEntries;
     }
+
+    nextEntryIndexRef.current = index;
   });
 
   return null;

@@ -63,7 +63,7 @@ function followCar(
   desiredLookAt.set(pose.x, pose.y, pose.z).addScaledVector(tmpUp, LOOK_AT_HEIGHT);
   desiredUp.copy(tmpUp);
 
-  const alpha = Math.min(1, CAMERA_SMOOTH_SPEED * delta);
+  const alpha = 1 - Math.exp(-CAMERA_SMOOTH_SPEED * Math.min(delta, 0.05));
   smoothPos.lerp(desiredPos, alpha);
   smoothLookAt.lerp(desiredLookAt, alpha);
   smoothUp.lerp(desiredUp, alpha).normalize();

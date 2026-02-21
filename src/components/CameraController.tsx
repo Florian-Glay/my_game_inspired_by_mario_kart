@@ -202,7 +202,7 @@ export function CameraController({
       desiredLookAt.current.set(carX, carY, carZ).addScaledVector(carUp, lookAtTargetY);
       desiredUp.current.copy(carUp);
 
-      const camAlpha = Math.min(1, 8 * delta);
+      const camAlpha = 1 - Math.exp(-8 * Math.min(delta, 0.05));
       smoothPos.current.lerp(desiredPos.current, camAlpha);
       smoothLookAt.current.lerp(desiredLookAt.current, camAlpha);
       smoothUp.current.lerp(desiredUp.current, camAlpha).normalize();
