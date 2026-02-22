@@ -32,7 +32,7 @@ import { carPosition, carRotationY } from '../state/car';
 import { commandInputActive } from '../state/commandInput';
 import { gameMode } from '../state/gamemode';
 import { getSurfaceTriggerType, type SurfaceTriggerType } from '../state/surfaceTriggerRegistry';
-import { computeBotAutopilotInput } from '../ai/botAutopilot';
+import { computeBotAutopilotInput, type BotWaypoint } from '../ai/botAutopilot';
 import type {
   CarPose,
   KeyBindings,
@@ -104,6 +104,8 @@ type Props = {
   surfaceAttachment?: SurfaceAttachmentConfig;
   antiGravSwitchesEnabled?: boolean;
   booster?: BoosterConfig;
+  botWaypoints?: readonly BotWaypoint[];
+  autopilotCourseKey?: string;
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -293,6 +295,8 @@ export default function DrivableModel({
   surfaceAttachment,
   antiGravSwitchesEnabled = false,
   booster,
+  botWaypoints = [],
+  autopilotCourseKey,
 }: Props) {
   const { rapier, world, colliderStates, rigidBodyStates } = useRapier();
   type KinematicController = InstanceType<(typeof rapier)['KinematicCharacterController']>;
@@ -966,6 +970,15 @@ export default function DrivableModel({
 
     if (!isDoubleTap) return;
 
+    steerChargeDirectionRef.current = direction;
+    steerChargeStartMsRef.current = nowMs;
+    steerChargeJumpPendingRef.current = true;
+  };
+
+  const forceStartSteerCharge = (direction: SteeringChargeDirection, nowMs: number) => {
+    if (steerChargeDirectionRef.current !== null) return;
+    steerChargeTapRef.current.direction = direction;
+    steerChargeTapRef.current.timestampMs = nowMs;
     steerChargeDirectionRef.current = direction;
     steerChargeStartMsRef.current = nowMs;
     steerChargeJumpPendingRef.current = true;
@@ -1826,11 +1839,34 @@ export default function DrivableModel({
           z: tCurrent.z,
           yaw: yawRef.current,
         },
+        waypoints: botWaypoints,
+        controlsLocked,
+        courseKey: autopilotCourseKey,
+        startCountdownValue,
       });
       keysRef.current.forward = autopilotInput.forward;
       keysRef.current.back = autopilotInput.back;
       keysRef.current.left = autopilotInput.left;
       keysRef.current.right = autopilotInput.right;
+
+      const requestedDriftChargeDirection =
+        !controlsLocked && !commandInputActive.current ? (autopilotInput.driftChargeDirection ?? null) : null;
+      const activeDriftChargeDirection = steerChargeDirectionRef.current;
+      if (requestedDriftChargeDirection && activeDriftChargeDirection === null) {
+        forceStartSteerCharge(requestedDriftChargeDirection, nowMs);
+      } else if (activeDriftChargeDirection !== null) {
+        const activeDirectionStillPressed =
+          activeDriftChargeDirection === 'left' ? keysRef.current.left : keysRef.current.right;
+        const shouldKeepDriftCharge =
+          requestedDriftChargeDirection === activeDriftChargeDirection && activeDirectionStillPressed;
+        if (!shouldKeepDriftCharge) {
+          releaseSteerCharge({
+            releasedDirection: activeDriftChargeDirection,
+            nowMs,
+            triggerBoost: true,
+          });
+        }
+      }
     }
 
     if (rescueActiveRef.current) {

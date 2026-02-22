@@ -10,7 +10,8 @@ import {
   useState,
   type MutableRefObject,
 } from 'react';
-import { Color, PCFSoftShadowMap, type Group } from 'three';
+import { Color, Euler, Matrix4, PCFSoftShadowMap, Quaternion, Vector3, type Group } from 'three';
+import type { BotWaypoint } from '../ai/botAutopilot';
 import { CC_SPEEDS, CIRCUITS } from '../config/raceCatalog';
 import { PERF_PROFILE } from '../config/performanceProfile';
 import { gameMode } from '../state/gamemode';
@@ -61,12 +62,87 @@ type PhysicsWarmupGateProps = {
   onReady: () => void;
 };
 
+type WaypointTransform = {
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+};
+
+type CircuitWaypointLoaderProps = {
+  model: string;
+  transform: WaypointTransform;
+  onReady: (waypoints: BotWaypoint[]) => void;
+};
+
+const WAYPOINT_NODE_NAME_RE = /^WP_(\d+)$/i;
+
 function SceneAssetGate({ urls, onReady }: SceneAssetGateProps) {
   useGLTF(urls);
 
   useEffect(() => {
     onReady();
   }, [onReady, urls]);
+
+  return null;
+}
+
+function extractWaypointsFromScene(
+  root: Group,
+  transform: WaypointTransform,
+): BotWaypoint[] {
+  const transformedWaypoints: BotWaypoint[] = [];
+  const circuitTransformMatrix = new Matrix4().compose(
+    new Vector3(transform.position[0], transform.position[1], transform.position[2]),
+    new Quaternion().setFromEuler(
+      new Euler(transform.rotation[0], transform.rotation[1], transform.rotation[2]),
+    ),
+    new Vector3(transform.scale[0], transform.scale[1], transform.scale[2]),
+  );
+  const sourcePosition = new Vector3();
+  const worldPosition = new Vector3();
+  const seenIndices = new Set<number>();
+
+  root.updateMatrixWorld(true);
+  root.traverse((child) => {
+    const name = typeof child.name === 'string' ? child.name.trim() : '';
+    const match = WAYPOINT_NODE_NAME_RE.exec(name);
+    if (!match) return;
+
+    const index = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(index) || seenIndices.has(index)) return;
+
+    child.getWorldPosition(sourcePosition);
+    worldPosition.copy(sourcePosition).applyMatrix4(circuitTransformMatrix);
+    seenIndices.add(index);
+    transformedWaypoints.push({
+      index,
+      position: [worldPosition.x, worldPosition.y, worldPosition.z],
+    });
+  });
+
+  transformedWaypoints.sort((left, right) => left.index - right.index);
+  return transformedWaypoints;
+}
+
+function CircuitWaypointLoader({ model, transform, onReady }: CircuitWaypointLoaderProps) {
+  const { scene } = useGLTF(model) as unknown as { scene: Group };
+
+  useEffect(() => {
+    onReady(extractWaypointsFromScene(scene, transform));
+  }, [
+    model,
+    onReady,
+    scene,
+    transform.position[0],
+    transform.position[1],
+    transform.position[2],
+    transform.rotation[0],
+    transform.rotation[1],
+    transform.rotation[2],
+    transform.scale[0],
+    transform.scale[1],
+    transform.scale[2],
+  ]);
 
   return null;
 }
@@ -319,6 +395,7 @@ export function Scene({
   const [roadModelReady, setRoadModelReady] = useState(false);
   const [extModelReady, setExtModelReady] = useState(false);
   const [textureDebugReady, setTextureDebugReady] = useState(!textureDebugEnabled);
+  const [circuitWaypoints, setCircuitWaypoints] = useState<BotWaypoint[]>([]);
   const initialLapProgress = useMemo(
     () => createInitialLapProgress(raceConfig.participants),
     [raceConfig.participants],
@@ -348,6 +425,7 @@ export function Scene({
     circuit.lapStart?.model ?? 'no-lap-start',
     circuit.lapCheckpoint?.model ?? 'no-lap-checkpoint',
   ].join('-');
+  const circuitWaypointTransform = circuit.waypoints?.transform ?? circuit.transform;
   const requiredAssetUrls = useMemo(() => {
     const urls = [circuit.road.model, circuit.ext.model];
     if (circuit.antiGravIn?.model) urls.push(circuit.antiGravIn.model);
@@ -355,6 +433,7 @@ export function Scene({
     if (circuit.booster?.model) urls.push(circuit.booster.model);
     if (circuit.lapStart?.model) urls.push(circuit.lapStart.model);
     if (circuit.lapCheckpoint?.model) urls.push(circuit.lapCheckpoint.model);
+    if (circuit.waypoints?.model) urls.push(circuit.waypoints.model);
     for (const player of raceConfig.participants) {
       urls.push(player.vehicleModel);
       urls.push(player.characterModel);
@@ -369,6 +448,7 @@ export function Scene({
     circuit.lapStart?.model,
     circuit.ext.model,
     circuit.road.model,
+    circuit.waypoints?.model,
     raceConfig.participants,
   ]);
   const assetGateKey = useMemo(() => requiredAssetUrls.join('|'), [requiredAssetUrls]);
@@ -453,6 +533,10 @@ export function Scene({
   }, [assetGateKey, circuitPhysicsKey, textureDebugEnabled]);
 
   useEffect(() => {
+    setCircuitWaypoints([]);
+  }, [raceConfig.circuit, raceConfig.courseId]);
+
+  useEffect(() => {
     lapProgressRef.current = initialLapProgress;
     setLapProgressByPlayer(initialLapProgress);
     setCourseRanking([]);
@@ -495,6 +579,10 @@ export function Scene({
     },
     [poseRefsByParticipant],
   );
+
+  const handleCircuitWaypointsReady = useCallback((waypoints: BotWaypoint[]) => {
+    setCircuitWaypoints(waypoints);
+  }, []);
 
   const finalizeCourse = useCallback(
     (progressByPlayer: Record<RaceParticipantId, PlayerLapProgress>) => {
@@ -812,7 +900,7 @@ export function Scene({
       {raceConfig.humanCount === 2 ? <div className="split-divider" aria-hidden /> : null}
       {loadingOverlayVisible ? (
         <div
-          className={`absolute inset-0 z-[80] transition-opacity duration-500 ${
+          className={`absolute inset-0 z-80 transition-opacity duration-500 ${
             loadingOverlayFading ? 'opacity-0' : 'opacity-100'
           }`}
         >
@@ -832,7 +920,7 @@ export function Scene({
       ) : null}
 
       {isStartCountdownVisible ? (
-        <div className="pointer-events-none absolute inset-0 z-[68] flex items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 z-68 flex items-center justify-center">
           <div className="text-center text-white">
             <div
               className={`leading-none font-black drop-shadow-[0_14px_34px_rgba(1,8,26,0.75)] ${
@@ -861,7 +949,7 @@ export function Scene({
             {liveScoreboard.map((entry) => (
               <div key={`lap-${entry.participantId}`} className="flex items-center justify-between gap-2 text-xs">
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="w-[1.75rem] font-black text-[#ffd670]">#{entry.position}</span>
+                  <span className="w-7 font-black text-[#ffd670]">#{entry.position}</span>
                   <span className="truncate font-semibold">{entry.displayName}</span>
                 </div>
                 <span className="font-black tracking-wide">
@@ -1003,6 +1091,14 @@ export function Scene({
           <AdaptiveViewportPerformance />
           <Suspense fallback={<LoadingFallback />}>
             <SceneAssetGate key={assetGateKey} urls={requiredAssetUrls} onReady={handleAssetsReady} />
+            {circuit.waypoints?.model ? (
+              <CircuitWaypointLoader
+                key={`${raceConfig.courseId}-waypoints`}
+                model={circuit.waypoints.model}
+                transform={circuitWaypointTransform}
+                onReady={handleCircuitWaypointsReady}
+              />
+            ) : null}
             {assetsReady ? (
               <Physics key={circuitPhysicsKey} gravity={[0, -9.81, 0]} colliders={false}>
               <PhysicsWarmupGate enabled={assetsReady} framesToWait={physicsWarmupFrames} onReady={handlePhysicsWarmupReady} />
@@ -1221,6 +1317,8 @@ export function Scene({
                 onLapTrigger={handleLapTrigger}
                 controlsLocked={controlsLocked}
                 startCountdownValue={startCountdownValue}
+                botWaypoints={circuitWaypoints}
+                autopilotCourseKey={raceConfig.courseId}
                 surfaceAttachment={circuit.vehicleAttachment}
                 antiGravSwitchesEnabled={Boolean(circuit.antiGravIn || circuit.antiGravOut)}
                 booster={circuit.booster}

@@ -31,6 +31,11 @@ type BoosterTriggerConfig = {
   transform: TransformConfig;
 };
 
+type WaypointPathConfig = {
+  model: string;
+  transform?: TransformConfig;
+};
+
 export type CircuitPerformanceConfig = {
   maxVisibleDistance: number;
   cullConeDot: number;
@@ -61,6 +66,7 @@ export type CircuitConfig = {
   booster?: BoosterTriggerConfig;
   lapStart?: SurfaceTriggerConfig;
   lapCheckpoint?: SurfaceTriggerConfig;
+  waypoints?: WaypointPathConfig;
   performance: CircuitPerformanceConfig;
   vehicleAttachment: VehicleAttachmentConfig;
 };
@@ -331,6 +337,10 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       drag: 0,
       friction: 0,
       restitution: 0,
+      transform: marioTransform,
+    },
+    waypoints: {
+      model: 'models/ds_mario_circuit_waypoints.glb',
       transform: marioTransform,
     },
     performance: {
