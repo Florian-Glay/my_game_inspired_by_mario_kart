@@ -1,0 +1,156 @@
+import bpy
+from mathutils import Vector
+from mathutils.geometry import interpolate_bezier
+
+# ----------------------------
+# CONFIG
+# ----------------------------
+WAYPOINTS_COLLECTION_NAME = "Waypoints"
+SPACING = 2.0               # distance entre waypoints (m Blender)
+EMPTY_DISPLAY_SIZE = 0.25
+EMPTY_TYPE = 'ARROWS'       # 'PLAIN_AXES', 'ARROWS', 'SPHERE', etc.
+UP_AXIS = 'Y'               # orientation des empties
+FORWARD_AXIS = '-Z'         # -Z = souvent "forward" pour véhicules/Three
+
+# Si tu veux relever légèrement les waypoints (éviter z-fighting visuel)
+OFFSET = Vector((0, 0.05, 0))
+
+# Qualité d'échantillonnage de la courbe (plus = plus précis)
+STEPS_PER_SEGMENT = 24
+
+# ----------------------------
+# HELPERS
+# ----------------------------
+def get_or_create_collection(name):
+    col = bpy.data.collections.get(name)
+    if col is None:
+        col = bpy.data.collections.new(name)
+        bpy.context.scene.collection.children.link(col)
+    return col
+
+def clear_collection(col):
+    for obj in list(col.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+def create_empty(name, location, rotation_quat, collection):
+    empty = bpy.data.objects.new(name, None)
+    empty.empty_display_type = EMPTY_TYPE
+    empty.empty_display_size = EMPTY_DISPLAY_SIZE
+    empty.location = location
+    empty.rotation_mode = 'QUATERNION'
+    empty.rotation_quaternion = rotation_quat
+    collection.objects.link(empty)
+    return empty
+
+def resample_by_spacing(points, spacing):
+    """Resample une polyline en gardant un point tous les 'spacing' mètres."""
+    if len(points) < 2:
+        return []
+
+    out = [points[0].copy()]
+    acc = 0.0
+    i = 0
+    while i < len(points) - 1:
+        a = out[-1]
+        b = points[i + 1]
+        seg = b - a
+        seg_len = seg.length
+
+        if seg_len < 1e-9:
+            i += 1
+            continue
+
+        need = spacing
+        if seg_len >= need:
+            p = a + seg.normalized() * need
+            out.append(p)
+        else:
+            # avance dans la polyline d'origine
+            i += 1
+            continue
+
+    return out
+
+def curve_to_polyline_world(curve_obj):
+    """Convertit une Curve (Bezier/Poly/NURBS) en liste de points monde."""
+    if curve_obj.type != 'CURVE':
+        raise Exception("Sélectionne une Curve (pas un mesh).")
+
+    mw = curve_obj.matrix_world
+    pts_world = []
+
+    for spline in curve_obj.data.splines:
+        # --- POLY / NURBS ---
+        if spline.type in {'POLY', 'NURBS'}:
+            pts = [mw @ Vector((p.co.x, p.co.y, p.co.z)) for p in spline.points]
+            if spline.use_cyclic_u and len(pts) > 2:
+                pts.append(pts[0].copy())
+            pts_world.extend(pts)
+
+        # --- BEZIER ---
+        elif spline.type == 'BEZIER':
+            bp = spline.bezier_points
+            if len(bp) < 2:
+                continue
+
+            count = len(bp)
+            seg_count = count if spline.use_cyclic_u else count - 1
+
+            for i in range(seg_count):
+                p0 = bp[i]
+                p1 = bp[(i + 1) % count]
+
+                a = mw @ p0.co
+                b = mw @ p0.handle_right
+                c = mw @ p1.handle_left
+                d = mw @ p1.co
+
+                # points interpolés sur ce segment
+                seg = interpolate_bezier(a, b, c, d, STEPS_PER_SEGMENT)
+                if pts_world and (seg[0] - pts_world[-1]).length < 1e-6:
+                    pts_world.extend(seg[1:])
+                else:
+                    pts_world.extend(seg)
+
+        else:
+            raise Exception(f"Spline type non supporté: {spline.type}")
+
+    # Nettoyage: supprime doublons consécutifs
+    cleaned = []
+    for p in pts_world:
+        if not cleaned or (p - cleaned[-1]).length > 1e-6:
+            cleaned.append(p)
+
+    return cleaned
+
+# ----------------------------
+# MAIN
+# ----------------------------
+obj = bpy.context.active_object
+if obj is None or obj.type != 'CURVE':
+    raise Exception("✅ Sélectionne d'abord ta courbe (Curve) qui suit la route, puis relance le script.")
+
+col = get_or_create_collection(WAYPOINTS_COLLECTION_NAME)
+clear_collection(col)
+
+poly = curve_to_polyline_world(obj)
+if len(poly) < 2:
+    raise Exception("La courbe ne contient pas assez de points. Vérifie qu'elle a bien une spline.")
+
+# Resample régulier
+samples = resample_by_spacing(poly, SPACING)
+
+# Crée empties + orientation tangent
+for i, p in enumerate(samples):
+    p2 = samples[(i + 1) % len(samples)] if len(samples) > 1 else p + Vector((0,0,1))
+    tangent = (p2 - p)
+    if tangent.length < 1e-6:
+        tangent = Vector((0, 0, 1))
+    tangent.normalize()
+
+    # orientation: l'axe FORWARD de l'empty regarde la tangent
+    rot = tangent.to_track_quat(FORWARD_AXIS, UP_AXIS)
+
+    create_empty(f"WP_{i:04d}", p + OFFSET, rot, col)
+
+print(f"[Waypoints] OK: {len(samples)} waypoints générés dans la collection '{WAYPOINTS_COLLECTION_NAME}'.")

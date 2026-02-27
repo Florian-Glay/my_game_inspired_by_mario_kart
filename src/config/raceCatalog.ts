@@ -411,6 +411,10 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       restitution: 0,
       transform: stadiumTransform,
     },
+    waypoints: {
+      model: 'models/stadium_waypoints.glb',
+      transform: stadiumTransform,
+    },
     performance: {
       maxVisibleDistance: 230,
       cullConeDot: CULL_CONE_DOT_120,
@@ -463,6 +467,10 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       drag: 0,
       friction: 0,
       restitution: 0,
+      transform: subwayTransform,
+    },
+    waypoints: {
+      model: 'models/super_bell_subway_waypoints.glb',
       transform: subwayTransform,
     },
     performance: {

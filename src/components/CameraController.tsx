@@ -1,7 +1,7 @@
 import type { MutableRefObject } from 'react';
 import { useEffect, useMemo, useRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
-import { Plane, Vector3 } from 'three';
+import { Camera, PerspectiveCamera, Plane, Vector3 } from 'three';
 import { PERF_PROFILE } from '../config/performanceProfile';
 import { carPosition, carRotationY } from '../state/car';
 import { gameMode } from '../state/gamemode';
@@ -17,6 +17,10 @@ type CameraControllerProps = {
 const BOOST_FOV_DELTA = 5;
 const BOOST_FOV_IN_SPEED = 20;
 const BOOST_FOV_OUT_SPEED = 10;
+
+function isPerspectiveCamera(camera: Camera): camera is PerspectiveCamera {
+  return (camera as PerspectiveCamera).isPerspectiveCamera === true;
+}
 
 export function CameraController({
   targetPoseRef,
@@ -54,10 +58,12 @@ export function CameraController({
   const tmpCarUp = useRef(new Vector3());
   const upAxis = useMemo(() => new Vector3(0, 1, 0), []);
   const clipPlaneRef = useRef(new Plane());
-  const baseFovRef = useRef(camera.fov);
+  const baseFovRef = useRef(isPerspectiveCamera(camera) ? camera.fov : 50);
 
   useEffect(() => {
-    baseFovRef.current = camera.fov;
+    if (isPerspectiveCamera(camera)) {
+      baseFovRef.current = camera.fov;
+    }
     camera.near = PERF_PROFILE.cameraNear;
     camera.far = PERF_PROFILE.cameraFar;
     camera.updateProjectionMatrix();
@@ -233,14 +239,16 @@ export function CameraController({
       camera.rotation.x = pitchRef.current;
     }
 
-    const boostActive = gameMode.current === 'run' && Boolean(targetPoseRef?.current?.boostActive);
-    const targetFov = baseFovRef.current + (boostActive ? BOOST_FOV_DELTA : 0);
-    const fovRate = boostActive ? BOOST_FOV_IN_SPEED : BOOST_FOV_OUT_SPEED;
-    const fovAlpha = 1 - Math.exp(-fovRate * Math.min(delta, 0.05));
-    const nextFov = camera.fov + (targetFov - camera.fov) * fovAlpha;
-    if (Math.abs(nextFov - camera.fov) > 0.0001) {
-      camera.fov = nextFov;
-      camera.updateProjectionMatrix();
+    if (isPerspectiveCamera(camera)) {
+      const boostActive = gameMode.current === 'run' && Boolean(targetPoseRef?.current?.boostActive);
+      const targetFov = baseFovRef.current + (boostActive ? BOOST_FOV_DELTA : 0);
+      const fovRate = boostActive ? BOOST_FOV_IN_SPEED : BOOST_FOV_OUT_SPEED;
+      const fovAlpha = 1 - Math.exp(-fovRate * Math.min(delta, 0.05));
+      const nextFov = camera.fov + (targetFov - camera.fov) * fovAlpha;
+      if (Math.abs(nextFov - camera.fov) > 0.0001) {
+        camera.fov = nextFov;
+        camera.updateProjectionMatrix();
+      }
     }
 
     if (enableClipPlane) {
