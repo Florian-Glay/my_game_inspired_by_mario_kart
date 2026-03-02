@@ -974,21 +974,24 @@ export function Scene({
             </div>
             <h2 className="mt-2 text-2xl font-black">Classement de la course</h2>
             <div className="mt-4 max-h-[56vh] space-y-2 overflow-y-auto pr-1">
-              {courseRanking.map((entry) => (
-                <div
-                  key={`course-rank-${entry.participantId}`}
-                  className="flex items-center justify-between rounded-lg border border-white/20 bg-white/10 px-3 py-2"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg font-black text-[#ffd670]">#{entry.position}</span>
-                    <span className="text-sm font-bold">{entry.displayName}</span>
+              {courseRanking.map((entry) => {
+                const completedLaps = Math.min(Math.max(entry.lap - 1, 0), 3);
+                return (
+                  <div
+                    key={`course-rank-${entry.participantId}`}
+                    className="flex items-center justify-between rounded-lg border border-white/20 bg-white/10 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-lg font-black text-[#ffd670]">#{entry.position}</span>
+                      <span className="text-sm font-bold">{entry.displayName}</span>
+                    </div>
+                    <div className="text-xs font-semibold text-white/85">
+                      Tour {completedLaps}/3
+                      <span className="ml-2">{entry.finished ? 'Termine' : 'En course'}</span>
+                    </div>
                   </div>
-                  <div className="text-xs font-semibold text-white/85">
-                    Tour {Math.min(entry.lap, 4)}/4
-                    <span className="ml-2">{entry.finished ? 'Termine' : 'En course'}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <button
               type="button"

@@ -115,7 +115,12 @@ export type GrandPrixConfig = {
 
 export const HERO_IMAGE_PATH = 'ui/home-hero.png';
 
-export const CIRCUIT_ORDER: CircuitId[] = ['ds_mario_circuit', 'stadium', 'super_bell_subway'];
+export const CIRCUIT_ORDER: CircuitId[] = [
+  'ds_mario_circuit',
+  'stadium',
+  'super_bell_subway',
+  'kalimari_desert',
+];
 
 export const CC_ORDER: CcLevel[] = ['50cc', '100cc', '150cc', '200cc'];
 export const TOTAL_RACE_PARTICIPANTS = 12;
@@ -241,10 +246,10 @@ const subwayTransform = {
   scale: [3, 3, 3] as Vec3,
 };
 
-const toadHarborTransform = {
+const kalimariDesertTransform = {
   position: [0, 0, 0] as Vec3,
   rotation: [0, 0, 0] as Vec3,
-  scale: [0.1, 0.1, 0.1] as Vec3,
+  scale: [1, 1, 1] as Vec3,
 };
 
 const DS_MARIO_CIRCUIT_SPAWN_SLOTS: SpawnSlot[] = [
@@ -263,48 +268,49 @@ const DS_MARIO_CIRCUIT_SPAWN_SLOTS: SpawnSlot[] = [
 ];
 
 const STADIUM_SPAWN_SLOTS: SpawnSlot[] = [
-  { position: [20.246, 82, 240.126], rotation: [0, Math.PI, 0] },
-  { position: [18.046, 82, 240.126], rotation: [0, Math.PI, 0] },
-  { position: [22.446, 82, 240.126], rotation: [0, Math.PI, 0] },
-  { position: [15.846, 82, 240.126], rotation: [0, Math.PI, 0] },
-  { position: [20.246, 82, 243.126], rotation: [0, Math.PI, 0] },
-  { position: [18.046, 82, 243.126], rotation: [0, Math.PI, 0] },
-  { position: [22.446, 82, 243.126], rotation: [0, Math.PI, 0] },
-  { position: [15.846, 82, 243.126], rotation: [0, Math.PI, 0] },
-  { position: [20.246, 82, 246.126], rotation: [0, Math.PI, 0] },
-  { position: [18.046, 82, 246.126], rotation: [0, Math.PI, 0] },
-  { position: [22.446, 82, 246.126], rotation: [0, Math.PI, 0] },
-  { position: [15.846, 82, 246.126], rotation: [0, Math.PI, 0] },
+  { position: [8.291, 87, 205.821], rotation: [0, Math.PI, 0] },
+  { position: [10.355, 87, 209.232], rotation: [0, Math.PI, 0] },
+  { position: [12.629, 87, 212.022], rotation: [0, Math.PI, 0] },
+  { position: [14.598, 87, 215.371], rotation: [0, Math.PI, 0] },
+  { position: [16.775, 87, 218.465], rotation: [0, Math.PI, 0] },
+  { position: [18.905, 87, 221.083], rotation: [0, Math.PI, 0] },
+  { position: [9.247, 87, 224.285], rotation: [0, Math.PI, 0] },
+  { position: [11.437, 87, 227.23], rotation: [0, Math.PI, 0] },
+  { position: [13.497, 87, 229.938], rotation: [0, Math.PI, 0] },
+  { position: [15.675, 87, 233.718], rotation: [0, Math.PI, 0] },
+  { position: [17.817, 87, 236.555], rotation: [0, Math.PI, 0] },
+  { position: [20.113, 87, 240.328], rotation: [0, Math.PI, 0] },
 ];
 
 const SUBWAY_SPAWN_SLOTS: SpawnSlot[] = [
-  { position: [-75, 76, 100], rotation: [0, 1.564, 0] },
-  { position: [-77.2, 76, 100], rotation: [0, 1.564, 0] },
-  { position: [-72.8, 76, 100], rotation: [0, 1.564, 0] },
-  { position: [-79.4, 76, 100], rotation: [0, 1.564, 0] },
-  { position: [-75, 76, 103], rotation: [0, 1.564, 0] },
-  { position: [-77.2, 76, 103], rotation: [0, 1.564, 0] },
-  { position: [-72.8, 76, 103], rotation: [0, 1.564, 0] },
-  { position: [-79.4, 76, 103], rotation: [0, 1.564, 0] },
-  { position: [-75, 76, 106], rotation: [0, 1.564, 0] },
-  { position: [-77.2, 76, 106], rotation: [0, 1.564, 0] },
-  { position: [-72.8, 76, 106], rotation: [0, 1.564, 0] },
-  { position: [-79.4, 76, 106], rotation: [0, 1.564, 0] },
+  { position: [-41.282, 72, 111.308], rotation: [0, 1.59, 0] },
+  { position: [-44.147, 72, 109.015], rotation: [0, 1.589, 0] },
+  { position: [-47.083, 72, 107.004], rotation: [0, 1.589, 0] },
+  { position: [-50.299, 72, 104.792], rotation: [0, 1.575, 0] },
+  { position: [-49.84, 72, 104.792], rotation: [0, 1.575, 0] },
+  { position: [-53.377, 72, 102.748], rotation: [0, 1.575, 0] },
+  { position: [-56.971, 72, 100.482], rotation: [0, 1.575, 0] },
+  { position: [-59.094, 72, 110.273], rotation: [0, 1.588, 0] },
+  { position: [-62.268, 72, 107.957], rotation: [0, 1.602, 0] },
+  { position: [-65.321, 72, 105.951], rotation: [0, 1.595, 0] },
+  { position: [-68.568, 72, 103.768], rotation: [0, 1.568, 0] },
+  { position: [-71.888, 72, 101.754], rotation: [0, 1.605, 0] },
+  { position: [-75.59, 72, 99.475], rotation: [0, 1.605, 0] },
 ];
 
-const TOAD_HARBOR_SPAWN_SLOTS: SpawnSlot[] = [
-  { position: [-75, 100, 100], rotation: [0, 1.564, 0] },
-  { position: [-77.2, 100, 100], rotation: [0, 1.564, 0] },
-  { position: [-72.8, 100, 100], rotation: [0, 1.564, 0] },
-  { position: [-79.4, 100, 100], rotation: [0, 1.564, 0] },
-  { position: [-75, 100, 103], rotation: [0, 1.564, 0] },
-  { position: [-77.2, 100, 103], rotation: [0, 1.564, 0] },
-  { position: [-72.8, 100, 103], rotation: [0, 1.564, 0] },
-  { position: [-79.4, 100, 103], rotation: [0, 1.564, 0] },
-  { position: [-75, 100, 106], rotation: [0, 1.564, 0] },
-  { position: [-77.2, 100, 106], rotation: [0, 1.564, 0] },
-  { position: [-72.8, 100, 106], rotation: [0, 1.564, 0] },
-  { position: [-79.4, 100, 106], rotation: [0, 1.564, 0] },
+const KALIMARI_DESERT_SPAWN_SLOTS: SpawnSlot[] = [
+  { position: [234.75, 9.84, -201.705], rotation: [0,-3.117, 0] },
+  { position: [232.211, 9.84, -197.296], rotation: [0, -3.117, 0] },
+  { position: [229.264, 9.84, -193.949], rotation: [0, -3.117, 0] },
+  { position: [226.251, 9.84, -189.697], rotation: [0, -3.117, 0] },
+  { position: [223.664, 9.84, -185.461], rotation: [0, -3.117, 0] },
+  { position: [220.837, 9.84, -181.752], rotation: [0, -3.117, 0] },
+  { position: [233.686, 9.84, -178.003], rotation: [0, -3.117, 0] },
+  { position: [230.682, 9.84, -173.199], rotation: [0, -3.117, 0] },
+  { position: [227.979, 9.84, -169.22], rotation: [0, -3.117, 0] },
+  { position: [225.021, 9.84, -165.401], rotation: [0, -3.117, 0] },
+  { position: [222.1, 9.84, -161.36], rotation: [0, -3.117, 0] },
+  { position: [219.668, 9.84, -157.23], rotation: [0, -3.117, 0] },
 ];
 
 export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
@@ -490,47 +496,51 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       loopSlopeSlideAngleDeg: 172,
     },
   },
-  toad_harbor: {
-    id: 'toad_harbor',
-    label: 'DS Toad Harbor',
-    transform: toadHarborTransform,
-    spawnSlots: TOAD_HARBOR_SPAWN_SLOTS,
+  kalimari_desert: {
+    id: 'kalimari_desert',
+    label: 'N64 Kalimari Desert',
+    transform: kalimariDesertTransform,
+    spawnSlots: KALIMARI_DESERT_SPAWN_SLOTS,
     road: {
-      model: 'models/toad_harbor_road.glb',
+      model: 'models/kalimari_desert_road.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
     },
     ext: {
-      model: 'models/toad_harbor_ext.glb',
+      model: 'models/kalimari_desert_ext.glb',
       drag: 2,
       friction: 0,
       restitution: 0,
     },
     booster: {
-      model: 'models/toad_harbor_boost.glb',
+      model: 'models/kalimari_desert_boost.glb',
       duration: 1,
       strength: 1.5,
-      transform: toadHarborTransform,
+      transform: kalimariDesertTransform,
     },
     lapStart: {
-      model: 'models/toad_harbor_start.glb',
+      model: 'models/kalimari_desert_start.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
-      transform: toadHarborTransform,
+      transform: kalimariDesertTransform,
     },
     lapCheckpoint: {
-      model: 'models/toad_harbor_checkpoint.glb',
+      model: 'models/kalimari_desert_checkpoint.glb',
       drag: 0,
       friction: 0,
       restitution: 0,
-      transform: toadHarborTransform,
+      transform: kalimariDesertTransform,
+    },
+    waypoints: {
+      model: 'models/kalimari_desert_waypoints.glb',
+      transform: kalimariDesertTransform,
     },
     performance: {
-      maxVisibleDistance: 90,
+      maxVisibleDistance: 320,
       cullConeDot: CULL_CONE_DOT_120,
-      cullNearDistance: 35,
+      cullNearDistance: 45,
     },
     vehicleAttachment: {
       enabled: false,
@@ -551,7 +561,7 @@ export const GRAND_PRIXS: Record<GrandPrixId, GrandPrixConfig> = {
     { origin: 'SNES', label: 'Circuit Mario 1', previewIndex: 2, circuitId: 'ds_mario_circuit' },
     { origin: 'GBA', label: 'Stadium', previewIndex: 1, circuitId: 'stadium' },
     { origin: 'N64', label: 'Super Bell Subway', previewIndex: 3, circuitId: 'super_bell_subway' },
-    { origin: '3DS', label: 'Circuit Mario 1', previewIndex: 2, circuitId: 'ds_mario_circuit' },
+    { origin: 'N64', label: 'Desert Kalimari', previewIndex: 4, circuitId: 'kalimari_desert' },
   ]),
   flower_cup: createGrandPrix('flower_cup', 'Coupe Fleur', 'Coupe Fleur', [
     { origin: 'Wii', label: 'Stadium', previewIndex: 5, circuitId: 'stadium' },
@@ -572,7 +582,7 @@ export const GRAND_PRIXS: Record<GrandPrixId, GrandPrixConfig> = {
     { origin: 'DS', label: 'Horloge Tic-Tac', previewIndex: 4, circuitId: 'stadium' },
   ]),
   shell_cup: createGrandPrix('shell_cup', 'Coupe Carapace', 'Coupe Carapace', [
-    { origin: 'SNES', label: 'Toad Harbor', previewIndex: 5, circuitId: 'toad_harbor' },
+    { origin: 'SNES', label: 'Toad Harbor', previewIndex: 5, circuitId: 'stadium' },
     { origin: 'GBA', label: 'Rivage Koopa', previewIndex: 6, circuitId: 'stadium' },
     { origin: 'N64', label: 'Circuit Luigi', previewIndex: 7, circuitId: 'super_bell_subway' },
     { origin: '3DS', label: 'Vague Wuhu', previewIndex: 8, circuitId: 'ds_mario_circuit' },

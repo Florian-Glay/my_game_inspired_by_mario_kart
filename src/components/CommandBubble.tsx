@@ -30,14 +30,7 @@ export default function CommandBubble({ isMultiplayerRace = false }: CommandBubb
       setMessage('Mode: win');
     } else if (cmd === 'gamemode coor') {
       const yawRad = carRotationY.current;
-      const yawDeg = (yawRad * 180) / Math.PI;
-      console.log('[car][coor]', {
-        x: Number(carPosition.x.toFixed(3)),
-        y: Number(carPosition.y.toFixed(3)),
-        z: Number(carPosition.z.toFixed(3)),
-        yawRad: Number(yawRad.toFixed(3)),
-        yawDeg: Number(yawDeg.toFixed(1)),
-      });
+      console.log(`{ position: [${Number(carPosition.x.toFixed(3))}, ${Number(carPosition.y.toFixed(3))}, ${Number(carPosition.z.toFixed(3))}], rotation: [0, ${Number(yawRad.toFixed(3))}, 0] },`);
       setMessage('Coordonnees affichees en console');
     } else if (cmd.length > 0) {
       setMessage('Commande inconnue');

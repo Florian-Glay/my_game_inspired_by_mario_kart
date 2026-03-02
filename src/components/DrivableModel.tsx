@@ -164,8 +164,9 @@ const LOOPING_REFERENCE_WORLD_DOT = 0.96;
 const LOOPING_DETACHED_REATTACH_DOT = Math.cos((150 * Math.PI) / 180);
 // Keep using the loop reference for a short time after contact loss to avoid instant auto-upright.
 const LOOPING_DETACH_HOLD_MS = 450;
-const ROAD_RESCUE_MAX_DISTANCE = 120;
-const ROAD_DISTANCE_QUERY_MAX = 220;
+const WAYPOINT_RESCUE_MAX_DISTANCE = 50;
+const WAYPOINT_RESCUE_HEIGHT_OFFSET = 2;
+const WAYPOINT_RESCUE_LOOKAHEAD = 4;
 const ROAD_RESCUE_DURATION_MS = 3000;
 const ROAD_RESCUE_HOVER_PHASE = 0.65;
 const ROAD_RESCUE_LIFT_HEIGHT = 10;
@@ -174,23 +175,6 @@ const LAKITU_FADE_IN_SECONDS = 0.35;
 const LAKITU_FADE_OUT_SECONDS = 0.35;
 const LAKITU_FOLLOW_OFFSET_Y = 3;
 const LAKITU_POSITION_SMOOTHING = 12;
-const ROAD_DISTANCE_QUERY_DIRECTIONS: ReadonlyArray<readonly [number, number, number]> = [
-  [0, -1, 0],
-  [0, 1, 0],
-  [1, 0, 0],
-  [-1, 0, 0],
-  [0, 0, 1],
-  [0, 0, -1],
-  [1, -1, 0],
-  [-1, -1, 0],
-  [0, -1, 1],
-  [0, -1, -1],
-  [1, 0, 1],
-  [1, 0, -1],
-  [-1, 0, 1],
-  [-1, 0, -1],
-];
-
 const DEFAULT_KEY_BINDINGS: KeyBindings = {
   forward: ['z', 'w', 'arrowup'],
   back: ['s', 'arrowdown'],
@@ -367,18 +351,14 @@ export default function DrivableModel({
   const flameTrailSpawnRemainderRef = useRef(0);
   const flameTrailOrangeEndMsRef = useRef(0);
   const flameTrailBlueEndMsRef = useRef(0);
-  const lastGroundSurfaceKindRef = useRef<AttachmentSurfaceKind | null>(null);
   const lapTriggerDebounceRef = useRef(new Map<string, number>());
-  const hasLastRoadToExtPositionRef = useRef(false);
-  const lastRoadToExtPositionRef = useRef(new Vector3());
-  const hasLastRoadContactPositionRef = useRef(false);
-  const lastRoadContactPositionRef = useRef(new Vector3());
   const rescueActiveRef = useRef(false);
   const rescueStartTimeRef = useRef(0);
   const rescueStartPosRef = useRef(new Vector3());
   const rescueHoverPosRef = useRef(new Vector3());
   const rescueTargetPosRef = useRef(new Vector3());
   const rescueStartQuatRef = useRef(new Quaternion());
+  const rescueTargetQuatRef = useRef(new Quaternion());
   const lakituGroupRef = useRef<Group | null>(null);
   const visualRootRef = useRef<Group | null>(null);
   const poseAnchorRef = useRef<Group | null>(null);
@@ -1190,45 +1170,32 @@ export default function DrivableModel({
     return candidateParentHandle !== selfHandle;
   };
 
-  const isRoadSurfaceCollider = (collider: RapierCollider | null | undefined) => {
-    const attachmentKind = resolveAttachmentSurfaceKindFromCollider(collider);
-    if (attachmentKind === 'road') return true;
+  const findNearestWaypoint = (x: number, y: number, z: number) => {
+    if (botWaypoints.length === 0) return null;
 
-    const surfaceName = resolveSurfaceNameFromCollider(collider);
-    return ROAD_SURFACE_RE.test(surfaceName);
-  };
+    let nearest: BotWaypoint | null = null;
+    let nearestArrayIndex = -1;
+    let nearestDistanceSq = Number.POSITIVE_INFINITY;
 
-  const computeDistanceToRoad = (x: number, y: number, z: number, body: RapierRigidBody) => {
-    let minDistance = Number.POSITIVE_INFINITY;
-
-    for (const [dx, dy, dz] of ROAD_DISTANCE_QUERY_DIRECTIONS) {
-      const len = Math.hypot(dx, dy, dz);
-      if (len < 0.000001) continue;
-
-      groundRay.origin.x = x;
-      groundRay.origin.y = y;
-      groundRay.origin.z = z;
-      groundRay.dir.x = dx / len;
-      groundRay.dir.y = dy / len;
-      groundRay.dir.z = dz / len;
-
-      const hit = world.castRay(
-        groundRay,
-        ROAD_DISTANCE_QUERY_MAX,
-        true,
-        undefined,
-        undefined,
-        undefined,
-        body,
-        (candidate) => isExternalGroundCollider(candidate, body) && isRoadSurfaceCollider(candidate),
-      );
-
-      if (hit && hit.timeOfImpact < minDistance) {
-        minDistance = hit.timeOfImpact;
+    for (let i = 0; i < botWaypoints.length; i += 1) {
+      const waypoint = botWaypoints[i];
+      const dx = waypoint.position[0] - x;
+      const dy = waypoint.position[1] - y;
+      const dz = waypoint.position[2] - z;
+      const distanceSq = dx * dx + dy * dy + dz * dz;
+      if (distanceSq < nearestDistanceSq) {
+        nearest = waypoint;
+        nearestArrayIndex = i;
+        nearestDistanceSq = distanceSq;
       }
     }
 
-    return minDistance;
+    if (!nearest || nearestArrayIndex < 0) return null;
+    return {
+      waypoint: nearest,
+      distance: Math.sqrt(nearestDistanceSq),
+      arrayIndex: nearestArrayIndex,
+    };
   };
 
   const setLakituTarget = (x: number, y: number, z: number, visible: boolean) => {
@@ -1253,17 +1220,20 @@ export default function DrivableModel({
     downDirection: Vector3,
     body: RapierRigidBody,
     maxDistance: number,
-  ) => {
+  ): number | null => {
     setGroundRay(origin, downDirection);
 
-    let maxDrag = 0;
+    let minDrag = Number.POSITIVE_INFINITY;
     world.intersectionsWithRay(
       groundRay,
       maxDistance,
       true,
       (intersection) => {
         const surfaceDrag = getSurfaceDragFromCollider(intersection.collider);
-        if (surfaceDrag > maxDrag) maxDrag = surfaceDrag;
+        if (Number.isFinite(surfaceDrag)) {
+          const normalizedDrag = Math.max(0, surfaceDrag);
+          if (normalizedDrag < minDrag) minDrag = normalizedDrag;
+        }
         return true;
       },
       undefined,
@@ -1273,7 +1243,7 @@ export default function DrivableModel({
       (candidate) => isExternalGroundCollider(candidate, body),
     );
 
-    return maxDrag;
+    return Number.isFinite(minDrag) ? minDrag : null;
   };
 
   const castGroundHit = (
@@ -1612,14 +1582,12 @@ export default function DrivableModel({
     antiGravEnabledRef.current = !antiGravSwitchesEnabled;
     activeSurfaceTriggerZoneRef.current = null;
     activeLapTriggerKeyRef.current = null;
-    lastGroundSurfaceKindRef.current = null;
-    hasLastRoadToExtPositionRef.current = false;
-    hasLastRoadContactPositionRef.current = false;
     rescueActiveRef.current = false;
     rescueStartTimeRef.current = 0;
     rescueStartPosRef.current.set(0, 0, 0);
     rescueHoverPosRef.current.set(0, 0, 0);
     rescueTargetPosRef.current.set(0, 0, 0);
+    rescueTargetQuatRef.current.identity();
     lakituFadeRef.current = 0;
     lakituVisibleTargetRef.current = false;
     lakituInitializedRef.current = false;
@@ -1899,7 +1867,10 @@ export default function DrivableModel({
       nextTranslation.z = tmpRescuePos.z;
       body.setNextKinematicTranslation(nextTranslation);
 
-      const rescueQuat = rescueStartQuatRef.current;
+      const rescueQuat = tmpQuat
+        .copy(rescueStartQuatRef.current)
+        .slerp(rescueTargetQuatRef.current, smoothstep01(rescueProgress))
+        .normalize();
       body.setNextKinematicRotation({
         x: rescueQuat.x,
         y: rescueQuat.y,
@@ -1914,6 +1885,10 @@ export default function DrivableModel({
         attachmentStateRef.current = 'detached';
         lastAttachTimestampRef.current = 0;
         lastValidNormalRef.current.copy(worldUp);
+        rotRef.current.copy(rescueTargetQuatRef.current);
+        tmpForward.set(0, 0, 1).applyQuaternion(rescueTargetQuatRef.current).normalize();
+        headingRef.current.copy(tmpForward);
+        yawRef.current = Math.atan2(tmpForward.x, tmpForward.z);
       }
 
       return;
@@ -2050,7 +2025,8 @@ export default function DrivableModel({
     }
 
     const dragRayOrigin = buildRayOrigin(tCurrent.x, tCurrent.y, tCurrent.z, probeDown);
-    currentExtraDragRef.current = sampleSurfaceDragAt(dragRayOrigin, probeDown, body, groundProbeDistance);
+    const sampledSurfaceDrag = sampleSurfaceDragAt(dragRayOrigin, probeDown, body, groundProbeDistance);
+    currentExtraDragRef.current = sampledSurfaceDrag ?? 0;
 
     const shouldSampleSurfaceTriggers =
       antiGravSwitchesEnabled || boosterSettings.enabled || Boolean(onLapTrigger);
@@ -2244,7 +2220,7 @@ export default function DrivableModel({
     speedRef.current = clamp(speedRef.current, backwardLimit, forwardLimit);
 
     // apply linear damping (drag) to smooth/slow the vehicle over time
-    const effectiveDrag = Math.max(drag, currentExtraDragRef.current || 0);
+    const effectiveDrag = sampledSurfaceDrag ?? Math.max(0, drag);
     if (!boostActive && effectiveDrag > 0 && Math.abs(speedRef.current) > 0) {
       const damp = Math.max(0, 1 - effectiveDrag * dtClamped);
       speedRef.current *= damp;
@@ -2413,43 +2389,36 @@ export default function DrivableModel({
       }
     }
 
-    const currentGroundSurfaceKind = groundHit ? resolveAttachmentSurfaceKindFromCollider(groundHit.collider) : null;
-    const previousGroundSurfaceKind = lastGroundSurfaceKindRef.current;
-    if (currentGroundSurfaceKind === 'road') {
-      lastRoadContactPositionRef.current.set(t1.x, t1.y, t1.z);
-      hasLastRoadContactPositionRef.current = true;
-    }
+    const nearestWaypoint = findNearestWaypoint(t1.x, t1.y, t1.z);
+    const shouldStartWaypointRescue =
+      nearestWaypoint !== null &&
+      nearestWaypoint.distance > WAYPOINT_RESCUE_MAX_DISTANCE;
 
-    const leftRoadSurface =
-      previousGroundSurfaceKind === 'road' &&
-      currentGroundSurfaceKind !== 'road';
-    if (leftRoadSurface) {
-      if (hasLastRoadContactPositionRef.current) {
-        lastRoadToExtPositionRef.current.copy(lastRoadContactPositionRef.current);
-      } else {
-        lastRoadToExtPositionRef.current.set(t1.x, t1.y, t1.z);
-      }
-      hasLastRoadToExtPositionRef.current = true;
-    }
-    lastGroundSurfaceKindRef.current = currentGroundSurfaceKind;
-
-    const distanceToRoad = computeDistanceToRoad(t1.x, t1.y, t1.z, body);
-    const shouldStartRoadRescue =
-      hasLastRoadToExtPositionRef.current &&
-      currentGroundSurfaceKind !== 'road' &&
-      distanceToRoad > ROAD_RESCUE_MAX_DISTANCE;
-
-    if (shouldStartRoadRescue) {
+    if (shouldStartWaypointRescue) {
+      const [targetX, targetY, targetZ] = nearestWaypoint.waypoint.position;
+      const targetYWithOffset = targetY + WAYPOINT_RESCUE_HEIGHT_OFFSET;
+      const lookAheadWaypoint =
+        botWaypoints[(nearestWaypoint.arrayIndex + WAYPOINT_RESCUE_LOOKAHEAD) % botWaypoints.length];
       rescueActiveRef.current = true;
       rescueStartTimeRef.current = nowMs;
       rescueStartPosRef.current.set(t1.x, t1.y, t1.z);
-      rescueTargetPosRef.current.copy(lastRoadToExtPositionRef.current);
-      rescueHoverPosRef.current.copy(lastRoadToExtPositionRef.current).addScaledVector(worldUp, ROAD_RESCUE_LIFT_HEIGHT);
+      rescueTargetPosRef.current.set(targetX, targetYWithOffset, targetZ);
+      rescueHoverPosRef.current
+        .copy(rescueTargetPosRef.current)
+        .addScaledVector(worldUp, ROAD_RESCUE_LIFT_HEIGHT);
 
       const currentRotation = body.rotation();
       rescueStartQuatRef.current
         .set(currentRotation.x, currentRotation.y, currentRotation.z, currentRotation.w)
         .normalize();
+      rescueTargetQuatRef.current.copy(rescueStartQuatRef.current);
+
+      const lookDx = lookAheadWaypoint.position[0] - targetX;
+      const lookDz = lookAheadWaypoint.position[2] - targetZ;
+      if (lookDx * lookDx + lookDz * lookDz > 0.0001) {
+        const lookYaw = Math.atan2(lookDx, lookDz);
+        rescueTargetQuatRef.current.setFromAxisAngle(worldUp, lookYaw).normalize();
+      }
 
       speedRef.current = 0;
       verticalVelRef.current = 0;
