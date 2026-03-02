@@ -249,6 +249,7 @@ const BOOSTER_SURFACE_RE = /booster/i;
 const LAP_START_SURFACE_RE = /(?:^|[-_ ])start(?:[-_ ]|$)/i;
 const LAP_CHECKPOINT_SURFACE_RE = /checkpoint/i;
 const LAP_TRIGGER_RETRIGGER_COOLDOWN_MS = 220;
+const VEHICLE_COLLIDER_EXTRA_HEIGHT = 2;
 
 const SHOULD_LOG_GROUND_CONTACT = PERF_PROFILE.debugGroundContact && import.meta.env.DEV;
 
@@ -417,7 +418,7 @@ export default function DrivableModel({
     const size = combinedMax.clone().sub(combinedMin);
 
     const halfX = Math.max((size.x / 2) * COLLIDER_COVERAGE_X, 0.05);
-    const halfY = Math.max((size.y / 2) * COLLIDER_COVERAGE_Y, 0.05);
+    const halfY = Math.max((size.y / 2) * COLLIDER_COVERAGE_Y + VEHICLE_COLLIDER_EXTRA_HEIGHT * 0.5, 0.05);
     const halfZ = Math.max((size.z / 2) * COLLIDER_COVERAGE_Z, 0.05);
 
     const offsetX = (combinedMin.x + combinedMax.x) / 2;
