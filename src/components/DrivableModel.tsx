@@ -96,6 +96,7 @@ type Props = {
   onPoseUpdate?: (participantId: RaceParticipantId, pose: CarPose) => void;
   participantId?: RaceParticipantId;
   participantName?: string;
+  myObject?: number;
   controlsLocked?: boolean;
   startCountdownValue?: number | null;
   onLapTrigger?: (
@@ -276,6 +277,7 @@ export default function DrivableModel({
   onPoseUpdate,
   participantId = 'participant-1',
   participantName = participantId,
+  myObject = 0,
   controlsLocked = false,
   startCountdownValue = null,
   onLapTrigger,
@@ -459,8 +461,9 @@ export default function DrivableModel({
     () => ({
       participantId,
       participantName,
+      myObject: Number.isFinite(myObject) ? Math.max(0, Math.floor(myObject)) : 0,
     }),
-    [participantId, participantName],
+    [myObject, participantId, participantName],
   );
 
   const surfaceAttachmentSettings = useMemo(() => {

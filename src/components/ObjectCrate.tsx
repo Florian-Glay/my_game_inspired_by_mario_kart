@@ -16,7 +16,6 @@ const DEFAULT_COLLIDER_HALF_EXTENTS: Vec3 = [1.1, 1.1, 1.1];
 
 export type ObjectCrateTouch = {
   participantId: RaceParticipantId;
-  participantName: string;
 };
 
 type ObjectCrateProps = {
@@ -65,13 +64,7 @@ const resolveParticipantFromPayload = (payload: IntersectionEnterPayload): Objec
     const participantId = (candidate as any).participantId;
     if (typeof participantId !== 'string' || participantId.length === 0) continue;
 
-    const participantNameRaw = (candidate as any).participantName;
-    const participantName =
-      typeof participantNameRaw === 'string' && participantNameRaw.trim().length > 0 ?
-        participantNameRaw.trim()
-      : participantId;
-
-    return { participantId, participantName };
+    return { participantId };
   }
 
   return null;

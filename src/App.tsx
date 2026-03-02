@@ -49,6 +49,12 @@ type GrandPrixProgressState = {
 };
 
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
+const GRAND_PRIX_POINTS_BY_POSITION = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0] as const;
+
+function getGrandPrixPointsForPosition(position: number) {
+  if (!Number.isFinite(position) || position <= 0) return 0;
+  return GRAND_PRIX_POINTS_BY_POSITION[position - 1] ?? 0;
+}
 
 async function checkAssetAvailability(url: string) {
   try {
@@ -152,28 +158,29 @@ export function App() {
     );
 
     const standings = raceConfig.participants.map((participant) => {
-      const coursePositions = orderedResults.map((result) => {
+      const courseScores = orderedResults.map((result) => {
         const participantEntry = result.ranking.find(
           (entry) => entry.participantId === participant.id,
         );
-        return participantEntry?.position ?? raceConfig.participants.length;
+        const position = participantEntry?.position ?? raceConfig.participants.length;
+        return getGrandPrixPointsForPosition(position);
       });
-      const totalPosition = coursePositions.reduce((sum, value) => sum + value, 0);
+      const totalScore = courseScores.reduce((sum, value) => sum + value, 0);
       return {
         participantId: participant.id,
         displayName: participant.displayName,
-        totalPosition,
-        coursePositions,
+        totalScore,
+        courseScores,
       };
     });
 
     standings.sort((left, right) => {
-      if (left.totalPosition !== right.totalPosition) {
-        return left.totalPosition - right.totalPosition;
+      if (left.totalScore !== right.totalScore) {
+        return right.totalScore - left.totalScore;
       }
-      const leftLast = left.coursePositions[left.coursePositions.length - 1] ?? Number.MAX_SAFE_INTEGER;
-      const rightLast = right.coursePositions[right.coursePositions.length - 1] ?? Number.MAX_SAFE_INTEGER;
-      if (leftLast !== rightLast) return leftLast - rightLast;
+      const leftLast = left.courseScores[left.courseScores.length - 1] ?? Number.MIN_SAFE_INTEGER;
+      const rightLast = right.courseScores[right.courseScores.length - 1] ?? Number.MIN_SAFE_INTEGER;
+      if (leftLast !== rightLast) return rightLast - leftLast;
       return left.participantId.localeCompare(right.participantId);
     });
 
@@ -453,40 +460,71 @@ export function App() {
         return null;
       }
 
-      const botParticipants: RaceParticipantConfig[] = Array.from(
-        { length: desiredParticipantCount - humanParticipants.length },
-        (_, index) => {
-          const loadout = createRandomLoadoutSelection();
-          const character = getCatalogItemById(CHARACTERS, loadout.characterId);
-          const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
-          const wheel = getCatalogItemById(WHEELS, loadout.wheelId);
-          const wheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[wheel.size];
-          return {
-            id: `bot-${index + 1}`,
-            displayName: `Bot ${index + 1}`,
-            kind: 'bot',
-            controlMode: 'autopilot',
-            loadout,
-            vehicleModel: vehicle.model,
-            vehicleScale: vehicle.scale,
-            characterModel: character.model,
-            characterScale: character.scale,
-            wheelModel: wheel.model,
-            wheelScale: wheel.scale,
-            characterMount: vehicle.characterMount,
-            wheelMounts: vehicle.wheelMounts,
-            chassisLift: wheelProfile.chassisLift,
-            driverLift: wheelProfile.driverLift,
-            spawn: [0, 0, 0],
-            spawnRotation: [0, 0, 0],
-          };
-        },
-      );
+      const previousCourseResult =
+        courseIndex > 0 ?
+          grandPrixProgress?.courseResults.find((result) => result.courseIndex === courseIndex - 1) ?? null
+        : null;
 
-      const participantPool =
-        PERF_PROFILE.simulateBots ?
-          shuffleParticipants([...humanParticipants, ...botParticipants])
-        : [...humanParticipants];
+      const participantPool: RaceParticipantConfig[] = (() => {
+        // Keep the exact same drivers/karts across GP courses once race 1 has started.
+        if (
+          courseIndex > 0 &&
+          raceConfig &&
+          raceConfig.grandPrixId === selectedGrandPrixId &&
+          raceConfig.participants.length === desiredParticipantCount
+        ) {
+          const previousPositionByParticipant = new Map(
+            (previousCourseResult?.ranking ?? []).map((entry) => [entry.participantId, entry.position]),
+          );
+          const previousOrderByParticipant = new Map(
+            raceConfig.participants.map((participant, index) => [participant.id, index]),
+          );
+          return [...raceConfig.participants].sort((left, right) => {
+            const leftPos = previousPositionByParticipant.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+            const rightPos = previousPositionByParticipant.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+            if (leftPos !== rightPos) return leftPos - rightPos;
+
+            return (
+              (previousOrderByParticipant.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+              (previousOrderByParticipant.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+            );
+          });
+        }
+
+        const botParticipants: RaceParticipantConfig[] = Array.from(
+          { length: desiredParticipantCount - humanParticipants.length },
+          (_, index) => {
+            const loadout = createRandomLoadoutSelection();
+            const character = getCatalogItemById(CHARACTERS, loadout.characterId);
+            const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
+            const wheel = getCatalogItemById(WHEELS, loadout.wheelId);
+            const wheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[wheel.size];
+            return {
+              id: `bot-${index + 1}`,
+              displayName: `Bot ${index + 1}`,
+              kind: 'bot',
+              controlMode: 'autopilot',
+              loadout,
+              vehicleModel: vehicle.model,
+              vehicleScale: vehicle.scale,
+              characterModel: character.model,
+              characterScale: character.scale,
+              wheelModel: wheel.model,
+              wheelScale: wheel.scale,
+              characterMount: vehicle.characterMount,
+              wheelMounts: vehicle.wheelMounts,
+              chassisLift: wheelProfile.chassisLift,
+              driverLift: wheelProfile.driverLift,
+              spawn: [0, 0, 0],
+              spawnRotation: [0, 0, 0],
+            };
+          },
+        );
+
+        // GP race 1: humans start on the last grid slots, bots are randomized on front slots.
+        return [...shuffleParticipants(botParticipants), ...humanParticipants];
+      })();
+
       const participants = participantPool.map((participant, index) => {
         const spawnSlot = circuitConfig.spawnSlots[index];
         return {
@@ -509,7 +547,7 @@ export function App() {
         participants,
       };
     },
-    [cc, humanCount, humanLoadoutsBySlot, mode, selectedGrandPrixId],
+    [cc, grandPrixProgress?.courseResults, humanCount, humanLoadoutsBySlot, mode, raceConfig, selectedGrandPrixId],
   );
 
   const launchCourseAtIndex = useCallback(

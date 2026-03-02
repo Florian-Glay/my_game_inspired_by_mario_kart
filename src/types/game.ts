@@ -121,6 +121,6 @@ export type CourseRaceResult = {
 export type GrandPrixStanding = {
   participantId: RaceParticipantId;
   displayName: string;
-  totalPosition: number;
-  coursePositions: number[];
+  totalScore: number;
+  courseScores: number[];
 };

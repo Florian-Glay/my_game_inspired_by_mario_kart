@@ -12,10 +12,12 @@ import {
 } from 'react';
 import { Color, Euler, Matrix4, PCFSoftShadowMap, Quaternion, Vector3, type Group } from 'three';
 import type { BotWaypoint } from '../ai/botAutopilot';
+import { CHARACTERS, getCatalogItemById } from '../config/garageCatalog';
 import { CC_SPEEDS, CIRCUITS } from '../config/raceCatalog';
 import { PERF_PROFILE } from '../config/performanceProfile';
 import { gameMode } from '../state/gamemode';
 import type {
+  CircuitId,
   CarPose,
   CourseRaceResult,
   CourseRankingEntry,
@@ -244,6 +246,16 @@ type LiveScoreboardEntry = {
   finished: boolean;
 };
 
+type LiveScoreboardSortEntry = {
+  participantId: RaceParticipantId;
+  displayName: string;
+  completedLaps: number;
+  checkpoint: boolean;
+  finished: boolean;
+  finishTimestamp: number;
+  waypointsRemainingToFinish: number;
+};
+
 type ObjectCrateSpawnEntry = {
   crateId: string;
   position: [number, number, number];
@@ -355,26 +367,132 @@ const LIVE_SCOREBOARD_REFRESH_MS = 280;
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 const OBJECT_CRATE_MODEL_PATH = 'models/item_box.glb';
 const OBJECT_CRATE_RESPAWN_MS = 10_000;
+const OBJECT_ITEM_MIN_VALUE = 1;
+const OBJECT_ITEM_MAX_VALUE = 13;
+const DEFAULT_CHARACTER_PORTRAIT_PATH = 'ui/select/character/mario.png';
+const COURSE_POINTS_BY_POSITION = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0] as const;
+const LIVE_SCOREBOARD_FINISH_WAYPOINT_BY_CIRCUIT: Record<CircuitId, number> = {
+  kalimari_desert: 12,
+  super_bell_subway: 5,
+  stadium: 239,
+  ds_mario_circuit: 75,
+};
 
-const clampValue = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const distanceBetweenPoints = (
-  left: readonly [number, number, number],
-  right: readonly [number, number, number],
-) =>
-  Math.hypot(
-    left[0] - right[0],
-    left[1] - right[1],
-    left[2] - right[2],
-  );
-const distanceFromPoseToPoint = (
+const resolveUiAssetSrc = (assetPath: string) => {
+  if (
+    assetPath.startsWith('http://') ||
+    assetPath.startsWith('https://') ||
+    assetPath.startsWith('data:') ||
+    assetPath.startsWith('blob:')
+  ) {
+    return assetPath;
+  }
+  if (assetPath.startsWith('/')) return assetPath;
+  return `${import.meta.env.BASE_URL}${assetPath}`;
+};
+
+const getCoursePointsForPosition = (position: number) => {
+  if (!Number.isFinite(position) || position <= 0) return 0;
+  return COURSE_POINTS_BY_POSITION[position - 1] ?? 0;
+};
+
+const findNearestWaypointIndex = (
   pose: CarPose | null | undefined,
-  point: readonly [number, number, number],
+  waypoints: readonly BotWaypoint[],
 ) => {
-  if (!pose) return Number.POSITIVE_INFINITY;
-  return Math.hypot(
-    pose.x - point[0],
-    pose.y - point[1],
-    pose.z - point[2],
+  if (!pose || waypoints.length === 0) return null;
+
+  let nearestWaypointIndex: number | null = null;
+  let nearestDistanceSq = Number.POSITIVE_INFINITY;
+  for (const waypoint of waypoints) {
+    const dx = waypoint.position[0] - pose.x;
+    const dy = waypoint.position[1] - pose.y;
+    const dz = waypoint.position[2] - pose.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq >= nearestDistanceSq) continue;
+    nearestDistanceSq = distanceSq;
+    nearestWaypointIndex = waypoint.index;
+  }
+
+  return nearestWaypointIndex;
+};
+
+const getWaypointStepsToFinish = (
+  currentWaypointOrder: number | null,
+  finishWaypointOrder: number | null,
+  waypointCount: number,
+) => {
+  if (currentWaypointOrder === null || finishWaypointOrder === null || waypointCount <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return (finishWaypointOrder - currentWaypointOrder + waypointCount) % waypointCount;
+};
+
+const buildLiveScoreboardEntries = ({
+  participants,
+  progressByPlayer,
+  poseRefsByParticipant,
+  participantOrder,
+  circuitWaypoints,
+  waypointOrderByIndex,
+  finishWaypointOrder,
+  waypointCount,
+}: {
+  participants: RaceConfig['participants'];
+  progressByPlayer: Record<RaceParticipantId, PlayerLapProgress>;
+  poseRefsByParticipant: Record<RaceParticipantId, MutableRefObject<CarPose>>;
+  participantOrder: Map<RaceParticipantId, number>;
+  circuitWaypoints: readonly BotWaypoint[];
+  waypointOrderByIndex: Map<number, number>;
+  finishWaypointOrder: number | null;
+  waypointCount: number;
+}): LiveScoreboardEntry[] => {
+  const ranking: LiveScoreboardSortEntry[] = participants.map((participant) => {
+    const progress = progressByPlayer[participant.id] ?? FALLBACK_PROGRESS;
+    const completedLaps = Math.min(Math.max(progress.lap - 1, 0), 3);
+    const pose = poseRefsByParticipant[participant.id]?.current;
+    const currentWaypointIndex = findNearestWaypointIndex(pose, circuitWaypoints);
+    const currentWaypointOrder =
+      currentWaypointIndex === null ? null : (waypointOrderByIndex.get(currentWaypointIndex) ?? null);
+    const waypointsRemainingToFinish = getWaypointStepsToFinish(
+      currentWaypointOrder,
+      finishWaypointOrder,
+      waypointCount,
+    );
+
+    return {
+      participantId: participant.id,
+      displayName: participant.displayName,
+      completedLaps,
+      checkpoint: progress.checkpoint,
+      finished: progress.finished,
+      finishTimestamp: progress.finishTimestamp ?? Number.POSITIVE_INFINITY,
+      waypointsRemainingToFinish,
+    };
+  });
+
+  ranking.sort((left, right) => {
+    if (left.finished !== right.finished) return left.finished ? -1 : 1;
+    if (left.finished && right.finished && left.finishTimestamp !== right.finishTimestamp) {
+      return left.finishTimestamp - right.finishTimestamp;
+    }
+    if (left.completedLaps !== right.completedLaps) {
+      return right.completedLaps - left.completedLaps;
+    }
+    if (left.waypointsRemainingToFinish !== right.waypointsRemainingToFinish) {
+      return left.waypointsRemainingToFinish - right.waypointsRemainingToFinish;
+    }
+    return (
+      (participantOrder.get(left.participantId) ?? 0) -
+      (participantOrder.get(right.participantId) ?? 0)
+    );
+  });
+
+  return ranking.map(
+    ({ finishTimestamp: _ignoredTime, waypointsRemainingToFinish: _ignoredWaypoints, ...entry }, index) => ({
+      ...entry,
+      position: index + 1,
+    }),
   );
 };
 
@@ -383,6 +501,15 @@ function createInitialLapProgress(
 ) {
   return participants.reduce<Record<RaceParticipantId, PlayerLapProgress>>((acc, participant) => {
     acc[participant.id] = { ...FALLBACK_PROGRESS };
+    return acc;
+  }, {});
+}
+
+function createInitialParticipantObjects(
+  participants: RaceConfig['participants'],
+) {
+  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
+    acc[participant.id] = 0;
     return acc;
   }, {});
 }
@@ -417,8 +544,15 @@ export function Scene({
     () => createInitialLapProgress(raceConfig.participants),
     [raceConfig.participants],
   );
+  const initialParticipantObjects = useMemo(
+    () => createInitialParticipantObjects(raceConfig.participants),
+    [raceConfig.participants],
+  );
   const [lapProgressByPlayer, setLapProgressByPlayer] = useState<Record<RaceParticipantId, PlayerLapProgress>>(
     initialLapProgress,
+  );
+  const [myObjectByParticipant, setMyObjectByParticipant] = useState<Record<RaceParticipantId, number>>(
+    initialParticipantObjects,
   );
   const lapProgressRef = useRef<Record<RaceParticipantId, PlayerLapProgress>>(initialLapProgress);
   const [courseRanking, setCourseRanking] = useState<CourseRankingEntry[]>([]);
@@ -520,22 +654,28 @@ export function Scene({
     () => new Map(raceConfig.participants.map((participant, index) => [participant.id, index])),
     [raceConfig.participants],
   );
-  const lapStartMarker = useMemo<readonly [number, number, number]>(() => {
-    const startPosition = circuit.lapStart?.transform.position;
-    if (startPosition) return [startPosition[0], startPosition[1], startPosition[2]];
-    return [0, 0, 0];
-  }, [circuit.lapStart?.transform.position]);
-  const lapCheckpointMarker = useMemo<readonly [number, number, number]>(() => {
-    const checkpointPosition = circuit.lapCheckpoint?.transform.position;
-    if (checkpointPosition) {
-      return [checkpointPosition[0], checkpointPosition[1], checkpointPosition[2]];
+  const participantPortraitSrcById = useMemo(() => {
+    const fallbackSrc = resolveUiAssetSrc(DEFAULT_CHARACTER_PORTRAIT_PATH);
+    const portraitsByParticipant = new Map<RaceParticipantId, string>();
+    for (const participant of raceConfig.participants) {
+      const character = getCatalogItemById(CHARACTERS, participant.loadout.characterId);
+      portraitsByParticipant.set(participant.id, resolveUiAssetSrc(character.thumbnail ?? fallbackSrc));
     }
-    return lapStartMarker;
-  }, [circuit.lapCheckpoint?.transform.position, lapStartMarker]);
-  const lapSegmentDistance = useMemo(
-    () => Math.max(1, distanceBetweenPoints(lapStartMarker, lapCheckpointMarker)),
-    [lapCheckpointMarker, lapStartMarker],
+    return portraitsByParticipant;
+  }, [raceConfig.participants]);
+  const orderedWaypointIndices = useMemo(
+    () => circuitWaypoints.map((waypoint) => waypoint.index),
+    [circuitWaypoints],
   );
+  const waypointOrderByIndex = useMemo(() => {
+    const order = new Map<number, number>();
+    orderedWaypointIndices.forEach((waypointIndex, index) => {
+      order.set(waypointIndex, index);
+    });
+    return order;
+  }, [orderedWaypointIndices]);
+  const finishWaypointIndex = LIVE_SCOREBOARD_FINISH_WAYPOINT_BY_CIRCUIT[raceConfig.circuit];
+  const finishWaypointOrder = waypointOrderByIndex.get(finishWaypointIndex) ?? null;
   const objectCrateSpawnEntries = useMemo<ObjectCrateSpawnEntry[]>(
     () =>
       circuit.objectCrateSpawns.map((spawn, index) => ({
@@ -594,11 +734,12 @@ export function Scene({
     setStartCountdownValue(null);
     setMenuBusy(false);
     setLiveScoreboardTick(0);
+    setMyObjectByParticipant(initialParticipantObjects);
     courseResultSentRef.current = false;
     startCountdownStartedRef.current = false;
     winModeHandledRef.current = false;
     gameMode.current = 'run';
-  }, [initialLapProgress, raceConfig.courseId]);
+  }, [initialLapProgress, initialParticipantObjects, raceConfig.courseId]);
 
   useEffect(() => {
     if (raceConfig.humanCount > 1 && gameMode.current === 'free') {
@@ -635,8 +776,18 @@ export function Scene({
       return { ...current, [crateId]: false };
     });
 
-    const randomValue = Math.floor(Math.random() * 6);
-    console.log(`[co] ${randomValue} ${touch.participantName}`);
+    setMyObjectByParticipant((current) => {
+      const currentObject = current[touch.participantId] ?? 0;
+      if (currentObject !== 0) return current;
+
+      const randomValue =
+        Math.floor(Math.random() * (OBJECT_ITEM_MAX_VALUE - OBJECT_ITEM_MIN_VALUE + 1)) +
+        OBJECT_ITEM_MIN_VALUE;
+      return {
+        ...current,
+        [touch.participantId]: randomValue,
+      };
+    });
 
     const existingTimer = objectCrateRespawnTimersRef.current.get(crateId);
     if (typeof existingTimer === 'number') {
@@ -658,47 +809,46 @@ export function Scene({
     setCircuitWaypoints(waypoints);
   }, []);
 
+  const computeLiveScoreboard = useCallback(
+    (progressByPlayer: Record<RaceParticipantId, PlayerLapProgress>) =>
+      buildLiveScoreboardEntries({
+        participants: raceConfig.participants,
+        progressByPlayer,
+        poseRefsByParticipant,
+        participantOrder,
+        circuitWaypoints,
+        waypointOrderByIndex,
+        finishWaypointOrder,
+        waypointCount: orderedWaypointIndices.length,
+      }),
+    [
+      circuitWaypoints,
+      finishWaypointOrder,
+      orderedWaypointIndices.length,
+      participantOrder,
+      poseRefsByParticipant,
+      raceConfig.participants,
+      waypointOrderByIndex,
+    ],
+  );
+
   const finalizeCourse = useCallback(
     (progressByPlayer: Record<RaceParticipantId, PlayerLapProgress>) => {
       if (courseResultSentRef.current) return;
       courseResultSentRef.current = true;
 
-      const participantOrder = new Map(
-        raceConfig.participants.map((participant, index) => [participant.id, index]),
-      );
-      const rankingWithTime = raceConfig.participants.map((participant) => {
-        const progress = progressByPlayer[participant.id] ?? FALLBACK_PROGRESS;
+      const liveRankingAtStop = computeLiveScoreboard(progressByPlayer);
+      const ranking: CourseRankingEntry[] = liveRankingAtStop.map((entry) => {
+        const progress = progressByPlayer[entry.participantId] ?? FALLBACK_PROGRESS;
         return {
-          participantId: participant.id,
-          displayName: participant.displayName,
+          participantId: entry.participantId,
+          displayName: entry.displayName,
+          position: entry.position,
           lap: progress.lap,
           checkpointReached: progress.checkpoint,
           finished: progress.finished,
-          finishTimestamp: progress.finishTimestamp ?? Number.POSITIVE_INFINITY,
         };
       });
-
-      rankingWithTime.sort((left, right) => {
-        if (left.finished !== right.finished) return left.finished ? -1 : 1;
-        if (left.finished && right.finished && left.finishTimestamp !== right.finishTimestamp) {
-          return left.finishTimestamp - right.finishTimestamp;
-        }
-        if (left.lap !== right.lap) return right.lap - left.lap;
-        if (left.checkpointReached !== right.checkpointReached) {
-          return left.checkpointReached ? -1 : 1;
-        }
-        return (
-          (participantOrder.get(left.participantId) ?? 0) -
-          (participantOrder.get(right.participantId) ?? 0)
-        );
-      });
-
-      const ranking: CourseRankingEntry[] = rankingWithTime.map(
-        ({ finishTimestamp: _ignored, ...entry }, index) => ({
-          ...entry,
-          position: index + 1,
-        }),
-      );
 
       setCourseRanking(ranking);
       setControlsLocked(true);
@@ -717,37 +867,16 @@ export function Scene({
       raceConfig.courseIndex,
       raceConfig.courseLabel,
       raceConfig.grandPrixId,
-      raceConfig.participants,
+      computeLiveScoreboard,
     ],
   );
 
   const validateAllLapsFromWinMode = useCallback(() => {
     if (overlayStep !== 'none') return false;
 
-    const nowMs = performance.now();
-    const nextProgress = raceConfig.participants.reduce<Record<RaceParticipantId, PlayerLapProgress>>(
-      (acc, player, index) => {
-        const current = lapProgressRef.current[player.id] ?? FALLBACK_PROGRESS;
-        acc[player.id] =
-          current.finished ?
-            current
-          : {
-              ...current,
-              lap: 4,
-              checkpoint: false,
-              finished: true,
-              finishTimestamp: nowMs + index * 0.001,
-            };
-        return acc;
-      },
-      { ...lapProgressRef.current },
-    );
-
-    lapProgressRef.current = nextProgress;
-    setLapProgressByPlayer(nextProgress);
-    finalizeCourse(nextProgress);
+    finalizeCourse(lapProgressRef.current);
     return true;
-  }, [finalizeCourse, overlayStep, raceConfig.participants]);
+  }, [finalizeCourse, overlayStep]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -870,64 +999,22 @@ export function Scene({
     startCountdownValue === 0 ? 'Partez'
     : typeof startCountdownValue === 'number' ? String(startCountdownValue)
     : '';
-  const liveScoreboard = useMemo<LiveScoreboardEntry[]>(() => {
-    const hasCheckpoint = Boolean(circuit.lapCheckpoint);
-    const ranking = raceConfig.participants.map((participant) => {
-      const progress = lapProgressByPlayer[participant.id] ?? FALLBACK_PROGRESS;
-      const completedLaps = Math.min(Math.max(progress.lap - 1, 0), 3);
-      const pose = poseRefsByParticipant[participant.id]?.current;
-      const targetMarker = progress.checkpoint ? lapStartMarker : lapCheckpointMarker;
-      const distanceToTarget =
-        hasCheckpoint ? distanceFromPoseToPoint(pose, targetMarker) : Number.POSITIVE_INFINITY;
-      const segmentProgress =
-        hasCheckpoint ? clampValue(1 - distanceToTarget / lapSegmentDistance, 0, 0.999) : 0;
-      const progressionScore =
-        completedLaps * 2 + (progress.checkpoint ? 1 : 0) + (progress.finished ? 1 : segmentProgress);
-
-      return {
-        participantId: participant.id,
-        displayName: participant.displayName,
-        completedLaps,
-        checkpoint: progress.checkpoint,
-        finished: progress.finished,
-        finishTimestamp: progress.finishTimestamp ?? Number.POSITIVE_INFINITY,
-        progressionScore,
-      };
-    });
-
-    ranking.sort((left, right) => {
-      if (left.finished !== right.finished) return left.finished ? -1 : 1;
-      if (left.finished && right.finished && left.finishTimestamp !== right.finishTimestamp) {
-        return left.finishTimestamp - right.finishTimestamp;
-      }
-      if (left.progressionScore !== right.progressionScore) {
-        return right.progressionScore - left.progressionScore;
-      }
-      return (
-        (participantOrder.get(left.participantId) ?? 0) -
-        (participantOrder.get(right.participantId) ?? 0)
-      );
-    });
-
-    return ranking.map(({ finishTimestamp: _ignoredTime, progressionScore: _ignoredScore, ...entry }, index) => ({
-      ...entry,
-      position: index + 1,
-    }));
-  }, [
-    circuit.lapCheckpoint,
-    lapCheckpointMarker,
-    lapProgressByPlayer,
-    lapSegmentDistance,
-    lapStartMarker,
-    liveScoreboardTick,
-    participantOrder,
-    poseRefsByParticipant,
-    raceConfig.participants,
-  ]);
+  const liveScoreboard = useMemo<LiveScoreboardEntry[]>(
+    () => computeLiveScoreboard(lapProgressByPlayer),
+    [computeLiveScoreboard, lapProgressByPlayer, liveScoreboardTick],
+  );
   const isCourseRankingVisible = overlayStep === 'course-ranking';
   const isCourseActionVisible = overlayStep === 'course-actions';
   const isGrandPrixResultVisible = overlayStep === 'grand-prix-result';
   const shouldRenderRaceWorld = !isGrandPrixResultVisible;
+  const participantPortraitFallbackSrc = resolveUiAssetSrc(DEFAULT_CHARACTER_PORTRAIT_PATH);
+  const getParticipantPortraitSrc = (participantId: RaceParticipantId) =>
+    participantPortraitSrcById.get(participantId) ?? participantPortraitFallbackSrc;
+  const hudParticipantId = humanParticipants[0]?.id ?? null;
+  const hudMyObject =
+    hudParticipantId ? (myObjectByParticipant[hudParticipantId] ?? 0) : 0;
+  const hudObjectIconSrc =
+    hudMyObject > 0 ? `${import.meta.env.BASE_URL}ui/object/objet-${hudMyObject}.png` : null;
 
   useEffect(() => {
     if (!sceneReady || isLoadingOverlayActive || overlayStep !== 'none') return;
@@ -1030,6 +1117,20 @@ export function Scene({
         </div>
       ) : null}
 
+      {sceneReady && !isLoadingOverlayActive ? (
+        <div className="pointer-events-none absolute left-4 top-4 z-42 flex h-16 w-16 items-center justify-center rounded-full border-2 border-white/80 bg-black/35 shadow-[0_12px_26px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+          {hudObjectIconSrc ? (
+            <img
+              src={hudObjectIconSrc}
+              alt={`Objet ${hudMyObject}`}
+              className="h-[84%] w-[84%] rounded-full object-cover"
+            />
+          ) : (
+            <div className="h-[84%] w-[84%] rounded-full border border-white/35 bg-black/30" aria-hidden />
+          )}
+        </div>
+      ) : null}
+
       {sceneReady && !isLoadingOverlayActive && overlayStep === 'none' ? (
         <div className="absolute right-4 top-4 z-40 min-w-[230px] rounded-xl border border-white/30 bg-[#0a214f]/72 p-3 text-white shadow-2xl backdrop-blur-sm">
           <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/85">
@@ -1040,15 +1141,16 @@ export function Scene({
               <div key={`lap-${entry.participantId}`} className="flex items-center justify-between gap-2 text-xs">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="w-7 font-black text-[#ffd670]">#{entry.position}</span>
+                  <img
+                    src={getParticipantPortraitSrc(entry.participantId)}
+                    alt=""
+                    aria-hidden
+                    className="h-6 w-6 rounded-full border border-white/50 object-cover"
+                  />
                   <span className="truncate font-semibold">{entry.displayName}</span>
                 </div>
                 <span className="font-black tracking-wide">
                   {entry.finished ? 'Arrive' : `${entry.completedLaps}/3`}
-                  {!entry.finished ? (
-                    <span className="ml-1 font-medium text-white/75">
-                      {entry.checkpoint ? 'CP OK' : 'CP OFF'}
-                    </span>
-                  ) : null}
                 </span>
               </div>
             ))}
@@ -1066,6 +1168,7 @@ export function Scene({
             <div className="mt-4 max-h-[56cqh] space-y-2 overflow-y-auto pr-1">
               {courseRanking.map((entry) => {
                 const completedLaps = Math.min(Math.max(entry.lap - 1, 0), 3);
+                const earnedPoints = getCoursePointsForPosition(entry.position);
                 return (
                   <div
                     key={`course-rank-${entry.participantId}`}
@@ -1073,11 +1176,17 @@ export function Scene({
                   >
                     <div className="flex items-center gap-3">
                       <span className="text-lg font-black text-[#ffd670]">#{entry.position}</span>
+                      <img
+                        src={getParticipantPortraitSrc(entry.participantId)}
+                        alt=""
+                        aria-hidden
+                        className="h-7 w-7 rounded-full border border-white/50 object-cover"
+                      />
                       <span className="text-sm font-bold">{entry.displayName}</span>
                     </div>
-                    <div className="text-xs font-semibold text-white/85">
-                      Tour {completedLaps}/3
-                      <span className="ml-2">{entry.finished ? 'Termine' : 'En course'}</span>
+                    <div className="text-right text-xs font-semibold text-white/85">
+                      <div>Tour {completedLaps}/3</div>
+                      <div className="text-[#8fe0ff]">+{earnedPoints} pts</div>
                     </div>
                   </div>
                 );
@@ -1145,12 +1254,18 @@ export function Scene({
                 >
                   <div className="flex items-center gap-3">
                     <span className="text-lg font-black text-[#ffd670]">#{index + 1}</span>
+                    <img
+                      src={getParticipantPortraitSrc(standing.participantId)}
+                      alt=""
+                      aria-hidden
+                      className="h-7 w-7 rounded-full border border-white/50 object-cover"
+                    />
                     <span className="text-sm font-bold">{standing.displayName}</span>
                   </div>
                   <div className="text-right text-xs font-semibold text-white/90">
-                    <div>Total: {standing.totalPosition}</div>
+                    <div>Total: {standing.totalScore} pts</div>
                     <div className="text-white/70">
-                      Courses: {standing.coursePositions.join(' + ') || '-'}
+                      Courses: {standing.courseScores.map((score) => `+${score}`).join(' ') || '-'}
                     </div>
                   </div>
                 </div>
@@ -1429,6 +1544,7 @@ export function Scene({
                 surfaceAttachment={circuit.vehicleAttachment}
                 antiGravSwitchesEnabled={Boolean(circuit.antiGravIn || circuit.antiGravOut)}
                 booster={circuit.booster}
+                myObject={myObjectByParticipant[participant.id] ?? 0}
               />
             ))}
 
