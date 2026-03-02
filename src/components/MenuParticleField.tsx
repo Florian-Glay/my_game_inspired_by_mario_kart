@@ -77,6 +77,33 @@ export function MenuParticleField() {
     let destroyed = false;
     let reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let particles: Particle[] = [];
+    let linearBackground: CanvasGradient | null = null;
+    let radialTopLeft: CanvasGradient | null = null;
+    let radialBottomRight: CanvasGradient | null = null;
+
+    const rebuildBackgroundGradients = () => {
+      linearBackground = context.createLinearGradient(0, 0, width, height);
+      linearBackground.addColorStop(0, '#0a2ec8');
+      linearBackground.addColorStop(0.48, '#2c62ff');
+      linearBackground.addColorStop(1, '#3e86ff');
+
+      const topLeftRadius = Math.max(width, height) * 0.8;
+      radialTopLeft = context.createRadialGradient(0, 0, 0, 0, 0, topLeftRadius);
+      radialTopLeft.addColorStop(0, 'rgba(138, 212, 255, 0.82)');
+      radialTopLeft.addColorStop(0.36, 'rgba(138, 212, 255, 0)');
+
+      const bottomRightRadius = Math.max(width, height) * 0.92;
+      radialBottomRight = context.createRadialGradient(
+        width,
+        height,
+        0,
+        width,
+        height,
+        bottomRightRadius,
+      );
+      radialBottomRight.addColorStop(0, 'rgba(79, 125, 255, 0.72)');
+      radialBottomRight.addColorStop(0.45, 'rgba(79, 125, 255, 0)');
+    };
 
     const resizeCanvas = () => {
       if (destroyed) return;
@@ -92,10 +119,31 @@ export function MenuParticleField() {
       canvas.style.height = `${height}px`;
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       particles = rebuildParticles(width, height);
+      rebuildBackgroundGradients();
     };
 
     const draw = () => {
-      context.clearRect(0, 0, width, height);
+      if (!linearBackground || !radialTopLeft || !radialBottomRight) {
+        rebuildBackgroundGradients();
+      }
+
+      // Always paint the menu background inside the particle canvas so embed/iframe
+      // environments that force opaque canvas compositing still keep the blue backdrop.
+      if (linearBackground) {
+        context.fillStyle = linearBackground;
+        context.fillRect(0, 0, width, height);
+      } else {
+        context.clearRect(0, 0, width, height);
+      }
+      if (radialTopLeft) {
+        context.fillStyle = radialTopLeft;
+        context.fillRect(0, 0, width, height);
+      }
+      if (radialBottomRight) {
+        context.fillStyle = radialBottomRight;
+        context.fillRect(0, 0, width, height);
+      }
+
       for (const particle of particles) {
         context.beginPath();
         context.fillStyle =

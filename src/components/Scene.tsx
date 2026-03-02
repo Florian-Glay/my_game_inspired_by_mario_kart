@@ -343,6 +343,7 @@ const START_COUNTDOWN_CHARGE_HINT_FROM = 2;
 const START_COUNTDOWN_TICK_MS = 1000;
 const START_COUNTDOWN_ZERO_HOLD_MS = 450;
 const LOADING_OVERLAY_FADE_MS = 500;
+const START_COUNTDOWN_DELAY_AFTER_LOADING_MS = 1500;
 const LIVE_SCOREBOARD_REFRESH_MS = 280;
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 
@@ -411,6 +412,8 @@ export function Scene({
   const [menuBusy, setMenuBusy] = useState(false);
   const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(true);
   const [loadingOverlayFading, setLoadingOverlayFading] = useState(false);
+  const [loadingBackdropFailed, setLoadingBackdropFailed] = useState(false);
+  const [loadingMascotFailed, setLoadingMascotFailed] = useState(false);
   const [liveScoreboardTick, setLiveScoreboardTick] = useState(0);
   const courseResultSentRef = useRef(false);
   const startCountdownStartedRef = useRef(false);
@@ -425,6 +428,8 @@ export function Scene({
     circuit.lapStart?.model ?? 'no-lap-start',
     circuit.lapCheckpoint?.model ?? 'no-lap-checkpoint',
   ].join('-');
+  const loadingBackdropSrc = `${import.meta.env.BASE_URL}ui/grand-prix/courses/preview-00.png`;
+  const loadingMascotSrc = `${import.meta.env.BASE_URL}ui/MK8-Line-Yoshi-Singing.gif`;
   const circuitWaypointTransform = circuit.waypoints?.transform ?? circuit.transform;
   const requiredAssetUrls = useMemo(() => {
     const urls = [circuit.road.model, circuit.ext.model];
@@ -530,6 +535,8 @@ export function Scene({
     setTextureDebugReady(!textureDebugEnabled);
     setLoadingOverlayVisible(true);
     setLoadingOverlayFading(false);
+    setLoadingBackdropFailed(false);
+    setLoadingMascotFailed(false);
   }, [assetGateKey, circuitPhysicsKey, textureDebugEnabled]);
 
   useEffect(() => {
@@ -859,8 +866,13 @@ export function Scene({
     if (!sceneReady || isLoadingOverlayActive || overlayStep !== 'none') return;
     if (startCountdownStartedRef.current) return;
 
-    startCountdownStartedRef.current = true;
-    setStartCountdownValue(START_COUNTDOWN_INITIAL);
+    const delayTimer = window.setTimeout(() => {
+      if (startCountdownStartedRef.current) return;
+      startCountdownStartedRef.current = true;
+      setStartCountdownValue(START_COUNTDOWN_INITIAL);
+    }, START_COUNTDOWN_DELAY_AFTER_LOADING_MS);
+
+    return () => window.clearTimeout(delayTimer);
   }, [isLoadingOverlayActive, overlayStep, sceneReady]);
 
   useEffect(() => {
@@ -902,20 +914,31 @@ export function Scene({
         <div
           className={`absolute inset-0 z-80 transition-opacity duration-500 ${
             loadingOverlayFading ? 'opacity-0' : 'opacity-100'
-          }`}
+          } bg-[#0a214f]`}
         >
-          <img
-            src="/ui/grand-prix/courses/preview-00.png"
-            alt=""
-            aria-hidden
-            className="h-full w-full object-cover"
-          />
-          <img
-            src="/ui/MK8-Line-Yoshi-Singing.gif"
-            alt=""
-            aria-hidden
-            className="pointer-events-none absolute bottom-4 right-4 w-[clamp(120px,18cqw,240px)] max-w-[40cqw] object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.45)]"
-          />
+          {!loadingBackdropFailed ? (
+            <img
+              src={loadingBackdropSrc}
+              alt=""
+              aria-hidden
+              className="h-full w-full object-cover"
+              onError={() => setLoadingBackdropFailed(true)}
+            />
+          ) : (
+            <div
+              className="h-full w-full bg-[radial-gradient(circle_at_18%_22%,rgba(142,203,255,0.45),transparent_38%),radial-gradient(circle_at_85%_80%,rgba(89,132,255,0.5),transparent_44%),linear-gradient(160deg,#0a2a9b,#2a59e8_48%,#4a78ff)]"
+              aria-hidden
+            />
+          )}
+          {!loadingMascotFailed ? (
+            <img
+              src={loadingMascotSrc}
+              alt=""
+              aria-hidden
+              className="pointer-events-none absolute bottom-4 right-4 w-[clamp(120px,18cqw,240px)] max-w-[40cqw] object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.45)]"
+              onError={() => setLoadingMascotFailed(true)}
+            />
+          ) : null}
         </div>
       ) : null}
 
