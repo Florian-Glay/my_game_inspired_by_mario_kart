@@ -46,6 +46,16 @@ function getViewports(viewerCount: number, width: number, height: number): Viewp
   }
 
   if (viewerCount === 2) {
+    const isPortrait = height > width;
+    if (isPortrait) {
+      const bottomHeight = Math.max(1, Math.floor(height / 2));
+      const topHeight = Math.max(1, height - bottomHeight);
+      return [
+        { x: 0, y: bottomHeight, width, height: topHeight },
+        { x: 0, y: 0, width, height: bottomHeight },
+      ];
+    }
+
     const leftWidth = Math.max(1, Math.floor(width / 2));
     const rightWidth = Math.max(1, width - leftWidth);
     return [

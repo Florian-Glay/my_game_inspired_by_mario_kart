@@ -893,7 +893,7 @@ export function Scene({
   }, [startCountdownValue]);
 
   return (
-    <div className="relative w-full h-screen">
+    <div className="relative h-full w-full">
       <button type="button" className="mk-back-btn" onClick={onRaceBack}>
         Retour
       </button>
@@ -914,7 +914,7 @@ export function Scene({
             src="/ui/MK8-Line-Yoshi-Singing.gif"
             alt=""
             aria-hidden
-            className="pointer-events-none absolute bottom-4 right-4 w-[clamp(120px,18vw,240px)] max-w-[40vw] object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.45)]"
+            className="pointer-events-none absolute bottom-4 right-4 w-[clamp(120px,18cqw,240px)] max-w-[40cqw] object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.45)]"
           />
         </div>
       ) : null}
@@ -925,8 +925,8 @@ export function Scene({
             <div
               className={`leading-none font-black drop-shadow-[0_14px_34px_rgba(1,8,26,0.75)] ${
                 startCountdownValue === 0 ?
-                  'text-[clamp(2.8rem,10vw,6.2rem)] uppercase tracking-[0.08em]'
-                : 'text-[clamp(4rem,12vw,8.5rem)] tabular-nums'
+                  'text-[clamp(2.8rem,10cqw,6.2rem)] uppercase tracking-[0.08em]'
+                : 'text-[clamp(4rem,12cqw,8.5rem)] tabular-nums'
               }`}
             >
               {startCountdownLabel}
@@ -945,7 +945,7 @@ export function Scene({
           <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/85">
             Classement live
           </div>
-          <div className="mt-2 max-h-[52vh] space-y-1.5 overflow-y-auto pr-1">
+          <div className="mt-2 max-h-[52cqh] space-y-1.5 overflow-y-auto pr-1">
             {liveScoreboard.map((entry) => (
               <div key={`lap-${entry.participantId}`} className="flex items-center justify-between gap-2 text-xs">
                 <div className="flex min-w-0 items-center gap-2">
@@ -968,12 +968,12 @@ export function Scene({
 
       {sceneReady && isCourseRankingVisible ? (
         <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/70 backdrop-blur-sm">
-          <div className="w-[min(92vw,640px)] rounded-2xl border border-white/35 bg-[#0a2d66]/88 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
+          <div className="w-[min(92cqw,640px)] rounded-2xl border border-white/35 bg-[#0a2d66]/88 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
             <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/80">
               Course {raceConfig.courseIndex + 1}/{raceConfig.totalCourses}
             </div>
             <h2 className="mt-2 text-2xl font-black">Classement de la course</h2>
-            <div className="mt-4 max-h-[56vh] space-y-2 overflow-y-auto pr-1">
+            <div className="mt-4 max-h-[56cqh] space-y-2 overflow-y-auto pr-1">
               {courseRanking.map((entry) => {
                 const completedLaps = Math.min(Math.max(entry.lap - 1, 0), 3);
                 return (
@@ -1006,7 +1006,7 @@ export function Scene({
 
       {sceneReady && isCourseActionVisible ? (
         <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/70 backdrop-blur-sm">
-          <div className="w-[min(92vw,580px)] rounded-2xl border border-white/35 bg-[#0a2d66]/88 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
+          <div className="w-[min(92cqw,580px)] rounded-2xl border border-white/35 bg-[#0a2d66]/88 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
             <h2 className="text-2xl font-black">
               {hasNextCourse ? 'Course terminee' : 'Grand Prix termine'}
             </h2>
@@ -1042,12 +1042,12 @@ export function Scene({
 
       {sceneReady && isGrandPrixResultVisible ? (
         <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/74 backdrop-blur-sm">
-          <div className="w-[min(94vw,700px)] rounded-2xl border border-white/35 bg-[#0a2d66]/90 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
+          <div className="w-[min(94cqw,700px)] rounded-2xl border border-white/35 bg-[#0a2d66]/90 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
             <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/80">
               Resultat Final Grand Prix
             </div>
             <h2 className="mt-2 text-2xl font-black">Classement cumule</h2>
-            <div className="mt-4 max-h-[56vh] space-y-2 overflow-y-auto pr-1">
+            <div className="mt-4 max-h-[56cqh] space-y-2 overflow-y-auto pr-1">
               {grandPrixStandings.map((standing, index) => (
                 <div
                   key={`grand-prix-rank-${standing.participantId}`}

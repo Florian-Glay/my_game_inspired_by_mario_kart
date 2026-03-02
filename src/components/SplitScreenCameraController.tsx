@@ -148,11 +148,14 @@ export function SplitScreenCameraController({
     const { gl, scene, size } = state;
     const width = Math.max(1, Math.floor(size.width));
     const height = Math.max(1, Math.floor(size.height));
+    const isPortrait = height > width;
     const leftWidth = Math.max(1, Math.floor(width / 2));
     const rightWidth = Math.max(1, width - leftWidth);
+    const bottomHeight = Math.max(1, Math.floor(height / 2));
+    const topHeight = Math.max(1, height - bottomHeight);
 
-    leftCamera.aspect = leftWidth / height;
-    rightCamera.aspect = rightWidth / height;
+    leftCamera.aspect = isPortrait ? width / topHeight : leftWidth / height;
+    rightCamera.aspect = isPortrait ? width / bottomHeight : rightWidth / height;
     leftCamera.updateProjectionMatrix();
     rightCamera.updateProjectionMatrix();
 
@@ -202,8 +205,15 @@ export function SplitScreenCameraController({
     gl.setScissorTest(true);
     gl.clear();
 
-    gl.setViewport(0, 0, leftWidth, height);
-    gl.setScissor(0, 0, leftWidth, height);
+    const leftViewport = isPortrait ?
+      { x: 0, y: bottomHeight, width, height: topHeight }
+    : { x: 0, y: 0, width: leftWidth, height };
+    const rightViewport = isPortrait ?
+      { x: 0, y: 0, width, height: bottomHeight }
+    : { x: leftWidth, y: 0, width: rightWidth, height };
+
+    gl.setViewport(leftViewport.x, leftViewport.y, leftViewport.width, leftViewport.height);
+    gl.setScissor(leftViewport.x, leftViewport.y, leftViewport.width, leftViewport.height);
     if (enableClipPlane) {
       updateForwardClipPlane(leftCamera, leftClipPlane.current, clipPlaneOffset);
       gl.clippingPlanes = [leftClipPlane.current];
@@ -212,8 +222,8 @@ export function SplitScreenCameraController({
     }
     gl.render(scene, leftCamera);
 
-    gl.setViewport(leftWidth, 0, rightWidth, height);
-    gl.setScissor(leftWidth, 0, rightWidth, height);
+    gl.setViewport(rightViewport.x, rightViewport.y, rightViewport.width, rightViewport.height);
+    gl.setScissor(rightViewport.x, rightViewport.y, rightViewport.width, rightViewport.height);
     if (enableClipPlane) {
       updateForwardClipPlane(rightCamera, rightClipPlane.current, clipPlaneOffset);
       gl.clippingPlanes = [rightClipPlane.current];

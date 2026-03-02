@@ -8,10 +8,58 @@
   --mk-panel-border: rgba(220, 236, 255, 0.35);
   --mk-text: #f7fbff;
   --mk-text-soft: rgba(247, 251, 255, 0.76);
+  --mk-target-ratio: calc(16 / 9);
+}
+
+@media (orientation: portrait) {
+  :root {
+    --mk-target-ratio: calc(9 / 16);
+  }
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: #000;
+}
+
+body {
+  overflow: hidden;
 }
 
 * {
   box-sizing: border-box;
+}
+
+.mk-aspect-shell {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+.mk-aspect-frame {
+  --mk-frame-ratio: var(--mk-target-ratio);
+  position: relative;
+  width: min(100vw, calc(100dvh * var(--mk-frame-ratio)));
+  height: min(100dvh, calc(100vw / var(--mk-frame-ratio)));
+  aspect-ratio: var(--mk-frame-ratio);
+  overflow: hidden;
+  background: #000;
+  container: mk-game / size;
+}
+
+.mk-aspect-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
 }
 
 .mk-menu-screen {
@@ -48,7 +96,7 @@
 }
 
 .mk-menu-overlay {
-  --mk-panel-shift-submenu: clamp(25vw, 20vw, 15vw);
+  --mk-panel-shift-submenu: clamp(25cqw, 20cqw, 15cqw);
   --mk-panel-transition: 420ms cubic-bezier(0.22, 1, 0.36, 1);
   position: relative;
   z-index: 2;
@@ -57,8 +105,8 @@
   justify-content: space-between;
   width: 100%;
   height: 100%;
-  padding: clamp(10px, 2.2vw, 24px);
-  gap: clamp(10px, 2vw, 20px);
+  padding: clamp(10px, 2.2cqw, 24px);
+  gap: clamp(10px, 2cqw, 20px);
 }
 
 .mk-menu-overlay.is-transitioning {
@@ -72,7 +120,7 @@
   flex-direction: column;
   gap: 16px;
   min-height: 100%;
-  padding-bottom: clamp(70px, 9vh, 98px);
+  padding-bottom: clamp(70px, 9cqh, 98px);
   transform: translateX(0);
   transition: transform var(--mk-panel-transition);
   will-change: transform;
@@ -80,10 +128,10 @@
 
 .mk-back-btn {
   position: absolute;
-  left: clamp(16px, 3vw, 34px);
-  bottom: clamp(16px, 3vw, 34px);
+  left: clamp(16px, 3cqw, 34px);
+  bottom: clamp(16px, 3cqw, 34px);
   z-index: 6;
-  min-width: clamp(128px, 10vw, 168px);
+  min-width: clamp(128px, 10cqw, 168px);
   border: 2px solid rgba(179, 200, 245, 0.82);
   border-radius: 14px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(231, 237, 245, 0.97) 100%);
@@ -114,7 +162,7 @@
   flex-direction: column;
   justify-content: center;
   flex: 1;
-  gap: clamp(16px, 2.2vh, 30px);
+  gap: clamp(16px, 2.2cqh, 30px);
   padding-top: 0;
   width: min(100%, 660px);
   margin-inline: auto;
@@ -130,7 +178,7 @@
   display: flex;
   align-items: center;
   gap: 18px;
-  min-height: clamp(72px, 11vh, 122px);
+  min-height: clamp(72px, 11cqh, 122px);
   padding: 10px 22px;
   clip-path: polygon(7% 0%, 95% 0%, 100% 50%, 95% 100%, 7% 100%, 0% 50%);
   cursor: pointer;
@@ -296,21 +344,21 @@
 }
 
 .mk-main-btn-icon {
-  width: clamp(40px, 4vw, 54px);
-  height: clamp(40px, 4vw, 54px);
+  width: clamp(40px, 4cqw, 54px);
+  height: clamp(40px, 4cqw, 54px);
   border-radius: 999px;
   border: 2px solid rgba(122, 189, 255, 0.7);
   color: #76b7ff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: clamp(11px, 1.2vw, 15px);
+  font-size: clamp(11px, 1.2cqw, 15px);
   font-weight: 800;
   flex-shrink: 0;
 }
 
 .mk-main-btn-label {
-  font-size: clamp(24px, 3.4vw, 52px);
+  font-size: clamp(24px, 3.4cqw, 52px);
   line-height: 1;
   letter-spacing: 0.06em;
   font-weight: 900;
@@ -321,7 +369,7 @@
   background: transparent;
   backdrop-filter: none;
   border-radius: 0;
-  padding: clamp(10px, 1.4vw, 18px) 0;
+  padding: clamp(10px, 1.4cqw, 18px) 0;
   box-shadow: none;
   display: flex;
   flex-direction: column;
@@ -330,14 +378,14 @@
 
 .mk-card h2 {
   margin: 0;
-  font-size: clamp(20px, 2.2vw, 31px);
+  font-size: clamp(20px, 2.2cqw, 31px);
   letter-spacing: 0.03em;
 }
 
 .mk-card p {
   margin: 0;
   color: var(--mk-text-soft);
-  font-size: clamp(14px, 1.2vw, 18px);
+  font-size: clamp(14px, 1.2cqw, 18px);
 }
 
 .mk-mapping-grid {
@@ -477,7 +525,7 @@
 }
 
 .mk-gp-cups-grid {
-  --mk-gp-cup-size: clamp(96px, 11.4vw, 160px);
+  --mk-gp-cup-size: clamp(96px, 11.4cqw, 160px);
   width: max-content;
   min-width: 100%;
   margin-inline: auto;
@@ -485,7 +533,7 @@
   grid-template-columns: repeat(6, var(--mk-gp-cup-size));
   grid-template-rows: repeat(2, var(--mk-gp-cup-size));
   justify-content: center;
-  gap: clamp(8px, 1.1vw, 16px);
+  gap: clamp(8px, 1.1cqw, 16px);
 }
 
 .mk-gp-cup-btn {
@@ -545,10 +593,10 @@
 
 .mk-gp-courses-row {
   width: 100%;
-  min-width: 860px;
+  min-width: clamp(920px, 92cqw, 1240px);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: clamp(8px, 1cqw, 12px);
   animation: mk-gp-courses-enter 240ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
 }
 
@@ -569,7 +617,6 @@
   border: 1px solid rgba(195, 220, 255, 0.48);
   background: rgba(8, 26, 88, 0.42);
   overflow: hidden;
-  min-height: clamp(150px, 19vh, 204px);
   aspect-ratio: 16 / 9;
 }
 
@@ -577,6 +624,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   background: rgba(21, 54, 131, 0.42);
 }
 
@@ -603,7 +651,7 @@
 .mk-gp-course-label {
   color: #f7fbff;
   text-shadow: 0 2px 10px rgba(3, 10, 36, 0.4);
-  font-size: clamp(15px, 1.6vw, 26px);
+  font-size: clamp(15px, 1.6cqw, 26px);
   font-weight: 900;
   line-height: 0.9;
   letter-spacing: 0.01em;
@@ -616,7 +664,7 @@
   background: transparent;
   text-align: center;
   padding: 2px 0 4px;
-  font-size: clamp(20px, 2.4vw, 34px);
+  font-size: clamp(20px, 2.4cqw, 34px);
   font-weight: 900;
   letter-spacing: 0.03em;
 }
@@ -689,11 +737,11 @@
 }
 
 .mk-menu-overlay--home .mk-menu-panel {
-  width: min(56vw, 780px);
+  width: min(56cqw, 780px);
 }
 
 .mk-menu-overlay--home-exit .mk-menu-panel {
-  width: min(56vw, 780px);
+  width: min(56cqw, 780px);
 }
 
 .mk-menu-overlay--submenu:not(.mk-menu-overlay--garage) .mk-menu-panel,
@@ -711,17 +759,17 @@
 
 .mk-hero-image {
   height: 200%;
-  max-height: calc(100% + 6vw);
+  max-height: calc(100% + 6cqw);
   max-width: 2000%;
   position: absolute;
-  right: calc(-3vw - 15%);
+  right: calc(-3cqw - 15%);
   object-fit: contain;
   filter: drop-shadow(0 26px 40px rgba(2, 14, 64, 0.42));
 }
 
 .mk-hero-fallback {
   width: min(100%, 920px);
-  height: min(72vh, 640px);
+  height: min(72cqh, 640px);
   border-radius: 30px;
   border: 1px solid rgba(200, 223, 255, 0.5);
   background:
@@ -771,16 +819,30 @@
   box-shadow: 0 0 12px rgba(167, 212, 255, 0.5);
 }
 
+@container mk-game (max-aspect-ratio: 1 / 1) {
+  .split-divider {
+    top: 50%;
+    bottom: auto;
+    left: 0;
+    right: 0;
+    width: auto;
+    height: 2px;
+    margin-top: -1px;
+    margin-left: 0;
+    background: linear-gradient(90deg, rgba(180, 218, 255, 0.78), rgba(95, 147, 255, 0.72));
+  }
+}
+
 .mk-menu-overlay--garage .mk-menu-panel {
-  width: min(58vw, 940px);
+  width: min(58cqw, 940px);
   transform: translateX(0);
-  padding-bottom: clamp(88px, 10vh, 116px);
+  padding-bottom: clamp(88px, 10cqh, 116px);
 }
 
 .mk-menu-overlay--garage .mk-hero-panel {
   flex: 1;
   width: auto;
-  min-width: min(40vw, 620px);
+  min-width: min(40cqw, 620px);
   opacity: 1;
   transform: translateX(0);
   pointer-events: auto;
@@ -788,8 +850,8 @@
 
 .mk-hero-panel--garage {
   flex: 1;
-  min-width: min(40vw, 620px);
-  padding: clamp(6px, 1.2vw, 14px);
+  min-width: min(40cqw, 620px);
+  padding: clamp(6px, 1.2cqw, 14px);
 }
 
 .mk-garage-layout {
@@ -799,7 +861,7 @@
 
 .mk-garage-selector {
   width: 100%;
-  height: min(100%, calc(100vh - clamp(120px, 14vh, 170px)));
+  height: min(100%, calc(100cqh - clamp(120px, 14cqh, 170px)));
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -820,8 +882,8 @@
 }
 
 .mk-garage-section {
-  --mk-garage-scroll-size: clamp(48px, 5.2vw, 72px);
-  --mk-garage-side-preview-size: clamp(46px, 4.6vw, 70px);
+  --mk-garage-scroll-size: clamp(48px, 5.2cqw, 72px);
+  --mk-garage-side-preview-size: clamp(46px, 4.6cqw, 70px);
   border: none;
   border-radius: 0;
   background: transparent;
@@ -834,14 +896,14 @@
   align-items: center;
   gap: 8px 10px;
   padding: 8px 0;
-  min-height: clamp(116px, 17vh, 178px);
+  min-height: clamp(116px, 17cqh, 178px);
   min-width: 0;
   overflow: hidden;
 }
 
 .mk-garage-section--vehicle {
-  --mk-garage-side-preview-size: clamp(54px, 5.6vw, 86px);
-  min-height: clamp(146px, 22.5vh, 230px);
+  --mk-garage-side-preview-size: clamp(54px, 5.6cqw, 86px);
+  min-height: clamp(146px, 22.5cqh, 230px);
   box-shadow: none;
 }
 
@@ -900,19 +962,19 @@
 .mk-garage-item-card {
   width: 100%;
   min-width: 0;
-  min-height: clamp(74px, 11.6vh, 100px);
+  min-height: clamp(74px, 11.6cqh, 100px);
   border-radius: 14px;
   border: none;
   background: rgba(7, 31, 105, 0.34);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 10px clamp(8px, 1vw, 12px);
+  padding: 10px clamp(8px, 1cqw, 12px);
   overflow: hidden;
 }
 
 .mk-garage-section--vehicle .mk-garage-item-card {
-  min-height: clamp(100px, 15.2vh, 142px);
+  min-height: clamp(100px, 15.2cqh, 142px);
 }
 
 .mk-garage-item-content {
@@ -924,7 +986,7 @@
     minmax(0, 1fr)
     minmax(0, var(--mk-garage-side-preview-size));
   align-items: center;
-  gap: clamp(6px, 1vw, 12px);
+  gap: clamp(6px, 1cqw, 12px);
   transform: translateX(0);
   opacity: 1;
 }
@@ -1023,15 +1085,15 @@
 }
 
 .mk-garage-footer {
-  margin-top: clamp(8px, 1.2vh, 16px);
+  margin-top: clamp(8px, 1.2cqh, 16px);
   position: static;
-  padding-top: clamp(10px, 1.6vh, 18px);
+  padding-top: clamp(10px, 1.6cqh, 18px);
   background: transparent;
 }
 
 .mk-garage-preview-wrap {
   width: 100%;
-  height: min(84vh, 800px);
+  height: min(84cqh, 800px);
   border-radius: 14px;
   overflow: hidden;
   border: none;
@@ -1045,7 +1107,7 @@
 
 .mk-garage-preview-fallback {
   width: 100%;
-  height: min(84vh, 800px);
+  height: min(84cqh, 800px);
   border-radius: 14px;
   border: none;
   background: rgba(7, 28, 96, 0.55);
@@ -1058,9 +1120,9 @@
   text-transform: uppercase;
 }
 
-@media (max-width: 1080px) {
+@container mk-game (max-width: 1080px) {
   .mk-menu-overlay {
-    --mk-panel-shift-submenu: clamp(24px, 4vw, 44px);
+    --mk-panel-shift-submenu: clamp(24px, 4cqw, 44px);
     flex-direction: column;
     align-items: stretch;
   }
@@ -1071,19 +1133,19 @@
   }
 
   .mk-hero-panel {
-    min-height: 28vh;
+    min-height: 28cqh;
     order: 1;
   }
 
   .mk-menu-overlay--garage .mk-menu-panel {
     width: 100%;
     order: 1;
-    padding-bottom: clamp(86px, 12vh, 116px);
+    padding-bottom: clamp(86px, 12cqh, 116px);
   }
 
   .mk-menu-overlay--garage .mk-hero-panel {
     order: 2;
-    min-height: 38vh;
+    min-height: 38cqh;
     padding: 0;
   }
 
@@ -1092,29 +1154,29 @@
   }
 
   .mk-garage-section {
-    --mk-garage-scroll-size: clamp(42px, 8vw, 58px);
-    --mk-garage-side-preview-size: clamp(38px, 7vw, 56px);
-    min-height: clamp(112px, 18vh, 166px);
+    --mk-garage-scroll-size: clamp(42px, 8cqw, 58px);
+    --mk-garage-side-preview-size: clamp(38px, 7cqw, 56px);
+    min-height: clamp(112px, 18cqh, 166px);
   }
 
   .mk-garage-section--vehicle {
-    --mk-garage-side-preview-size: clamp(48px, 8vw, 68px);
-    min-height: clamp(140px, 23vh, 206px);
+    --mk-garage-side-preview-size: clamp(48px, 8cqw, 68px);
+    min-height: clamp(140px, 23cqh, 206px);
   }
 
   .mk-garage-preview-wrap,
   .mk-garage-preview-fallback {
-    height: min(58vh, 500px);
+    height: min(58cqh, 500px);
     border-radius: 16px;
   }
 
   .mk-gp-cups-grid {
-    --mk-gp-cup-size: clamp(78px, 18vw, 118px);
-    gap: clamp(8px, 2vw, 12px);
+    --mk-gp-cup-size: clamp(78px, 18cqw, 118px);
+    gap: clamp(8px, 2cqw, 12px);
   }
 
   .mk-gp-courses-row {
-    min-width: 760px;
+    min-width: clamp(760px, 94cqw, 980px);
   }
 
   .mk-gp-course-image {
@@ -1122,7 +1184,7 @@
   }
 
   .mk-gp-course-label {
-    font-size: clamp(24px, 5.4vw, 38px);
+    font-size: clamp(24px, 5.4cqw, 38px);
   }
 
   .mk-circuit-grid,
@@ -1131,7 +1193,7 @@
   }
 
   .mk-main-btn-label {
-    font-size: clamp(20px, 6vw, 34px);
+    font-size: clamp(20px, 6cqw, 34px);
   }
 
   .mk-back-btn {
@@ -1142,13 +1204,13 @@
   }
 }
 
-@media (max-height: 940px) {
+@container mk-game (max-height: 940px) {
   .mk-menu-overlay--garage .mk-menu-panel {
-    padding-bottom: clamp(94px, 13vh, 130px);
+    padding-bottom: clamp(94px, 13cqh, 130px);
   }
 
   .mk-garage-selector {
-    height: min(100%, calc(100vh - 120px));
+    height: min(100%, calc(100cqh - 120px));
     gap: 12px;
   }
 
@@ -1157,24 +1219,24 @@
   }
 
   .mk-garage-section {
-    --mk-garage-scroll-size: clamp(40px, 4.8vw, 56px);
-    --mk-garage-side-preview-size: clamp(34px, 4.2vw, 52px);
-    min-height: clamp(100px, 15.2vh, 146px);
+    --mk-garage-scroll-size: clamp(40px, 4.8cqw, 56px);
+    --mk-garage-side-preview-size: clamp(34px, 4.2cqw, 52px);
+    min-height: clamp(100px, 15.2cqh, 146px);
     padding: 8px;
   }
 
   .mk-garage-section--vehicle {
-    --mk-garage-side-preview-size: clamp(42px, 4.8vw, 62px);
-    min-height: clamp(126px, 20vh, 188px);
+    --mk-garage-side-preview-size: clamp(42px, 4.8cqw, 62px);
+    min-height: clamp(126px, 20cqh, 188px);
   }
 
   .mk-garage-item-card {
-    min-height: clamp(64px, 10.2vh, 84px);
+    min-height: clamp(64px, 10.2cqh, 84px);
     padding: 8px;
   }
 
   .mk-garage-section--vehicle .mk-garage-item-card {
-    min-height: clamp(86px, 13.4vh, 116px);
+    min-height: clamp(86px, 13.4cqh, 116px);
   }
 
   .mk-garage-item-image {
@@ -1186,20 +1248,16 @@
   }
 
   .mk-gp-cups-grid {
-    --mk-gp-cup-size:  19.2vh;
+    --mk-gp-cup-size:  19.2cqh;
   }
 
   .mk-gp-courses-row {
-    min-width: 700px;
+    min-width: clamp(700px, 92cqw, 900px);
     gap: 10px;
   }
 
-  .mk-gp-course-card {
-    min-height: clamp(136px, 17.5vh, 178px);
-  }
-
   .mk-gp-selected-name {
-    font-size: clamp(17px, 2.8vh, 24px);
+    font-size: clamp(17px, 2.8cqh, 24px);
     padding: 8px 14px;
   }
 }
@@ -1225,3 +1283,4 @@
     animation: none !important;
   }
 }
+

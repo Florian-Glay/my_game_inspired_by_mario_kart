@@ -666,45 +666,49 @@ export function App() {
     : 'no-race';
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-black">
-      {screen === 'race' && raceConfig ? (
-        <Scene
-          key={sceneKey}
-          raceConfig={raceConfig}
-          onRaceBack={resetToHome}
-          onCourseFinished={handleCourseFinished}
-          onNextCourse={handleNextCourse}
-          hasNextCourse={hasNextCourse}
-          isAdvancingCourse={isCheckingAssets}
-          grandPrixStandings={grandPrixStandings}
-        />
-      ) : (
-        <GameMenu
-          screen={menuScreen}
-          mode={mode}
-          cc={cc}
-          humanCount={humanCount}
-          humanLoadoutsBySlot={humanLoadoutsBySlot}
-          activeLoadout={activeLoadout}
-          activeHumanSlot={activeHumanSlot}
-          selectedGrandPrixId={selectedGrandPrix?.id ?? selectedGrandPrixId}
-          errorMessage={errorMessage}
-          isCheckingAssets={isCheckingAssets}
-          onBack={handleBack}
-          onSelectMode={handleSelectMode}
-          onOpenConfig={handleOpenConfig}
-          onSelectCc={handleSelectCc}
-          onSelectHumanCount={handleSelectHumanCount}
-          onCycleCharacter={handleCycleCharacter}
-          onCycleVehicle={handleCycleVehicle}
-          onCycleWheel={handleCycleWheel}
-          onConfirmLoadout={handleConfirmLoadout}
-          onSelectGrandPrix={handleSelectGrandPrix}
-          onConfirmGrandPrix={handleConfirmGrandPrix}
-        />
-      )}
+    <div className="mk-aspect-shell">
+      <div className="mk-aspect-frame">
+        <div className="mk-aspect-stage">
+          {screen === 'race' && raceConfig ? (
+            <Scene
+              key={sceneKey}
+              raceConfig={raceConfig}
+              onRaceBack={resetToHome}
+              onCourseFinished={handleCourseFinished}
+              onNextCourse={handleNextCourse}
+              hasNextCourse={hasNextCourse}
+              isAdvancingCourse={isCheckingAssets}
+              grandPrixStandings={grandPrixStandings}
+            />
+          ) : (
+            <GameMenu
+              screen={menuScreen}
+              mode={mode}
+              cc={cc}
+              humanCount={humanCount}
+              humanLoadoutsBySlot={humanLoadoutsBySlot}
+              activeLoadout={activeLoadout}
+              activeHumanSlot={activeHumanSlot}
+              selectedGrandPrixId={selectedGrandPrix?.id ?? selectedGrandPrixId}
+              errorMessage={errorMessage}
+              isCheckingAssets={isCheckingAssets}
+              onBack={handleBack}
+              onSelectMode={handleSelectMode}
+              onOpenConfig={handleOpenConfig}
+              onSelectCc={handleSelectCc}
+              onSelectHumanCount={handleSelectHumanCount}
+              onCycleCharacter={handleCycleCharacter}
+              onCycleVehicle={handleCycleVehicle}
+              onCycleWheel={handleCycleWheel}
+              onConfirmLoadout={handleConfirmLoadout}
+              onSelectGrandPrix={handleSelectGrandPrix}
+              onConfirmGrandPrix={handleConfirmGrandPrix}
+            />
+          )}
 
-      {screen === 'race' ? <CommandBubble isMultiplayerRace={isMultiplayerRace} /> : null}
+          {screen === 'race' ? <CommandBubble isMultiplayerRace={isMultiplayerRace} /> : null}
+        </div>
+      </div>
     </div>
   );
 }

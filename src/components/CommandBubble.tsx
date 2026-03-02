@@ -42,8 +42,11 @@ export default function CommandBubble({ isMultiplayerRace = false }: CommandBubb
   };
 
   return (
-    <div className="absolute top-4 left-4 z-50">
-      <form onSubmit={submit} className="flex items-center gap-2">
+    <div className="absolute left-[clamp(0.5rem,1.6cqw,1rem)] top-[clamp(0.5rem,1.6cqh,1rem)] z-50">
+      <form
+        onSubmit={submit}
+        className="flex items-center gap-[clamp(0.25rem,0.8cqw,0.5rem)]"
+      >
         <input
           ref={inputRef}
           aria-label="command"
@@ -56,15 +59,17 @@ export default function CommandBubble({ isMultiplayerRace = false }: CommandBubb
             commandInputActive.current = false;
           }}
           placeholder="Entrez commande..."
-          className="px-3 py-1 rounded bg-white/10 text-white text-sm focus:outline-none"
+          className="w-[clamp(9rem,18cqw,16rem)] rounded bg-white/10 px-[clamp(0.55rem,1.1cqw,0.75rem)] py-[clamp(0.2rem,0.7cqh,0.35rem)] text-[clamp(0.7rem,1.2cqh,0.875rem)] text-white focus:outline-none"
         />
         <button
           type="submit"
-          className="px-3 py-1 bg-white/10 text-white text-sm rounded hover:bg-white/20"
+          className="rounded bg-white/10 px-[clamp(0.55rem,1.1cqw,0.75rem)] py-[clamp(0.2rem,0.7cqh,0.35rem)] text-[clamp(0.7rem,1.2cqh,0.875rem)] text-white hover:bg-white/20"
         >
           OK
         </button>
-        <div className="ml-2 text-sm text-white/80">{message}</div>
+        <div className="ml-[clamp(0.2rem,0.8cqw,0.5rem)] text-[clamp(0.7rem,1.2cqh,0.875rem)] text-white/80">
+          {message}
+        </div>
       </form>
     </div>
   );
