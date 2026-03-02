@@ -11,6 +11,7 @@ export type RacePerformanceProfile = {
   forceFrontSideOpaque: boolean;
   disableShadowsOnStatic: boolean;
   debugGroundContact: boolean;
+  debugVehicleCollider: boolean;
 };
 
 export const PERF_PROFILE: RacePerformanceProfile = {
@@ -26,4 +27,5 @@ export const PERF_PROFILE: RacePerformanceProfile = {
   forceFrontSideOpaque: true,
   disableShadowsOnStatic: true,
   debugGroundContact: false,
+  debugVehicleCollider: false,
 };

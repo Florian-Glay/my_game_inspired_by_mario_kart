@@ -15,8 +15,8 @@ import {
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils';
 import {
   type CollisionEnterPayload,
+  CuboidCollider,
   RigidBody,
-  RoundCuboidCollider,
   useAfterPhysicsStep,
   useBeforePhysicsStep,
   useRapier,
@@ -114,9 +114,9 @@ const smoothstep01 = (t: number) => {
   return x * x * (3 - 2 * x);
 };
 
-const SHRINK_X = 0.6;
-const SHRINK_Y = 0.4;
-const SHRINK_Z = 0.6;
+const COLLIDER_COVERAGE_X = 1;
+const COLLIDER_COVERAGE_Y = 1;
+const COLLIDER_COVERAGE_Z = 1;
 
 const SPAWN_CLEARANCE = 0.05;
 
@@ -373,34 +373,81 @@ export default function DrivableModel({
     if (typeof vehicleScale === 'number') return [vehicleScale, vehicleScale, vehicleScale];
     return [1, 1, 1];
   }, [vehicleScale]);
+  const wheelScaleVec = useMemo<Vec3>(() => {
+    if (Array.isArray(wheelScale)) return wheelScale;
+    if (typeof wheelScale === 'number') return [wheelScale, wheelScale, wheelScale];
+    return [1, 1, 1];
+  }, [wheelScale]);
 
   const colliderFit = useMemo(() => {
-    const box = new Box3().setFromObject(vehicleCloned);
+    vehicleCloned.updateWorldMatrix(true, true);
+    wheelScene.updateWorldMatrix(true, true);
+    const vehicleBox = new Box3().setFromObject(vehicleCloned);
+    const wheelBox = new Box3().setFromObject(wheelScene);
 
-    const size = box.getSize(new Vector3());
-    size.multiply(new Vector3(vehicleScaleVec[0], vehicleScaleVec[1], vehicleScaleVec[2]));
+    const combinedMin = new Vector3(
+      vehicleBox.min.x * vehicleScaleVec[0],
+      vehicleBox.min.y * vehicleScaleVec[1],
+      vehicleBox.min.z * vehicleScaleVec[2],
+    );
+    const combinedMax = new Vector3(
+      vehicleBox.max.x * vehicleScaleVec[0],
+      vehicleBox.max.y * vehicleScaleVec[1],
+      vehicleBox.max.z * vehicleScaleVec[2],
+    );
 
-    const minYScaled = box.min.y * vehicleScaleVec[1];
-    const centerScaled = box.getCenter(new Vector3());
-    centerScaled.multiply(new Vector3(vehicleScaleVec[0], vehicleScaleVec[1], vehicleScaleVec[2]));
+    if (!wheelBox.isEmpty()) {
+      const mounts = wheelMounts ?? DEFAULT_WHEEL_MOUNTS;
+      for (const mount of mounts) {
+        const mountedWheelMin = new Vector3(
+          wheelBox.min.x * wheelScaleVec[0] + mount[0],
+          wheelBox.min.y * wheelScaleVec[1] + mount[1],
+          wheelBox.min.z * wheelScaleVec[2] + mount[2],
+        );
+        const mountedWheelMax = new Vector3(
+          wheelBox.max.x * wheelScaleVec[0] + mount[0],
+          wheelBox.max.y * wheelScaleVec[1] + mount[1],
+          wheelBox.max.z * wheelScaleVec[2] + mount[2],
+        );
+        combinedMin.min(mountedWheelMin);
+        combinedMax.max(mountedWheelMax);
+      }
+    }
 
-    const halfX = (size.x / 2) * SHRINK_X;
-    const halfY = Math.max((size.y / 2) * SHRINK_Y, 0.05);
-    const halfZ = (size.z / 2) * SHRINK_Z;
+    const size = combinedMax.clone().sub(combinedMin);
 
-    const offsetX = centerScaled.x;
-    const offsetY = minYScaled + halfY;
-    const offsetZ = centerScaled.z;
+    const halfX = Math.max((size.x / 2) * COLLIDER_COVERAGE_X, 0.05);
+    const halfY = Math.max((size.y / 2) * COLLIDER_COVERAGE_Y, 0.05);
+    const halfZ = Math.max((size.z / 2) * COLLIDER_COVERAGE_Z, 0.05);
 
-    const borderRadius = Math.max(0.02, Math.min(halfX, halfY, halfZ) * 0.35);
+    const offsetX = (combinedMin.x + combinedMax.x) / 2;
+    const offsetY = combinedMin.y + halfY;
+    const offsetZ = (combinedMin.z + combinedMax.z) / 2;
 
     return {
       halfExtents: [halfX, halfY, halfZ] as Vec3,
       colliderOffset: [offsetX, offsetY, offsetZ] as Vec3,
-      minYScaled,
-      borderRadius,
     };
-  }, [vehicleCloned, vehicleScaleVec[0], vehicleScaleVec[1], vehicleScaleVec[2]]);
+  }, [
+    vehicleCloned,
+    vehicleScaleVec[0],
+    vehicleScaleVec[1],
+    vehicleScaleVec[2],
+    wheelMounts,
+    wheelScaleVec[0],
+    wheelScaleVec[1],
+    wheelScaleVec[2],
+    wheelScene,
+  ]);
+
+  const vehicleActiveCollisionTypes = useMemo(
+    () =>
+      rapier.ActiveCollisionTypes.DEFAULT |
+      rapier.ActiveCollisionTypes.KINEMATIC_KINEMATIC |
+      rapier.ActiveCollisionTypes.KINEMATIC_FIXED,
+    [rapier],
+  );
+  const shouldShowVehicleColliderDebug = PERF_PROFILE.debugVehicleCollider;
 
   const surfaceAttachmentSettings = useMemo(() => {
     // Probe distance must cover:
@@ -2548,16 +2595,36 @@ export default function DrivableModel({
         position={spawnPosition}
         rotation={initialRotation}
       >
-        <RoundCuboidCollider
+        <CuboidCollider
           ref={colliderRef}
-          args={[colliderFit.halfExtents[0], colliderFit.halfExtents[1], colliderFit.halfExtents[2], colliderFit.borderRadius]}
+          args={[colliderFit.halfExtents[0], colliderFit.halfExtents[1], colliderFit.halfExtents[2]]}
           position={[0, 0, 0]}
           friction={0.2}
           restitution={0}
+          activeCollisionTypes={vehicleActiveCollisionTypes}
           onCollisionEnter={handleAntiGravCollisionEnter}
           onIntersectionEnter={handleAntiGravIntersectionEnter}
           onIntersectionExit={handleAntiGravIntersectionExit}
         />
+        {shouldShowVehicleColliderDebug ? (
+          <mesh position={[0, 0, 0]} renderOrder={999}>
+            <boxGeometry
+              args={[
+                colliderFit.halfExtents[0] * 2,
+                colliderFit.halfExtents[1] * 2,
+                colliderFit.halfExtents[2] * 2,
+              ]}
+            />
+            <meshBasicMaterial
+              color="#ff0000"
+              wireframe
+              transparent
+              opacity={0.92}
+              depthTest={false}
+              depthWrite={false}
+            />
+          </mesh>
+        ) : null}
         <group ref={poseAnchorRef} />
         <group ref={visualRootRef} position={visualRootPosition}>
           <primitive object={vehicleCloned} scale={vehicleScale} />

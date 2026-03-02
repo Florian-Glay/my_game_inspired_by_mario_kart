@@ -268,18 +268,18 @@ const DS_MARIO_CIRCUIT_SPAWN_SLOTS: SpawnSlot[] = [
 ];
 
 const STADIUM_SPAWN_SLOTS: SpawnSlot[] = [
-  { position: [8.291, 87, 205.821], rotation: [0, Math.PI, 0] },
-  { position: [10.355, 87, 209.232], rotation: [0, Math.PI, 0] },
-  { position: [12.629, 87, 212.022], rotation: [0, Math.PI, 0] },
-  { position: [14.598, 87, 215.371], rotation: [0, Math.PI, 0] },
-  { position: [16.775, 87, 218.465], rotation: [0, Math.PI, 0] },
-  { position: [18.905, 87, 221.083], rotation: [0, Math.PI, 0] },
-  { position: [9.247, 87, 224.285], rotation: [0, Math.PI, 0] },
-  { position: [11.437, 87, 227.23], rotation: [0, Math.PI, 0] },
-  { position: [13.497, 87, 229.938], rotation: [0, Math.PI, 0] },
-  { position: [15.675, 87, 233.718], rotation: [0, Math.PI, 0] },
-  { position: [17.817, 87, 236.555], rotation: [0, Math.PI, 0] },
-  { position: [20.113, 87, 240.328], rotation: [0, Math.PI, 0] },
+  { position: [8.291, 89, 205.821], rotation: [0, Math.PI, 0] },
+  { position: [10.355, 89, 209.232], rotation: [0, Math.PI, 0] },
+  { position: [12.629, 89, 212.022], rotation: [0, Math.PI, 0] },
+  { position: [14.598, 89, 215.371], rotation: [0, Math.PI, 0] },
+  { position: [16.775, 89, 218.465], rotation: [0, Math.PI, 0] },
+  { position: [18.905, 89, 221.083], rotation: [0, Math.PI, 0] },
+  { position: [9.247, 89, 224.285], rotation: [0, Math.PI, 0] },
+  { position: [11.437, 89, 227.23], rotation: [0, Math.PI, 0] },
+  { position: [13.497, 89, 229.938], rotation: [0, Math.PI, 0] },
+  { position: [15.675, 89, 233.718], rotation: [0, Math.PI, 0] },
+  { position: [17.817, 89, 236.555], rotation: [0, Math.PI, 0] },
+  { position: [20.113, 89, 240.328], rotation: [0, Math.PI, 0] },
 ];
 
 const SUBWAY_SPAWN_SLOTS: SpawnSlot[] = [
