@@ -29,6 +29,7 @@ import { CircuitMeshCullingController } from './CircuitMeshCullingController';
 import DrivableModel from './DrivableModel';
 import { LocalMultiviewCameraController } from './LocalMultiviewCameraController';
 import Model from './Model';
+import { ObjectCrate, type ObjectCrateTouch } from './ObjectCrate';
 import { SurfaceWithDrag } from './SurfaceWithDrag';
 import TextureDebug from './TextureDebug';
 
@@ -243,6 +244,12 @@ type LiveScoreboardEntry = {
   finished: boolean;
 };
 
+type ObjectCrateSpawnEntry = {
+  crateId: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+};
+
 function MovingClouds() {
   const rootRef = useRef<Group | null>(null);
   const cloudSeeds = useMemo<CloudSeed[]>(
@@ -346,6 +353,8 @@ const LOADING_OVERLAY_FADE_MS = 500;
 const START_COUNTDOWN_DELAY_AFTER_LOADING_MS = 1500;
 const LIVE_SCOREBOARD_REFRESH_MS = 280;
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
+const OBJECT_CRATE_MODEL_PATH = 'models/item_box.glb';
+const OBJECT_CRATE_RESPAWN_MS = 10_000;
 
 const clampValue = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const distanceBetweenPoints = (
@@ -374,6 +383,13 @@ function createInitialLapProgress(
 ) {
   return participants.reduce<Record<RaceParticipantId, PlayerLapProgress>>((acc, participant) => {
     acc[participant.id] = { ...FALLBACK_PROGRESS };
+    return acc;
+  }, {});
+}
+
+function createObjectCrateActivationMap(spawns: ObjectCrateSpawnEntry[]) {
+  return spawns.reduce<Record<string, boolean>>((acc, spawn) => {
+    acc[spawn.crateId] = true;
     return acc;
   }, {});
 }
@@ -432,7 +448,7 @@ export function Scene({
   const loadingMascotSrc = `${import.meta.env.BASE_URL}ui/MK8-Line-Yoshi-Singing.gif`;
   const circuitWaypointTransform = circuit.waypoints?.transform ?? circuit.transform;
   const requiredAssetUrls = useMemo(() => {
-    const urls = [circuit.road.model, circuit.ext.model];
+    const urls = [circuit.road.model, circuit.ext.model, OBJECT_CRATE_MODEL_PATH];
     if (circuit.antiGravIn?.model) urls.push(circuit.antiGravIn.model);
     if (circuit.antiGravOut?.model) urls.push(circuit.antiGravOut.model);
     if (circuit.booster?.model) urls.push(circuit.booster.model);
@@ -520,6 +536,21 @@ export function Scene({
     () => Math.max(1, distanceBetweenPoints(lapStartMarker, lapCheckpointMarker)),
     [lapCheckpointMarker, lapStartMarker],
   );
+  const objectCrateSpawnEntries = useMemo<ObjectCrateSpawnEntry[]>(
+    () =>
+      circuit.objectCrateSpawns.map((spawn, index) => ({
+        crateId: `${raceConfig.courseId}-crate-${index}`,
+        position: [spawn.position[0], spawn.position[1], spawn.position[2]],
+        rotation: [spawn.rotation[0], spawn.rotation[1], spawn.rotation[2]],
+      })),
+    [circuit.objectCrateSpawns, raceConfig.courseId],
+  );
+  const initialObjectCrates = useMemo(
+    () => createObjectCrateActivationMap(objectCrateSpawnEntries),
+    [objectCrateSpawnEntries],
+  );
+  const [activeObjectCrates, setActiveObjectCrates] = useState<Record<string, boolean>>(initialObjectCrates);
+  const objectCrateRespawnTimersRef = useRef<Map<string, number>>(new Map());
   const roadGroupRef = useRef<Group | null>(null);
   const extGroupRef = useRef<Group | null>(null);
   const sceneReady =
@@ -542,6 +573,17 @@ export function Scene({
   useEffect(() => {
     setCircuitWaypoints([]);
   }, [raceConfig.circuit, raceConfig.courseId]);
+
+  useEffect(() => {
+    objectCrateRespawnTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    objectCrateRespawnTimersRef.current.clear();
+    setActiveObjectCrates(initialObjectCrates);
+
+    return () => {
+      objectCrateRespawnTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      objectCrateRespawnTimersRef.current.clear();
+    };
+  }, [initialObjectCrates]);
 
   useEffect(() => {
     lapProgressRef.current = initialLapProgress;
@@ -586,6 +628,31 @@ export function Scene({
     },
     [poseRefsByParticipant],
   );
+
+  const handleObjectCrateCollected = useCallback((crateId: string, touch: ObjectCrateTouch) => {
+    setActiveObjectCrates((current) => {
+      if (!current[crateId]) return current;
+      return { ...current, [crateId]: false };
+    });
+
+    const randomValue = Math.floor(Math.random() * 6);
+    console.log(`[co] ${randomValue} ${touch.participantName}`);
+
+    const existingTimer = objectCrateRespawnTimersRef.current.get(crateId);
+    if (typeof existingTimer === 'number') {
+      window.clearTimeout(existingTimer);
+    }
+
+    const respawnTimer = window.setTimeout(() => {
+      setActiveObjectCrates((current) => {
+        if (current[crateId]) return current;
+        return { ...current, [crateId]: true };
+      });
+      objectCrateRespawnTimersRef.current.delete(crateId);
+    }, OBJECT_CRATE_RESPAWN_MS);
+
+    objectCrateRespawnTimersRef.current.set(crateId, respawnTimer);
+  }, []);
 
   const handleCircuitWaypointsReady = useCallback((waypoints: BotWaypoint[]) => {
     setCircuitWaypoints(waypoints);
@@ -1318,10 +1385,24 @@ export function Scene({
               </SurfaceWithDrag>
             : null}
 
+            {objectCrateSpawnEntries.map((spawn) =>
+              activeObjectCrates[spawn.crateId] ? (
+                <ObjectCrate
+                  key={spawn.crateId}
+                  crateId={spawn.crateId}
+                  position={spawn.position}
+                  rotation={spawn.rotation}
+                  modelPath={OBJECT_CRATE_MODEL_PATH}
+                  onCollected={handleObjectCrateCollected}
+                />
+              ) : null,
+            )}
+
             {drivableParticipants.map((participant) => (
               <DrivableModel
                 key={participant.id}
                 participantId={participant.id}
+                participantName={participant.displayName}
                 controlMode={participant.controlMode}
                 vehicleModel={participant.vehicleModel}
                 characterModel={participant.characterModel}

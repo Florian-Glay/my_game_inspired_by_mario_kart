@@ -95,6 +95,7 @@ type Props = {
   controlMode?: ParticipantControlMode;
   onPoseUpdate?: (participantId: RaceParticipantId, pose: CarPose) => void;
   participantId?: RaceParticipantId;
+  participantName?: string;
   controlsLocked?: boolean;
   startCountdownValue?: number | null;
   onLapTrigger?: (
@@ -274,6 +275,7 @@ export default function DrivableModel({
   controlMode = 'human',
   onPoseUpdate,
   participantId = 'participant-1',
+  participantName = participantId,
   controlsLocked = false,
   startCountdownValue = null,
   onLapTrigger,
@@ -448,7 +450,18 @@ export default function DrivableModel({
       rapier.ActiveCollisionTypes.KINEMATIC_FIXED,
     [rapier],
   );
+  const movementQueryFilterFlags = useMemo(
+    () => rapier.QueryFilterFlags.EXCLUDE_SENSORS,
+    [rapier],
+  );
   const shouldShowVehicleColliderDebug = PERF_PROFILE.debugVehicleCollider;
+  const vehicleColliderUserData = useMemo(
+    () => ({
+      participantId,
+      participantName,
+    }),
+    [participantId, participantName],
+  );
 
   const surfaceAttachmentSettings = useMemo(() => {
     // Probe distance must cover:
@@ -1834,6 +1847,22 @@ export default function DrivableModel({
     world,
   ]);
 
+  useEffect(() => {
+    const collider = colliderRef.current as (RapierCollider & { userData?: unknown }) | null;
+    if (!collider) return;
+
+    const existingUserData = (collider as any).userData;
+    if (existingUserData && typeof existingUserData === 'object') {
+      (collider as any).userData = {
+        ...(existingUserData as Record<string, unknown>),
+        ...vehicleColliderUserData,
+      };
+      return;
+    }
+
+    (collider as any).userData = { ...vehicleColliderUserData };
+  }, [vehicleColliderUserData]);
+
   useBeforePhysicsStep(() => {
     const body = bodyRef.current;
     const collider = colliderRef.current;
@@ -2320,7 +2349,13 @@ export default function DrivableModel({
     desiredDelta.y = tmpMoveDelta.y;
     desiredDelta.z = tmpMoveDelta.z;
 
-    controller.computeColliderMovement(collider, desiredDelta, undefined, undefined, (c) => c.handle !== collider.handle);
+    controller.computeColliderMovement(
+      collider,
+      desiredDelta,
+      movementQueryFilterFlags,
+      undefined,
+      (c) => c.handle !== collider.handle,
+    );
 
     const m = controller.computedMovement();
     const t0 = body.translation();

@@ -59,6 +59,7 @@ export type CircuitConfig = {
   label: string;
   transform: TransformConfig;
   spawnSlots: SpawnSlot[];
+  objectCrateSpawns: ObjectCrateSpawn[];
   road: SurfaceConfig;
   ext: SurfaceConfig;
   antiGravIn?: SurfaceTriggerConfig;
@@ -72,6 +73,11 @@ export type CircuitConfig = {
 };
 
 export type SpawnSlot = {
+  position: Vec3;
+  rotation: Vec3;
+};
+
+export type ObjectCrateSpawn = {
   position: Vec3;
   rotation: Vec3;
 };
@@ -313,12 +319,45 @@ const KALIMARI_DESERT_SPAWN_SLOTS: SpawnSlot[] = [
   { position: [219.668, 9.84, -157.23], rotation: [0, -3.117, 0] },
 ];
 
+const DS_MARIO_CIRCUIT_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
+  { position: [174.9, -47.8, -98.2], rotation: [0, 0, 0] },
+  { position: [165.1, -47.8, -94.4], rotation: [0, 0, 0] },
+  { position: [153.4, -47.8, -100.8], rotation: [0, 0, 0] },
+  { position: [141.2, -47.8, -97.8], rotation: [0, 0, 0] },
+  { position: [130.8, -47.8, -94.1], rotation: [0, 0, 0] },
+];
+
+const STADIUM_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
+  { position: [9.8, 90.6, 207.6], rotation: [0, 0, 0] },
+  { position: [13.4, 90.6, 213.5], rotation: [0, 0, 0] },
+  { position: [18.1, 90.6, 220.9], rotation: [0, 0, 0] },
+  { position: [11.2, 90.6, 226.8], rotation: [0, 0, 0] },
+  { position: [18.4, 90.6, 238.8], rotation: [0, 0, 0] },
+];
+
+const SUBWAY_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
+  { position: [-42.8, 73.6, 110.2], rotation: [0, 0, 0] },
+  { position: [-48.7, 73.6, 106.4], rotation: [0, 0, 0] },
+  { position: [-55.4, 73.6, 102.1], rotation: [0, 0, 0] },
+  { position: [-60.6, 73.6, 109.1], rotation: [0, 0, 0] },
+  { position: [-69.3, 73.6, 102.6], rotation: [0, 0, 0] },
+];
+
+const KALIMARI_DESERT_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
+  { position: [233.7, 11.2, -199.4], rotation: [0, 0, 0] },
+  { position: [228.6, 11.2, -192.2], rotation: [0, 0, 0] },
+  { position: [222.5, 11.2, -183.9], rotation: [0, 0, 0] },
+  { position: [231.3, 11.2, -175.6], rotation: [0, 0, 0] },
+  { position: [223.6, 11.2, -163.2], rotation: [0, 0, 0] },
+];
+
 export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
   ds_mario_circuit: {
     id: 'ds_mario_circuit',
     label: 'DS Mario Circuit',
     transform: marioTransform,
     spawnSlots: DS_MARIO_CIRCUIT_SPAWN_SLOTS,
+    objectCrateSpawns: DS_MARIO_CIRCUIT_OBJECT_CRATE_SPAWNS,
     road: {
       model: 'models/ds_mario_circuit_road.glb',
       drag: 0,
@@ -371,6 +410,7 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     label: 'stadium',
     transform: stadiumTransform,
     spawnSlots: STADIUM_SPAWN_SLOTS,
+    objectCrateSpawns: STADIUM_OBJECT_CRATE_SPAWNS,
     road: {
       model: 'models/stadium_road.glb',
       drag: 0,
@@ -443,6 +483,7 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     label: 'DS super_bell_subway Ridge',
     transform: subwayTransform,
     spawnSlots: SUBWAY_SPAWN_SLOTS,
+    objectCrateSpawns: SUBWAY_OBJECT_CRATE_SPAWNS,
     road: {
       model: 'models/super_bell_subway_road.glb',
       drag: 0,
@@ -501,6 +542,7 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
     label: 'N64 Kalimari Desert',
     transform: kalimariDesertTransform,
     spawnSlots: KALIMARI_DESERT_SPAWN_SLOTS,
+    objectCrateSpawns: KALIMARI_DESERT_OBJECT_CRATE_SPAWNS,
     road: {
       model: 'models/kalimari_desert_road.glb',
       drag: 0,
