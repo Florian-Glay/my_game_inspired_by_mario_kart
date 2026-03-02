@@ -1,0 +1,162 @@
+import bpy
+import os
+import mathutils
+
+# =========================
+# CONFIG
+# =========================
+EXPORT_FILENAME = "peach_baked_pose.glb"
+EXPORT_SELECTED_ONLY = True
+BAKED_COLLECTION_NAME = "__BAKED_EXPORT__"
+
+# Si True: applique la matrix monde dans la géométrie (et remet transforms à 0)
+APPLY_WORLD_MATRIX_TO_MESH = True
+
+
+# =========================
+# HELPERS
+# =========================
+def find_armature_from_selection():
+    for o in bpy.context.selected_objects:
+        if o.type == "ARMATURE":
+            return o
+
+    for o in bpy.context.selected_objects:
+        if o.type == "MESH":
+            if o.parent and o.parent.type == "ARMATURE":
+                return o.parent
+            for m in o.modifiers:
+                if m.type == "ARMATURE" and m.object:
+                    return m.object
+
+    a = bpy.context.view_layer.objects.active
+    if a and a.type == "ARMATURE":
+        return a
+
+    for o in bpy.context.scene.objects:
+        if o.type == "ARMATURE":
+            return o
+    return None
+
+def meshes_deformed_by_armature(arm):
+    meshes = []
+    for o in bpy.context.scene.objects:
+        if o.type != "MESH":
+            continue
+        if o.parent == arm:
+            meshes.append(o)
+            continue
+        for m in o.modifiers:
+            if m.type == "ARMATURE" and m.object == arm:
+                meshes.append(o)
+                break
+    # dédoublonne
+    out, seen = [], set()
+    for m in meshes:
+        if m.name not in seen:
+            out.append(m)
+            seen.add(m.name)
+    return out
+
+def ensure_collection(name):
+    col = bpy.data.collections.get(name)
+    if col is None:
+        col = bpy.data.collections.new(name)
+        bpy.context.scene.collection.children.link(col)
+    return col
+
+def clear_collection_objects(col):
+    for obj in list(col.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+def bake_mesh_datablock(obj, depsgraph):
+    """
+    Retourne un nouveau Mesh datablock contenant la géométrie évaluée (modifiers + skinning),
+    compatible Blender versions diverses.
+    """
+    eval_obj = obj.evaluated_get(depsgraph)
+
+    # Voie 1 (souvent la meilleure) : new_from_object si dispo
+    new_from_object = getattr(bpy.data.meshes, "new_from_object", None)
+    if callable(new_from_object):
+        try:
+            baked = new_from_object(eval_obj, depsgraph=depsgraph, preserve_all_data_layers=True)
+            return baked
+        except TypeError:
+            # Certaines versions n'acceptent pas preserve_all_data_layers
+            baked = new_from_object(eval_obj, depsgraph=depsgraph)
+            return baked
+
+    # Voie 2 (fallback) : to_mesh puis copy (et clear)
+    tmp = eval_obj.to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
+    baked = tmp.copy()
+    eval_obj.to_mesh_clear()
+    return baked
+
+def bake_mesh_object(obj, depsgraph, target_collection):
+    baked_mesh = bake_mesh_datablock(obj, depsgraph)
+    baked_mesh.name = obj.name + "__BAKED_MESH__"
+
+    baked_obj = bpy.data.objects.new(obj.name + "__BAKED__", baked_mesh)
+
+    # placer au même endroit
+    baked_obj.matrix_world = obj.matrix_world.copy()
+
+    # recopier les matériaux
+    baked_mesh.materials.clear()
+    for slot in obj.material_slots:
+        baked_mesh.materials.append(slot.material)
+
+    # option: figer la world matrix dans la géométrie
+    if APPLY_WORLD_MATRIX_TO_MESH:
+        baked_mesh.transform(baked_obj.matrix_world)
+        baked_obj.matrix_world = mathutils.Matrix.Identity(4)
+
+    target_collection.objects.link(baked_obj)
+    return baked_obj
+
+def export_glb(filepath, export_selected=True):
+    bpy.ops.export_scene.gltf(
+        filepath=filepath,
+        export_format="GLB",
+        use_selection=export_selected,
+        export_apply=True,
+        export_yup=True,
+        export_animations=False  # statique
+    )
+
+# =========================
+# MAIN
+# =========================
+def main():
+    arm = find_armature_from_selection()
+    if not arm:
+        raise RuntimeError("Aucune armature trouvée. Sélectionne l’armature ou un mesh du personnage puis relance.")
+
+    meshes = meshes_deformed_by_armature(arm)
+    if not meshes:
+        raise RuntimeError("Aucun mesh skinné trouvé pour cette armature.")
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+
+    col = ensure_collection(BAKED_COLLECTION_NAME)
+    clear_collection_objects(col)
+
+    baked_objs = [bake_mesh_object(m, depsgraph, col) for m in meshes]
+
+    # sélectionner uniquement les baked pour export
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in baked_objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = baked_objs[0]
+
+    blend_path = bpy.data.filepath
+    out_dir = os.path.dirname(blend_path) if blend_path else bpy.path.abspath("//")
+    out_path = os.path.join(out_dir, EXPORT_FILENAME)
+
+    export_glb(out_path, export_selected=EXPORT_SELECTED_ONLY)
+
+    print("✅ GLB exporté :", out_path)
+    print("📦 Objets baked dans la collection :", BAKED_COLLECTION_NAME)
+
+main()

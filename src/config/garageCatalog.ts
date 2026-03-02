@@ -61,6 +61,7 @@ const DEFAULT_WHEEL_MODEL = 'models/exemple_wheel.glb';
 // Le changement d'index dans le menu pointe vers l'element correspondant de ces listes.
 export const CHARACTER_MODEL_LIST = [
   'models/mario.glb',
+  'models/peach.glb'
 ] as const;
 
 export const VEHICLE_MODEL_LIST = [
@@ -77,30 +78,30 @@ export const WHEEL_MODEL_LIST = [
 // Chaque index correspond a l'index de l'element dans sa liste.
 export const CHARACTER_THUMBNAIL_LIST = [
   'ui/select/character/mario.png',
-  'ui/100cc.png',
+  'ui/select/character/peach.png',
   'ui/150cc.png',
   'ui/200cc.png',
 ] as const;
 
 export const VEHICLE_THUMBNAIL_LIST = [
-  'ui/50cc.png',
-  'ui/100cc.png',
+  'ui/select/kart/exemple.png',
+  'ui/select/kart/StandardKartBodyMK8.png',
   'ui/150cc.png',
   'ui/200cc.png',
 ] as const;
 
 export const WHEEL_THUMBNAIL_LIST = [
-  'ui/grand-prix/badges/mushroom_cup.png',
-  'ui/grand-prix/badges/flower_cup.png',
+  'ui/select/wheel/exemple_wheel.png',
+  'ui/select/wheel/StandardTiresMK8.png',
   'ui/grand-prix/badges/star_cup.png',
   'ui/grand-prix/badges/special_cup.png',
 ] as const;
 
-const CHARACTER_SCALE: Vec3 = [2, 2, 2];
+const CHARACTER_SCALE: Vec3 = [1, 1, 1];
 const VEHICLE_SCALE: Vec3 = [1, 1, 1];
 const WHEEL_SCALE: Vec3 = [1, 1, 1];
 
-const DEFAULT_CHARACTER_MOUNT: Vec3 = [0, -0.3, -0.6];
+const DEFAULT_CHARACTER_MOUNT: Vec3 = [0, 0, 0];
 const DEFAULT_WHEEL_MOUNTS: WheelMounts = [
   [-0.92, 0.3, 0.55],
   [0.92, 0.3, 0.55],
