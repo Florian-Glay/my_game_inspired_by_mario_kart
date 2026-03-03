@@ -369,6 +369,47 @@ const OBJECT_CRATE_MODEL_PATH = 'models/item_box.glb';
 const OBJECT_CRATE_RESPAWN_MS = 10_000;
 const OBJECT_ITEM_MIN_VALUE = 1;
 const OBJECT_ITEM_MAX_VALUE = 13;
+const OBJECT_MUSHROOM_VALUE = 2;
+const OBJECT_THUNDER_VALUE = 10;
+const OBJECT_THUNDER_ELIGIBLE_MIN_POSITION = 10;
+const OBJECT_THUNDER_BASE_DURATION_SECONDS = 10;
+const OBJECT_BULLET_BILL_VALUE = 11;
+const OBJECT_BULLET_BILL_ELIGIBLE_MIN_POSITION = 11;
+const OBJECT_BULLET_BILL_DURATION_SECONDS = 15;
+const OBJECT_COIN_VALUE = 13;
+const PLAYER_COIN_MAX = 10;
+const OBJECT_MUSHROOM_INITIAL_CHARGES = 3;
+const OBJECT_DEFAULT_INITIAL_CHARGES = 1;
+const OBJECT_AVAILABLE_ITEM_VALUES = [
+  1,
+  OBJECT_MUSHROOM_VALUE,
+  OBJECT_THUNDER_VALUE,
+  OBJECT_BULLET_BILL_VALUE,
+  OBJECT_COIN_VALUE,
+] as const;
+const COIN_HUD_ICON_PATH = 'ui/object/objet-13.png';
+const OBJECT_ATTACHABLE_VOID_MODEL_PATH = 'models/void.glb';
+const OBJECT_ATTACHABLE_MUSHROOM_MODEL_PATH = 'models/miniObject/itemMushroom.glb';
+const OBJECT_ATTACHABLE_THUNDER_MODEL_PATH = 'models/miniObject/ItemThunder.glb';
+const OBJECT_ATTACHABLE_BULLET_BILL_MODEL_PATH = 'models/miniObject/itemBulletBill.glb';
+const OBJECT_BULLET_BILL_VEHICLE_MODEL_PATH = 'models/BulletBill.glb';
+const miniObjectModelModules = import.meta.glob('/models/miniObject/*.glb', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
+const OBJECT_ATTACHABLE_MODEL_PATHS = (() => {
+  const discovered = Object.entries(miniObjectModelModules)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, path]) => path)
+    .filter((path): path is string => typeof path === 'string' && path.length > 0);
+
+  if (discovered.length > 0) return discovered;
+  return ['models/miniObject/itemMushroom.glb',
+          'models/miniObject/itemCoin.glb',
+          'models/miniObject/itemBulletBill.glb',
+  ];
+})();
 const DEFAULT_CHARACTER_PORTRAIT_PATH = 'ui/select/character/mario.png';
 const COURSE_POINTS_BY_POSITION = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0] as const;
 const LIVE_SCOREBOARD_FINISH_WAYPOINT_BY_CIRCUIT: Record<CircuitId, number> = {
@@ -514,6 +555,42 @@ function createInitialParticipantObjects(
   }, {});
 }
 
+function createInitialParticipantObjectCharges(
+  participants: RaceConfig['participants'],
+) {
+  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
+    acc[participant.id] = 0;
+    return acc;
+  }, {});
+}
+
+function createInitialParticipantThunderDebuffUntil(
+  participants: RaceConfig['participants'],
+) {
+  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
+    acc[participant.id] = 0;
+    return acc;
+  }, {});
+}
+
+function createInitialParticipantBulletBillUntil(
+  participants: RaceConfig['participants'],
+) {
+  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
+    acc[participant.id] = 0;
+    return acc;
+  }, {});
+}
+
+function createInitialParticipantCoins(
+  participants: RaceConfig['participants'],
+) {
+  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
+    acc[participant.id] = 0;
+    return acc;
+  }, {});
+}
+
 function createObjectCrateActivationMap(spawns: ObjectCrateSpawnEntry[]) {
   return spawns.reduce<Record<string, boolean>>((acc, spawn) => {
     acc[spawn.crateId] = true;
@@ -548,13 +625,52 @@ export function Scene({
     () => createInitialParticipantObjects(raceConfig.participants),
     [raceConfig.participants],
   );
+  const initialParticipantObjectCharges = useMemo(
+    () => createInitialParticipantObjectCharges(raceConfig.participants),
+    [raceConfig.participants],
+  );
+  const initialParticipantThunderDebuffUntil = useMemo(
+    () => createInitialParticipantThunderDebuffUntil(raceConfig.participants),
+    [raceConfig.participants],
+  );
+  const initialParticipantBulletBillUntil = useMemo(
+    () => createInitialParticipantBulletBillUntil(raceConfig.participants),
+    [raceConfig.participants],
+  );
+  const initialParticipantCoins = useMemo(
+    () => createInitialParticipantCoins(raceConfig.participants),
+    [raceConfig.participants],
+  );
   const [lapProgressByPlayer, setLapProgressByPlayer] = useState<Record<RaceParticipantId, PlayerLapProgress>>(
     initialLapProgress,
   );
   const [myObjectByParticipant, setMyObjectByParticipant] = useState<Record<RaceParticipantId, number>>(
     initialParticipantObjects,
   );
+  const [myObjectChargesByParticipant, setMyObjectChargesByParticipant] = useState<
+    Record<RaceParticipantId, number>
+  >(initialParticipantObjectCharges);
+  const [thunderDebuffUntilByParticipant, setThunderDebuffUntilByParticipant] = useState<
+    Record<RaceParticipantId, number>
+  >(initialParticipantThunderDebuffUntil);
+  const [bulletBillUntilByParticipant, setBulletBillUntilByParticipant] = useState<
+    Record<RaceParticipantId, number>
+  >(initialParticipantBulletBillUntil);
+  const [coinsByParticipant, setCoinsByParticipant] = useState<Record<RaceParticipantId, number>>(
+    initialParticipantCoins,
+  );
   const lapProgressRef = useRef<Record<RaceParticipantId, PlayerLapProgress>>(initialLapProgress);
+  const myObjectByParticipantRef = useRef<Record<RaceParticipantId, number>>(initialParticipantObjects);
+  const myObjectChargesByParticipantRef = useRef<Record<RaceParticipantId, number>>(
+    initialParticipantObjectCharges,
+  );
+  const thunderDebuffUntilByParticipantRef = useRef<Record<RaceParticipantId, number>>(
+    initialParticipantThunderDebuffUntil,
+  );
+  const bulletBillUntilByParticipantRef = useRef<Record<RaceParticipantId, number>>(
+    initialParticipantBulletBillUntil,
+  );
+  const coinsByParticipantRef = useRef<Record<RaceParticipantId, number>>(initialParticipantCoins);
   const [courseRanking, setCourseRanking] = useState<CourseRankingEntry[]>([]);
   const [overlayStep, setOverlayStep] = useState<RaceOverlayStep>('none');
   const [controlsLocked, setControlsLocked] = useState(true);
@@ -582,7 +698,17 @@ export function Scene({
   const loadingMascotSrc = `${import.meta.env.BASE_URL}ui/MK8-Line-Yoshi-Singing.gif`;
   const circuitWaypointTransform = circuit.waypoints?.transform ?? circuit.transform;
   const requiredAssetUrls = useMemo(() => {
-    const urls = [circuit.road.model, circuit.ext.model, OBJECT_CRATE_MODEL_PATH];
+    const urls = [
+      circuit.road.model,
+      circuit.ext.model,
+      OBJECT_CRATE_MODEL_PATH,
+      OBJECT_ATTACHABLE_VOID_MODEL_PATH,
+      OBJECT_ATTACHABLE_MUSHROOM_MODEL_PATH,
+      OBJECT_ATTACHABLE_THUNDER_MODEL_PATH,
+      OBJECT_ATTACHABLE_BULLET_BILL_MODEL_PATH,
+      OBJECT_BULLET_BILL_VEHICLE_MODEL_PATH,
+      ...OBJECT_ATTACHABLE_MODEL_PATHS,
+    ];
     if (circuit.antiGravIn?.model) urls.push(circuit.antiGravIn.model);
     if (circuit.antiGravOut?.model) urls.push(circuit.antiGravOut.model);
     if (circuit.booster?.model) urls.push(circuit.booster.model);
@@ -726,6 +852,26 @@ export function Scene({
   }, [initialObjectCrates]);
 
   useEffect(() => {
+    myObjectByParticipantRef.current = myObjectByParticipant;
+  }, [myObjectByParticipant]);
+
+  useEffect(() => {
+    myObjectChargesByParticipantRef.current = myObjectChargesByParticipant;
+  }, [myObjectChargesByParticipant]);
+
+  useEffect(() => {
+    thunderDebuffUntilByParticipantRef.current = thunderDebuffUntilByParticipant;
+  }, [thunderDebuffUntilByParticipant]);
+
+  useEffect(() => {
+    bulletBillUntilByParticipantRef.current = bulletBillUntilByParticipant;
+  }, [bulletBillUntilByParticipant]);
+
+  useEffect(() => {
+    coinsByParticipantRef.current = coinsByParticipant;
+  }, [coinsByParticipant]);
+
+  useEffect(() => {
     lapProgressRef.current = initialLapProgress;
     setLapProgressByPlayer(initialLapProgress);
     setCourseRanking([]);
@@ -735,11 +881,28 @@ export function Scene({
     setMenuBusy(false);
     setLiveScoreboardTick(0);
     setMyObjectByParticipant(initialParticipantObjects);
+    setMyObjectChargesByParticipant(initialParticipantObjectCharges);
+    setThunderDebuffUntilByParticipant(initialParticipantThunderDebuffUntil);
+    setBulletBillUntilByParticipant(initialParticipantBulletBillUntil);
+    setCoinsByParticipant(initialParticipantCoins);
+    myObjectByParticipantRef.current = initialParticipantObjects;
+    myObjectChargesByParticipantRef.current = initialParticipantObjectCharges;
+    thunderDebuffUntilByParticipantRef.current = initialParticipantThunderDebuffUntil;
+    bulletBillUntilByParticipantRef.current = initialParticipantBulletBillUntil;
+    coinsByParticipantRef.current = initialParticipantCoins;
     courseResultSentRef.current = false;
     startCountdownStartedRef.current = false;
     winModeHandledRef.current = false;
     gameMode.current = 'run';
-  }, [initialLapProgress, initialParticipantObjects, raceConfig.courseId]);
+  }, [
+    initialLapProgress,
+    initialParticipantObjectCharges,
+    initialParticipantObjects,
+    initialParticipantBulletBillUntil,
+    initialParticipantCoins,
+    initialParticipantThunderDebuffUntil,
+    raceConfig.courseId,
+  ]);
 
   useEffect(() => {
     if (raceConfig.humanCount > 1 && gameMode.current === 'free') {
@@ -770,47 +933,8 @@ export function Scene({
     [poseRefsByParticipant],
   );
 
-  const handleObjectCrateCollected = useCallback((crateId: string, touch: ObjectCrateTouch) => {
-    setActiveObjectCrates((current) => {
-      if (!current[crateId]) return current;
-      return { ...current, [crateId]: false };
-    });
-
-    setMyObjectByParticipant((current) => {
-      const currentObject = current[touch.participantId] ?? 0;
-      if (currentObject !== 0) return current;
-
-      const randomValue =
-        Math.floor(Math.random() * (OBJECT_ITEM_MAX_VALUE - OBJECT_ITEM_MIN_VALUE + 1)) +
-        OBJECT_ITEM_MIN_VALUE;
-      return {
-        ...current,
-        [touch.participantId]: randomValue,
-      };
-    });
-
-    const existingTimer = objectCrateRespawnTimersRef.current.get(crateId);
-    if (typeof existingTimer === 'number') {
-      window.clearTimeout(existingTimer);
-    }
-
-    const respawnTimer = window.setTimeout(() => {
-      setActiveObjectCrates((current) => {
-        if (current[crateId]) return current;
-        return { ...current, [crateId]: true };
-      });
-      objectCrateRespawnTimersRef.current.delete(crateId);
-    }, OBJECT_CRATE_RESPAWN_MS);
-
-    objectCrateRespawnTimersRef.current.set(crateId, respawnTimer);
-  }, []);
-
-  const handleCircuitWaypointsReady = useCallback((waypoints: BotWaypoint[]) => {
-    setCircuitWaypoints(waypoints);
-  }, []);
-
-  const computeLiveScoreboard = useCallback(
-    (progressByPlayer: Record<RaceParticipantId, PlayerLapProgress>) =>
+  const getLiveScoreboardSnapshot = useCallback(
+    (progressByPlayer: Record<RaceParticipantId, PlayerLapProgress> = lapProgressRef.current) =>
       buildLiveScoreboardEntries({
         participants: raceConfig.participants,
         progressByPlayer,
@@ -830,6 +954,214 @@ export function Scene({
       raceConfig.participants,
       waypointOrderByIndex,
     ],
+  );
+
+  const handleObjectCrateCollected = useCallback((crateId: string, touch: ObjectCrateTouch) => {
+    setActiveObjectCrates((current) => {
+      if (!current[crateId]) return current;
+      return { ...current, [crateId]: false };
+    });
+
+    const currentObject = myObjectByParticipantRef.current[touch.participantId] ?? 0;
+    if (currentObject === 0) {
+      const liveRanking = getLiveScoreboardSnapshot();
+      const nowMs = performance.now();
+      const collectorPosition =
+        liveRanking.find((entry) => entry.participantId === touch.participantId)?.position ??
+        Number.POSITIVE_INFINITY;
+      const thunderAlreadyHeldByAnotherPlayer = Object.entries(myObjectByParticipantRef.current).some(
+        ([participantId, objectValue]) =>
+          participantId !== touch.participantId && objectValue === OBJECT_THUNDER_VALUE,
+      );
+      const bulletBillAlreadyHeldByAnotherPlayer = Object.entries(myObjectByParticipantRef.current).some(
+        ([participantId, objectValue]) =>
+          participantId !== touch.participantId && objectValue === OBJECT_BULLET_BILL_VALUE,
+      );
+      const bulletBillAlreadyActiveByAnyPlayer = Object.values(bulletBillUntilByParticipantRef.current).some(
+        (untilMs) => typeof untilMs === 'number' && untilMs > nowMs,
+      );
+      const availableValues = OBJECT_AVAILABLE_ITEM_VALUES.filter((value) => {
+        if (value === OBJECT_THUNDER_VALUE) {
+          if (!Number.isFinite(collectorPosition)) return false;
+          if (collectorPosition < OBJECT_THUNDER_ELIGIBLE_MIN_POSITION) return false;
+          return !thunderAlreadyHeldByAnotherPlayer;
+        }
+
+        if (value === OBJECT_BULLET_BILL_VALUE) {
+          if (!Number.isFinite(collectorPosition)) return false;
+          if (collectorPosition < OBJECT_BULLET_BILL_ELIGIBLE_MIN_POSITION) return false;
+          return !bulletBillAlreadyHeldByAnotherPlayer && !bulletBillAlreadyActiveByAnyPlayer;
+        }
+
+        return true;
+      });
+      const randomPool = availableValues.length > 0 ? availableValues : [OBJECT_ITEM_MIN_VALUE];
+      const randomValue = randomPool[Math.floor(Math.random() * randomPool.length)] ?? OBJECT_ITEM_MIN_VALUE;
+      const initialObjectCharges =
+        randomValue === OBJECT_MUSHROOM_VALUE ? OBJECT_MUSHROOM_INITIAL_CHARGES
+        : randomValue > 0 ? OBJECT_DEFAULT_INITIAL_CHARGES
+        : 0;
+      myObjectByParticipantRef.current = {
+        ...myObjectByParticipantRef.current,
+        [touch.participantId]: randomValue,
+      };
+      myObjectChargesByParticipantRef.current = {
+        ...myObjectChargesByParticipantRef.current,
+        [touch.participantId]: initialObjectCharges,
+      };
+
+      setMyObjectByParticipant((current) => ({
+        ...current,
+        [touch.participantId]: randomValue,
+      }));
+      setMyObjectChargesByParticipant((current) => ({
+        ...current,
+        [touch.participantId]: initialObjectCharges,
+      }));
+    }
+
+    const existingTimer = objectCrateRespawnTimersRef.current.get(crateId);
+    if (typeof existingTimer === 'number') {
+      window.clearTimeout(existingTimer);
+    }
+
+    const respawnTimer = window.setTimeout(() => {
+      setActiveObjectCrates((current) => {
+        if (current[crateId]) return current;
+        return { ...current, [crateId]: true };
+      });
+      objectCrateRespawnTimersRef.current.delete(crateId);
+    }, OBJECT_CRATE_RESPAWN_MS);
+
+    objectCrateRespawnTimersRef.current.set(crateId, respawnTimer);
+  }, [getLiveScoreboardSnapshot]);
+
+  const handleParticipantObjectUsed = useCallback(
+    (participantId: RaceParticipantId, usedObject: number) => {
+      const normalizedObject = Number.isFinite(usedObject) ? Math.floor(usedObject) : 0;
+      if (normalizedObject === OBJECT_THUNDER_VALUE) {
+        const liveRanking = getLiveScoreboardSnapshot();
+        const sourceEntry = liveRanking.find((entry) => entry.participantId === participantId);
+        if (!sourceEntry) return;
+
+        const nowMs = performance.now();
+        const nextDebuffMap = { ...thunderDebuffUntilByParticipantRef.current };
+        let hasAnyUpdate = false;
+
+        for (const entry of liveRanking) {
+          if (entry.participantId === participantId) continue;
+          if (entry.position >= sourceEntry.position) continue;
+
+          const durationSeconds = OBJECT_THUNDER_BASE_DURATION_SECONDS / Math.max(1, entry.position);
+          const candidateUntilMs = nowMs + durationSeconds * 1000;
+          const currentUntilMs = nextDebuffMap[entry.participantId] ?? 0;
+          if (candidateUntilMs <= currentUntilMs) continue;
+
+          nextDebuffMap[entry.participantId] = candidateUntilMs;
+          hasAnyUpdate = true;
+        }
+
+        if (!hasAnyUpdate) return;
+        thunderDebuffUntilByParticipantRef.current = nextDebuffMap;
+        setThunderDebuffUntilByParticipant(nextDebuffMap);
+        return;
+      }
+
+      if (normalizedObject === OBJECT_BULLET_BILL_VALUE) {
+        const nowMs = performance.now();
+        const nextUntilMs = nowMs + OBJECT_BULLET_BILL_DURATION_SECONDS * 1000;
+        const currentUntilMs = bulletBillUntilByParticipantRef.current[participantId] ?? 0;
+        if (currentUntilMs >= nextUntilMs) return;
+
+        const nextMap = {
+          ...bulletBillUntilByParticipantRef.current,
+          [participantId]: nextUntilMs,
+        };
+        bulletBillUntilByParticipantRef.current = nextMap;
+        setBulletBillUntilByParticipant(nextMap);
+        return;
+      }
+
+      if (normalizedObject === OBJECT_COIN_VALUE) {
+        const currentCoins = coinsByParticipantRef.current[participantId] ?? 0;
+        const nextCoins = Math.min(PLAYER_COIN_MAX, Math.max(0, currentCoins) + 1);
+        if (nextCoins === currentCoins) return;
+
+        const nextMap = {
+          ...coinsByParticipantRef.current,
+          [participantId]: nextCoins,
+        };
+        coinsByParticipantRef.current = nextMap;
+        setCoinsByParticipant(nextMap);
+      }
+    },
+    [getLiveScoreboardSnapshot],
+  );
+
+  const handleParticipantObjectConsumed = useCallback(
+    (participantId: RaceParticipantId, consumedObject: number, consumedUnits = 1) => {
+      const normalizedObject = Number.isFinite(consumedObject) ? Math.floor(consumedObject) : 0;
+      const consumeCount = Number.isFinite(consumedUnits) ? Math.max(1, Math.floor(consumedUnits)) : 1;
+      if (normalizedObject <= 0) return;
+
+      const currentObject = myObjectByParticipantRef.current[participantId] ?? 0;
+      if (currentObject !== normalizedObject) return;
+
+      if (normalizedObject === OBJECT_MUSHROOM_VALUE) {
+        const currentCharges = myObjectChargesByParticipantRef.current[participantId] ?? 0;
+        const nextCharges = Math.max(0, currentCharges - consumeCount);
+        myObjectChargesByParticipantRef.current = {
+          ...myObjectChargesByParticipantRef.current,
+          [participantId]: nextCharges,
+        };
+
+        setMyObjectChargesByParticipant((current) => ({
+          ...current,
+          [participantId]: nextCharges,
+        }));
+
+        if (nextCharges <= 0) {
+          myObjectByParticipantRef.current = {
+            ...myObjectByParticipantRef.current,
+            [participantId]: 0,
+          };
+          setMyObjectByParticipant((current) => ({
+            ...current,
+            [participantId]: 0,
+          }));
+        }
+        return;
+      }
+
+      myObjectByParticipantRef.current = {
+        ...myObjectByParticipantRef.current,
+        [participantId]: 0,
+      };
+      myObjectChargesByParticipantRef.current = {
+        ...myObjectChargesByParticipantRef.current,
+        [participantId]: 0,
+      };
+
+      setMyObjectByParticipant((current) => ({
+        ...current,
+        [participantId]: 0,
+      }));
+      setMyObjectChargesByParticipant((current) => ({
+        ...current,
+        [participantId]: 0,
+      }));
+    },
+    [],
+  );
+
+  const handleCircuitWaypointsReady = useCallback((waypoints: BotWaypoint[]) => {
+    setCircuitWaypoints(waypoints);
+  }, []);
+
+  const computeLiveScoreboard = useCallback(
+    (progressByPlayer: Record<RaceParticipantId, PlayerLapProgress>) =>
+      getLiveScoreboardSnapshot(progressByPlayer),
+    [getLiveScoreboardSnapshot],
   );
 
   const finalizeCourse = useCallback(
@@ -1015,6 +1347,12 @@ export function Scene({
     hudParticipantId ? (myObjectByParticipant[hudParticipantId] ?? 0) : 0;
   const hudObjectIconSrc =
     hudMyObject > 0 ? `${import.meta.env.BASE_URL}ui/object/objet-${hudMyObject}.png` : null;
+  const coinHudIconSrc = `${import.meta.env.BASE_URL}${COIN_HUD_ICON_PATH}`;
+  const humanCoinHudEntries = humanParticipants.map((participant) => ({
+    participantId: participant.id,
+    displayName: participant.displayName,
+    coins: Math.min(PLAYER_COIN_MAX, Math.max(0, coinsByParticipant[participant.id] ?? 0)),
+  }));
 
   useEffect(() => {
     if (!sceneReady || isLoadingOverlayActive || overlayStep !== 'none') return;
@@ -1128,6 +1466,27 @@ export function Scene({
           ) : (
             <div className="h-[84%] w-[84%] rounded-full border border-white/35 bg-black/30" aria-hidden />
           )}
+        </div>
+      ) : null}
+
+      {sceneReady && !isLoadingOverlayActive && humanCoinHudEntries.length > 0 ? (
+        <div className="pointer-events-none absolute bottom-4 right-4 z-42 flex flex-col items-end gap-2">
+          {humanCoinHudEntries.map((entry) => (
+            <div
+              key={`coin-hud-${entry.participantId}`}
+              className="flex items-center gap-2 rounded-full border border-white/60 bg-black/40 px-2 py-1 text-white shadow-[0_8px_20px_rgba(0,0,0,0.4)] backdrop-blur-sm"
+            >
+              <span className="max-w-[6.4rem] truncate text-[10px] font-semibold uppercase tracking-wider text-white/85">
+                {entry.displayName}
+              </span>
+              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/70 bg-black/45">
+                <img src={coinHudIconSrc} alt="" aria-hidden className="h-[78%] w-[78%] rounded-full object-cover" />
+              </div>
+              <span className="min-w-13 text-right text-sm font-black tracking-wide">
+                {entry.coins}/10
+              </span>
+            </div>
+          ))}
         </div>
       ) : null}
 
@@ -1545,6 +1904,14 @@ export function Scene({
                 antiGravSwitchesEnabled={Boolean(circuit.antiGravIn || circuit.antiGravOut)}
                 booster={circuit.booster}
                 myObject={myObjectByParticipant[participant.id] ?? 0}
+                myObjectCharges={myObjectChargesByParticipant[participant.id] ?? 0}
+                coinCount={coinsByParticipant[participant.id] ?? 0}
+                thunderDebuffUntilTimestampMs={thunderDebuffUntilByParticipant[participant.id] ?? 0}
+                bulletBillUntilTimestampMs={bulletBillUntilByParticipant[participant.id] ?? 0}
+                objectItemMaxValue={OBJECT_ITEM_MAX_VALUE}
+                miniObjectModelPaths={OBJECT_ATTACHABLE_MODEL_PATHS}
+                onObjectUsed={handleParticipantObjectUsed}
+                onObjectConsumed={handleParticipantObjectConsumed}
               />
             ))}
 

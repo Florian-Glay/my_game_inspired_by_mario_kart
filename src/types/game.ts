@@ -46,6 +46,7 @@ export type KeyBindings = {
   back: string[];
   left: string[];
   right: string[];
+  useObject?: string[];
 };
 
 export type CarPose = {

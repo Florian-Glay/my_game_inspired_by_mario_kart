@@ -183,24 +183,28 @@ export const PLAYER_KEY_BINDINGS: Record<HumanPlayerSlotId, KeyBindings> = {
     back: ['s', 'arrowdown'],
     left: ['q', 'a', 'arrowleft'],
     right: ['d', 'arrowright'],
+    useObject: ['e'],
   },
   p2: {
     forward: ['arrowup'],
     back: ['arrowdown'],
     left: ['arrowleft'],
     right: ['arrowright'],
+    useObject: ['shift'],
   },
   p3: {
     forward: ['i'],
     back: ['k'],
     left: ['j'],
     right: ['l'],
+    useObject: ['o'],
   },
   p4: {
     forward: ['numpad8', '8'],
     back: ['numpad5', '5'],
     left: ['numpad4', '4'],
     right: ['numpad6', '6'],
+    useObject: ['numpad7', '7'],
   },
 };
 
@@ -319,11 +323,11 @@ const KALIMARI_DESERT_SPAWN_SLOTS: SpawnSlot[] = [
   { position: [219.668, 9.84, -157.23], rotation: [0, -3.117, 0] },
 ];
 
-const DS_MARIO_CIRCUIT_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
+const DS_MARIO_CIRCUIT_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [/*
   { position: [174.9, -47.8, -98.2], rotation: [0, 0, 0] },
   { position: [165.1, -47.8, -94.4], rotation: [0, 0, 0] },
   { position: [153.4, -47.8, -100.8], rotation: [0, 0, 0] },
-  { position: [141.2, -47.8, -97.8], rotation: [0, 0, 0] },
+  { position: [141.2, -47.8, -97.8], rotation: [0, 0, 0] },*/
   { position: [130.8, -47.8, -94.1], rotation: [0, 0, 0] },
 ];
 

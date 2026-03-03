@@ -421,6 +421,14 @@ export function App() {
       for (const slot of humanSlots) {
         const loadout = humanLoadoutsBySlot[slot];
         if (!loadout) return null;
+        const defaultKeyBindings = PLAYER_KEY_BINDINGS[slot];
+        const resolvedKeyBindings =
+          mode === 'solo' && slot === 'p1' ?
+            {
+              ...defaultKeyBindings,
+              useObject: [' '],
+            }
+          : defaultKeyBindings;
 
         const character = getCatalogItemById(CHARACTERS, loadout.characterId);
         const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
@@ -446,7 +454,7 @@ export function App() {
           driverLift: wheelProfile.driverLift,
           spawn: [0, 0, 0],
           spawnRotation: [0, 0, 0],
-          keyBindings: PLAYER_KEY_BINDINGS[slot],
+          keyBindings: resolvedKeyBindings,
         });
       }
 

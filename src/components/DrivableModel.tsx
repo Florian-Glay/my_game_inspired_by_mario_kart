@@ -39,6 +39,7 @@ import type {
   ParticipantControlMode,
   RaceParticipantId,
 } from '../types/game';
+import { AttachableObject } from './AttachableObject';
 
 type Vec3 = [number, number, number];
 type RapierVec = { x: number; y: number; z: number };
@@ -97,6 +98,18 @@ type Props = {
   participantId?: RaceParticipantId;
   participantName?: string;
   myObject?: number;
+  myObjectCharges?: number;
+  coinCount?: number;
+  thunderDebuffUntilTimestampMs?: number;
+  bulletBillUntilTimestampMs?: number;
+  objectItemMaxValue?: number;
+  miniObjectModelPaths?: readonly string[];
+  onObjectUsed?: (participantId: RaceParticipantId, usedObject: number) => void;
+  onObjectConsumed?: (
+    participantId: RaceParticipantId,
+    consumedObject: number,
+    consumedUnits?: number
+  ) => void;
   controlsLocked?: boolean;
   startCountdownValue?: number | null;
   onLapTrigger?: (
@@ -182,6 +195,7 @@ const DEFAULT_KEY_BINDINGS: KeyBindings = {
   back: ['s', 'arrowdown'],
   left: ['q', 'a', 'arrowleft'],
   right: ['d', 'arrowright'],
+  useObject: ['e'],
 };
 
 const DEFAULT_CHARACTER_MOUNT: Vec3 = [0, 0.5, 0];
@@ -211,6 +225,19 @@ const DEFAULT_BOOSTER: Required<Pick<BoosterConfig, 'duration' | 'strength'>> = 
   duration: 1,
   strength: 2,
 };
+const DEFAULT_OBJECT_ITEM_MAX_VALUE = 13;
+const OBJECT_1_BOOST_STRENGTH = 2;
+const OBJECT_1_BOOST_DURATION_MS = 1500;
+const OBJECT_2_BOOST_STRENGTH = 2;
+const OBJECT_2_BOOST_DURATION_MS = 1500;
+const OBJECT_10_THUNDER_VALUE = 10;
+const OBJECT_11_BULLET_BILL_VALUE = 11;
+const OBJECT_13_COIN_VALUE = 13;
+const PLAYER_COIN_MAX = 10;
+const MAX_COIN_SPEED_MULTIPLIER = 1.2;
+const BULLET_BILL_SPEED_MULTIPLIER = 2;
+const THUNDER_DEBUFF_SIZE_MULTIPLIER = 0.5;
+const THUNDER_DEBUFF_SPEED_MULTIPLIER = 1 / 1.5;
 const BOOSTER_RETRIGGER_COOLDOWN_MS = 150;
 const START_BOOST_CHARGE_FROM_COUNTDOWN = 2;
 const START_BOOST_MAX_CHARGE_MS = 2000;
@@ -278,6 +305,14 @@ export default function DrivableModel({
   participantId = 'participant-1',
   participantName = participantId,
   myObject = 0,
+  myObjectCharges = 0,
+  coinCount = 0,
+  thunderDebuffUntilTimestampMs = 0,
+  bulletBillUntilTimestampMs = 0,
+  objectItemMaxValue = DEFAULT_OBJECT_ITEM_MAX_VALUE,
+  miniObjectModelPaths = [],
+  onObjectUsed,
+  onObjectConsumed,
   controlsLocked = false,
   startCountdownValue = null,
   onLapTrigger,
@@ -294,6 +329,9 @@ export default function DrivableModel({
   const { scene: characterScene } = useGLTF(characterModel) as unknown as { scene: Group };
   const { scene: wheelScene } = useGLTF(wheelModel) as unknown as { scene: Group };
   const { scene: lakituScene } = useGLTF('models/lakitu.glb') as unknown as { scene: Group };
+  const { scene: bulletBillScene } = useGLTF('models/BulletBill.glb') as unknown as {
+    scene: Group;
+  };
   const vehicleCloned = useMemo(() => SkeletonUtils.clone(vehicleScene) as Group, [vehicleScene]);
   const characterCloned = useMemo(
     () => SkeletonUtils.clone(characterScene) as Group,
@@ -304,12 +342,14 @@ export default function DrivableModel({
     [wheelScene],
   );
   const lakituCloned = useMemo(() => SkeletonUtils.clone(lakituScene) as Group, [lakituScene]);
+  const bulletBillCloned = useMemo(() => SkeletonUtils.clone(bulletBillScene) as Group, [bulletBillScene]);
   const bodyRef = useRef<RapierRigidBody | null>(null);
   const colliderRef = useRef<RapierCollider | null>(null);
   const controllerRef = useRef<KinematicController | null>(null);
 
   // keyboard state
   const keysRef = useRef({ forward: false, back: false, left: false, right: false });
+  const useObjectPressedRef = useRef(false);
 
   const bindingSets = useMemo(
     () => ({
@@ -317,8 +357,9 @@ export default function DrivableModel({
       back: new Set(keyBindings.back.map((key) => key.toLowerCase())),
       left: new Set(keyBindings.left.map((key) => key.toLowerCase())),
       right: new Set(keyBindings.right.map((key) => key.toLowerCase())),
+      useObject: new Set((keyBindings.useObject ?? DEFAULT_KEY_BINDINGS.useObject ?? []).map((key) => key.toLowerCase())),
     }),
-    [keyBindings.back, keyBindings.forward, keyBindings.left, keyBindings.right],
+    [keyBindings.back, keyBindings.forward, keyBindings.left, keyBindings.right, keyBindings.useObject],
   );
 
   // kinematic controller state
@@ -366,6 +407,9 @@ export default function DrivableModel({
   const rescueTargetQuatRef = useRef(new Quaternion());
   const lakituGroupRef = useRef<Group | null>(null);
   const visualRootRef = useRef<Group | null>(null);
+  const normalVehicleVisualRef = useRef<Group | null>(null);
+  const bulletBillVisualRef = useRef<Group | null>(null);
+  const bulletBillWasActiveRef = useRef(false);
   const poseAnchorRef = useRef<Group | null>(null);
   const lakituFadeRef = useRef(0);
   const lakituVisibleTargetRef = useRef(false);
@@ -457,13 +501,33 @@ export default function DrivableModel({
     [rapier],
   );
   const shouldShowVehicleColliderDebug = PERF_PROFILE.debugVehicleCollider;
+  const normalizedMyObject = useMemo(
+    () => (Number.isFinite(myObject) ? Math.max(0, Math.floor(myObject)) : 0),
+    [myObject],
+  );
+  const normalizedMyObjectCharges = useMemo(
+    () => (Number.isFinite(myObjectCharges) ? Math.max(0, Math.floor(myObjectCharges)) : 0),
+    [myObjectCharges],
+  );
+  const normalizedCoinCount = useMemo(() => {
+    if (!Number.isFinite(coinCount)) return 0;
+    return clamp(Math.floor(coinCount), 0, PLAYER_COIN_MAX);
+  }, [coinCount]);
+  const normalizedMyObjectRef = useRef(normalizedMyObject);
+  const normalizedMyObjectChargesRef = useRef(normalizedMyObjectCharges);
+  useEffect(() => {
+    normalizedMyObjectRef.current = normalizedMyObject;
+  }, [normalizedMyObject]);
+  useEffect(() => {
+    normalizedMyObjectChargesRef.current = normalizedMyObjectCharges;
+  }, [normalizedMyObjectCharges]);
   const vehicleColliderUserData = useMemo(
     () => ({
       participantId,
       participantName,
-      myObject: Number.isFinite(myObject) ? Math.max(0, Math.floor(myObject)) : 0,
+      myObject: normalizedMyObject,
     }),
-    [myObject, participantId, participantName],
+    [normalizedMyObject, participantId, participantName],
   );
 
   const surfaceAttachmentSettings = useMemo(() => {
@@ -572,6 +636,12 @@ export default function DrivableModel({
     ],
     [chassisLift, colliderFit.colliderOffset],
   );
+  const attachableObjectMount = useMemo<Vec3>(
+    () => [0, 0.5, -(colliderFit.halfExtents[2] + 1)],
+    [colliderFit.halfExtents],
+  );
+  const attachableObjectScale = useMemo<Vec3>(() => [0.65, 0.65, 0.65], []);
+  const bulletBillVisualScale = useMemo<Vec3>(() => [1, 1, 1], []);
   const publishedPoseRef = useRef<CarPose>({
     x: spawnPosition[0],
     y: spawnPosition[1],
@@ -986,6 +1056,47 @@ export default function DrivableModel({
     if (source === 'steer-normal') {
       scheduleFlameTrail('blue', resolvedDurationMs);
     }
+  };
+
+  const tryUseHeldObject = () => {
+    const currentObject = normalizedMyObjectRef.current;
+    if (currentObject <= 0) return;
+    if (currentObject > objectItemMaxValue) return;
+
+    if (currentObject === 1) {
+      activateBoost(OBJECT_1_BOOST_STRENGTH, OBJECT_1_BOOST_DURATION_MS);
+      onObjectConsumed?.(participantId, currentObject);
+      return;
+    }
+
+    if (currentObject === 2) {
+      const currentCharges = normalizedMyObjectChargesRef.current;
+      if (currentCharges <= 0) return;
+
+      activateBoost(OBJECT_2_BOOST_STRENGTH, OBJECT_2_BOOST_DURATION_MS);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return;
+    }
+
+    if (currentObject === OBJECT_10_THUNDER_VALUE) {
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return;
+    }
+
+    if (currentObject === OBJECT_11_BULLET_BILL_VALUE) {
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return;
+    }
+
+    if (currentObject === OBJECT_13_COIN_VALUE) {
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return;
+    }
+
+    console.log(`[object][${participantId}] objet ${currentObject} recupere mais fonctionnalite non implementee.`);
   };
 
   const resolveSteeringDirectionFromKey = (key: string): SteeringChargeDirection | null => {
@@ -1451,7 +1562,8 @@ export default function DrivableModel({
     applyShadows(vehicleCloned);
     applyShadows(characterCloned);
     wheelObjects.forEach((wheelObject) => applyShadows(wheelObject));
-  }, [characterCloned, controlMode, vehicleCloned, wheelObjects]);
+    applyShadows(bulletBillCloned);
+  }, [bulletBillCloned, characterCloned, controlMode, vehicleCloned, wheelObjects]);
 
   useEffect(() => {
     const enableLakituShadows = controlMode === 'human';
@@ -1638,6 +1750,7 @@ export default function DrivableModel({
     resetSteerCharge();
     clearFlameTrail();
     lapTriggerDebounceRef.current.clear();
+    bulletBillWasActiveRef.current = false;
     speedRef.current = 0;
     verticalVelRef.current = 0;
     attachmentStateRef.current = 'detached';
@@ -1689,6 +1802,14 @@ export default function DrivableModel({
     if (visualRoot) {
       visualRoot.position.set(visualRootPosition[0], visualRootPosition[1], visualRootPosition[2]);
     }
+    const normalVehicleVisual = normalVehicleVisualRef.current;
+    if (normalVehicleVisual) {
+      normalVehicleVisual.visible = true;
+    }
+    const bulletBillVisual = bulletBillVisualRef.current;
+    if (bulletBillVisual) {
+      bulletBillVisual.visible = false;
+    }
   }, [antiGravSwitchesEnabled, initialRotation, spawnPosition, visualRootPosition]);
 
   useEffect(() => {
@@ -1719,6 +1840,7 @@ export default function DrivableModel({
       keysRef.current.back = false;
       keysRef.current.left = false;
       keysRef.current.right = false;
+      useObjectPressedRef.current = false;
       releaseSteerCharge({
         nowMs: performance.now(),
         triggerBoost: false,
@@ -1743,6 +1865,15 @@ export default function DrivableModel({
       }
 
       const normalizedKey = e.key.toLowerCase();
+      if (bindingSets.useObject.has(normalizedKey)) {
+        if (useObjectPressedRef.current || e.repeat) return;
+        useObjectPressedRef.current = true;
+        if (!controlsLocked) {
+          tryUseHeldObject();
+        }
+        return;
+      }
+
       if (controlsLocked) {
         if (canChargeStartBoost() && bindingSets.forward.has(normalizedKey)) {
           keysRef.current.forward = true;
@@ -1781,6 +1912,11 @@ export default function DrivableModel({
       }
 
       const normalizedKey = e.key.toLowerCase();
+      if (bindingSets.useObject.has(normalizedKey)) {
+        useObjectPressedRef.current = false;
+        return;
+      }
+
       if (controlsLocked) {
         if (canChargeStartBoost() && bindingSets.forward.has(normalizedKey)) {
           keysRef.current.forward = false;
@@ -1876,9 +2012,32 @@ export default function DrivableModel({
     const dtClamped = Math.min(dt, 0.05);
 
     const nowMs = performance.now();
+    const bulletBillActive = nowMs < bulletBillUntilTimestampMs;
+    const thunderDebuffActive = nowMs < thunderDebuffUntilTimestampMs;
+    const thunderSpeedMultiplier =
+      thunderDebuffActive ? THUNDER_DEBUFF_SPEED_MULTIPLIER : 1;
+    const bulletBillSpeedMultiplier =
+      bulletBillActive ? BULLET_BILL_SPEED_MULTIPLIER : 1;
+    const coinSpeedMultiplier =
+      1 + ((MAX_COIN_SPEED_MULTIPLIER - 1) * normalizedCoinCount) / PLAYER_COIN_MAX;
+    const activeSpeedMultiplier =
+      thunderSpeedMultiplier * bulletBillSpeedMultiplier * coinSpeedMultiplier;
+    const effectiveControlMode: ParticipantControlMode =
+      bulletBillActive ? 'autopilot' : controlMode;
+    if (bulletBillWasActiveRef.current && !bulletBillActive) {
+      keysRef.current.forward = false;
+      keysRef.current.back = false;
+      keysRef.current.left = false;
+      keysRef.current.right = false;
+      releaseSteerCharge({
+        nowMs,
+        triggerBoost: false,
+      });
+    }
+    bulletBillWasActiveRef.current = bulletBillActive;
     const tCurrent = body.translation();
 
-    if (controlMode === 'autopilot') {
+    if (effectiveControlMode === 'autopilot') {
       const autopilotInput = computeBotAutopilotInput({
         participantId,
         pose: {
@@ -2284,12 +2443,14 @@ export default function DrivableModel({
 
     // Speed control (simple, stable)
     const activeBoostStrength = boostActive ? Math.max(1, boostStrengthRef.current) : 1;
-    const forwardLimit = Math.max(0.1, maxForward) * activeBoostStrength;
-    const backwardLimit = -Math.max(0.1, maxBackward);
+    const effectiveMaxForward = Math.max(0.1, maxForward) * activeSpeedMultiplier;
+    const effectiveMaxBackward = Math.max(0.1, maxBackward) * activeSpeedMultiplier;
+    const forwardLimit = effectiveMaxForward * activeBoostStrength;
+    const backwardLimit = -effectiveMaxBackward;
     const steerInput = steer;
 
     if (boostActive) {
-      const minimumBoostSpeed = Math.max(0.1, maxForward) * activeBoostStrength;
+      const minimumBoostSpeed = effectiveMaxForward * activeBoostStrength;
       speedRef.current = Math.max(speedRef.current, minimumBoostSpeed);
     } else if (throttle !== 0) speedRef.current += throttle * ACCEL * dtClamped;
     else {
@@ -2307,7 +2468,7 @@ export default function DrivableModel({
       if (Math.abs(speedRef.current) < 0.01) speedRef.current = 0;
     }
 
-    const steeringForwardLimit = Math.max(0.1, maxForward);
+    const steeringForwardLimit = effectiveMaxForward;
     const speedFactor = clamp(Math.abs(speedRef.current) / steeringForwardLimit, 0.2, 1.0);
     const steerYawRate = maxYawRate + (steerChargeActive ? STEER_CHARGE_TURN_RATE_BONUS : 0);
     const steerAngle = steerInput * steerYawRate * dtClamped * (speedRef.current >= 0 ? 1 : -1) * speedFactor;
@@ -2617,11 +2778,26 @@ export default function DrivableModel({
 
       smoothedVisualBodyYRef.current = smoothedBodyY;
       const visualStepLag = clamp(smoothedBodyY - targetBodyY, -VISUAL_STEP_MAX_LAG, VISUAL_STEP_MAX_LAG);
+      const nowMs = performance.now();
+      const thunderDebuffActive = nowMs < thunderDebuffUntilTimestampMs;
+      const bulletBillActive = nowMs < bulletBillUntilTimestampMs;
+      const visualScaleMultiplier =
+        thunderDebuffActive ? THUNDER_DEBUFF_SIZE_MULTIPLIER : 1;
+      visualRoot.scale.set(visualScaleMultiplier, visualScaleMultiplier, visualScaleMultiplier);
       visualRoot.position.set(
         visualRootPosition[0],
         visualRootPosition[1] + visualStepLag,
         visualRootPosition[2],
       );
+
+      const normalVehicleVisual = normalVehicleVisualRef.current;
+      if (normalVehicleVisual) {
+        normalVehicleVisual.visible = !bulletBillActive;
+      }
+      const bulletBillVisual = bulletBillVisualRef.current;
+      if (bulletBillVisual) {
+        bulletBillVisual.visible = bulletBillActive;
+      }
     }
   });
 
@@ -2666,19 +2842,32 @@ export default function DrivableModel({
         ) : null}
         <group ref={poseAnchorRef} />
         <group ref={visualRootRef} position={visualRootPosition}>
-          <primitive object={vehicleCloned} scale={vehicleScale} />
-          <group position={characterMountWithLift}>
-            <primitive object={characterCloned} scale={characterScale} />
-          </group>
-          {effectiveWheelMounts.map((mount, index) => (
-            <group
-              key={`wheel-instance-${index}`}
-              position={mount}
-              rotation={getWheelRotationForMount(mount)}
-            >
-              <primitive object={wheelObjects[index]} scale={wheelScale} />
+          <group ref={normalVehicleVisualRef}>
+            <primitive object={vehicleCloned} scale={vehicleScale} />
+            <group position={characterMountWithLift}>
+              <primitive object={characterCloned} scale={characterScale} />
             </group>
-          ))}
+            {effectiveWheelMounts.map((mount, index) => (
+              <group
+                key={`wheel-instance-${index}`}
+                position={mount}
+                rotation={getWheelRotationForMount(mount)}
+              >
+                <primitive object={wheelObjects[index]} scale={wheelScale} />
+              </group>
+            ))}
+            <AttachableObject
+              myObject={normalizedMyObject}
+              myObjectCharges={normalizedMyObjectCharges}
+              miniObjectModelPaths={miniObjectModelPaths}
+              objectItemMaxValue={objectItemMaxValue}
+              position={attachableObjectMount}
+              scale={attachableObjectScale}
+            />
+          </group>
+          <group ref={bulletBillVisualRef} visible={false}>
+            <primitive object={bulletBillCloned} scale={bulletBillVisualScale} />
+          </group>
         </group>
       </RigidBody>
       <group ref={lakituGroupRef} visible={false} scale={[0, 0, 0]}>
@@ -2702,4 +2891,5 @@ export default function DrivableModel({
 
 // required by drei loader typings (preload helper)
 useGLTF.preload('models/lakitu.glb');
+useGLTF.preload('models/BulletBill.glb');
 export const preloadDrivable = (url: string) => useGLTF.preload(url);
