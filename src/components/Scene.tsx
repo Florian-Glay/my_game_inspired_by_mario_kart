@@ -262,6 +262,12 @@ type ObjectCrateSpawnEntry = {
   rotation: [number, number, number];
 };
 
+type TrackCoinSpawnEntry = {
+  coinId: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+};
+
 function MovingClouds() {
   const rootRef = useRef<Group | null>(null);
   const cloudSeeds = useMemo<CloudSeed[]>(
@@ -367,6 +373,9 @@ const LIVE_SCOREBOARD_REFRESH_MS = 280;
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 const OBJECT_CRATE_MODEL_PATH = 'models/item_box.glb';
 const OBJECT_CRATE_RESPAWN_MS = 10_000;
+const TRACK_COIN_MODEL_PATH = 'models/miniObject/itemCoin.glb';
+const TRACK_COIN_RESPAWN_MS = 10_000;
+const TRACK_COIN_COLLIDER_HALF_EXTENTS: [number, number, number] = [0.75, 0.75, 0.75];
 const OBJECT_ITEM_MIN_VALUE = 1;
 const OBJECT_ITEM_MAX_VALUE = 13;
 const OBJECT_MUSHROOM_VALUE = 2;
@@ -598,6 +607,13 @@ function createObjectCrateActivationMap(spawns: ObjectCrateSpawnEntry[]) {
   }, {});
 }
 
+function createTrackCoinActivationMap(spawns: TrackCoinSpawnEntry[]) {
+  return spawns.reduce<Record<string, boolean>>((acc, spawn) => {
+    acc[spawn.coinId] = true;
+    return acc;
+  }, {});
+}
+
 export function Scene({
   raceConfig,
   onRaceBack,
@@ -702,6 +718,7 @@ export function Scene({
       circuit.road.model,
       circuit.ext.model,
       OBJECT_CRATE_MODEL_PATH,
+      TRACK_COIN_MODEL_PATH,
       OBJECT_ATTACHABLE_VOID_MODEL_PATH,
       OBJECT_ATTACHABLE_MUSHROOM_MODEL_PATH,
       OBJECT_ATTACHABLE_THUNDER_MODEL_PATH,
@@ -817,6 +834,21 @@ export function Scene({
   );
   const [activeObjectCrates, setActiveObjectCrates] = useState<Record<string, boolean>>(initialObjectCrates);
   const objectCrateRespawnTimersRef = useRef<Map<string, number>>(new Map());
+  const trackCoinSpawnEntries = useMemo<TrackCoinSpawnEntry[]>(
+    () =>
+      circuit.coinSpawns.map((spawn, index) => ({
+        coinId: `${raceConfig.courseId}-coin-${index}`,
+        position: [spawn.position[0], spawn.position[1], spawn.position[2]],
+        rotation: [spawn.rotation[0], spawn.rotation[1], spawn.rotation[2]],
+      })),
+    [circuit.coinSpawns, raceConfig.courseId],
+  );
+  const initialTrackCoins = useMemo(
+    () => createTrackCoinActivationMap(trackCoinSpawnEntries),
+    [trackCoinSpawnEntries],
+  );
+  const [activeTrackCoins, setActiveTrackCoins] = useState<Record<string, boolean>>(initialTrackCoins);
+  const trackCoinRespawnTimersRef = useRef<Map<string, number>>(new Map());
   const roadGroupRef = useRef<Group | null>(null);
   const extGroupRef = useRef<Group | null>(null);
   const sceneReady =
@@ -850,6 +882,17 @@ export function Scene({
       objectCrateRespawnTimersRef.current.clear();
     };
   }, [initialObjectCrates]);
+
+  useEffect(() => {
+    trackCoinRespawnTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    trackCoinRespawnTimersRef.current.clear();
+    setActiveTrackCoins(initialTrackCoins);
+
+    return () => {
+      trackCoinRespawnTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      trackCoinRespawnTimersRef.current.clear();
+    };
+  }, [initialTrackCoins]);
 
   useEffect(() => {
     myObjectByParticipantRef.current = myObjectByParticipant;
@@ -1035,6 +1078,39 @@ export function Scene({
 
     objectCrateRespawnTimersRef.current.set(crateId, respawnTimer);
   }, [getLiveScoreboardSnapshot]);
+
+  const handleTrackCoinCollected = useCallback((coinId: string, touch: ObjectCrateTouch) => {
+    setActiveTrackCoins((current) => {
+      if (!current[coinId]) return current;
+      return { ...current, [coinId]: false };
+    });
+
+    const currentCoins = coinsByParticipantRef.current[touch.participantId] ?? 0;
+    const nextCoins = Math.min(PLAYER_COIN_MAX, Math.max(0, currentCoins) + 1);
+    if (nextCoins !== currentCoins) {
+      const nextMap = {
+        ...coinsByParticipantRef.current,
+        [touch.participantId]: nextCoins,
+      };
+      coinsByParticipantRef.current = nextMap;
+      setCoinsByParticipant(nextMap);
+    }
+
+    const existingTimer = trackCoinRespawnTimersRef.current.get(coinId);
+    if (typeof existingTimer === 'number') {
+      window.clearTimeout(existingTimer);
+    }
+
+    const respawnTimer = window.setTimeout(() => {
+      setActiveTrackCoins((current) => {
+        if (current[coinId]) return current;
+        return { ...current, [coinId]: true };
+      });
+      trackCoinRespawnTimersRef.current.delete(coinId);
+    }, TRACK_COIN_RESPAWN_MS);
+
+    trackCoinRespawnTimersRef.current.set(coinId, respawnTimer);
+  }, []);
 
   const handleParticipantObjectUsed = useCallback(
     (participantId: RaceParticipantId, usedObject: number) => {
@@ -1868,6 +1944,20 @@ export function Scene({
                   rotation={spawn.rotation}
                   modelPath={OBJECT_CRATE_MODEL_PATH}
                   onCollected={handleObjectCrateCollected}
+                />
+              ) : null,
+            )}
+
+            {trackCoinSpawnEntries.map((spawn) =>
+              activeTrackCoins[spawn.coinId] ? (
+                <ObjectCrate
+                  key={spawn.coinId}
+                  crateId={spawn.coinId}
+                  position={spawn.position}
+                  rotation={spawn.rotation}
+                  modelPath={TRACK_COIN_MODEL_PATH}
+                  colliderHalfExtents={TRACK_COIN_COLLIDER_HALF_EXTENTS}
+                  onCollected={handleTrackCoinCollected}
                 />
               ) : null,
             )}
