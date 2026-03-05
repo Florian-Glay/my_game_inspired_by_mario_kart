@@ -102,6 +102,7 @@ type Props = {
   coinCount?: number;
   thunderDebuffUntilTimestampMs?: number;
   bulletBillUntilTimestampMs?: number;
+  stunUntilTimestampMs?: number;
   objectItemMaxValue?: number;
   miniObjectModelPaths?: readonly string[];
   onObjectUsed?: (participantId: RaceParticipantId, usedObject: number) => void;
@@ -230,6 +231,10 @@ const OBJECT_1_BOOST_STRENGTH = 2;
 const OBJECT_1_BOOST_DURATION_MS = 1500;
 const OBJECT_2_BOOST_STRENGTH = 2;
 const OBJECT_2_BOOST_DURATION_MS = 1500;
+const OBJECT_3_BANANA_VALUE = 3;
+const OBJECT_4_TRIPLE_BANANA_VALUE = 4;
+const OBJECT_5_GREEN_SHELL_VALUE = 5;
+const OBJECT_6_TRIPLE_GREEN_SHELL_VALUE = 6;
 const OBJECT_10_THUNDER_VALUE = 10;
 const OBJECT_11_BULLET_BILL_VALUE = 11;
 const OBJECT_13_COIN_VALUE = 13;
@@ -238,6 +243,8 @@ const MAX_COIN_SPEED_MULTIPLIER = 1.2;
 const BULLET_BILL_SPEED_MULTIPLIER = 2;
 const THUNDER_DEBUFF_SIZE_MULTIPLIER = 0.5;
 const THUNDER_DEBUFF_SPEED_MULTIPLIER = 1 / 1.5;
+const STUN_SPIN_TOTAL_RAD = Math.PI * 2;
+const STUN_SPIN_RATE_RAD_PER_SEC = Math.PI * 2;
 const BOOSTER_RETRIGGER_COOLDOWN_MS = 150;
 const START_BOOST_CHARGE_FROM_COUNTDOWN = 2;
 const START_BOOST_MAX_CHARGE_MS = 2000;
@@ -309,6 +316,7 @@ export default function DrivableModel({
   coinCount = 0,
   thunderDebuffUntilTimestampMs = 0,
   bulletBillUntilTimestampMs = 0,
+  stunUntilTimestampMs = 0,
   objectItemMaxValue = DEFAULT_OBJECT_ITEM_MAX_VALUE,
   miniObjectModelPaths = [],
   onObjectUsed,
@@ -410,6 +418,9 @@ export default function DrivableModel({
   const normalVehicleVisualRef = useRef<Group | null>(null);
   const bulletBillVisualRef = useRef<Group | null>(null);
   const bulletBillWasActiveRef = useRef(false);
+  const stunUntilTimestampMsRef = useRef(stunUntilTimestampMs);
+  const wasStunnedRef = useRef(false);
+  const stunSpinRemainingRadRef = useRef(0);
   const poseAnchorRef = useRef<Group | null>(null);
   const lakituFadeRef = useRef(0);
   const lakituVisibleTargetRef = useRef(false);
@@ -515,6 +526,9 @@ export default function DrivableModel({
   }, [coinCount]);
   const normalizedMyObjectRef = useRef(normalizedMyObject);
   const normalizedMyObjectChargesRef = useRef(normalizedMyObjectCharges);
+  useEffect(() => {
+    stunUntilTimestampMsRef.current = stunUntilTimestampMs;
+  }, [stunUntilTimestampMs]);
   useEffect(() => {
     normalizedMyObjectRef.current = normalizedMyObject;
   }, [normalizedMyObject]);
@@ -1059,6 +1073,9 @@ export default function DrivableModel({
   };
 
   const tryUseHeldObject = () => {
+    const nowMs = performance.now();
+    if (nowMs < stunUntilTimestampMsRef.current) return;
+
     const currentObject = normalizedMyObjectRef.current;
     if (currentObject <= 0) return;
     if (currentObject > objectItemMaxValue) return;
@@ -1074,6 +1091,36 @@ export default function DrivableModel({
       if (currentCharges <= 0) return;
 
       activateBoost(OBJECT_2_BOOST_STRENGTH, OBJECT_2_BOOST_DURATION_MS);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return;
+    }
+
+    if (currentObject === OBJECT_3_BANANA_VALUE) {
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return;
+    }
+
+    if (currentObject === OBJECT_4_TRIPLE_BANANA_VALUE) {
+      const currentCharges = normalizedMyObjectChargesRef.current;
+      if (currentCharges <= 0) return;
+
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return;
+    }
+
+    if (currentObject === OBJECT_5_GREEN_SHELL_VALUE) {
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return;
+    }
+
+    if (currentObject === OBJECT_6_TRIPLE_GREEN_SHELL_VALUE) {
+      const currentCharges = normalizedMyObjectChargesRef.current;
+      if (currentCharges <= 0) return;
+
+      onObjectUsed?.(participantId, currentObject);
       onObjectConsumed?.(participantId, currentObject, 1);
       return;
     }
@@ -1528,6 +1575,7 @@ export default function DrivableModel({
     pose.y = tmpRenderPosePosition.y;
     pose.z = tmpRenderPosePosition.z;
     pose.yaw = yaw;
+    pose.speed = speedRef.current;
     pose.boostActive = boostActiveNow;
     pose.forwardX = tmpPoseForward.x;
     pose.forwardY = tmpPoseForward.y;
@@ -1751,6 +1799,8 @@ export default function DrivableModel({
     clearFlameTrail();
     lapTriggerDebounceRef.current.clear();
     bulletBillWasActiveRef.current = false;
+    wasStunnedRef.current = false;
+    stunSpinRemainingRadRef.current = 0;
     speedRef.current = 0;
     verticalVelRef.current = 0;
     attachmentStateRef.current = 'detached';
@@ -2012,6 +2062,13 @@ export default function DrivableModel({
     const dtClamped = Math.min(dt, 0.05);
 
     const nowMs = performance.now();
+    const stunActive = nowMs < stunUntilTimestampMsRef.current;
+    if (stunActive && !wasStunnedRef.current) {
+      stunSpinRemainingRadRef.current = STUN_SPIN_TOTAL_RAD;
+    } else if (!stunActive && wasStunnedRef.current) {
+      stunSpinRemainingRadRef.current = 0;
+    }
+    wasStunnedRef.current = stunActive;
     const bulletBillActive = nowMs < bulletBillUntilTimestampMs;
     const thunderDebuffActive = nowMs < thunderDebuffUntilTimestampMs;
     const thunderSpeedMultiplier =
@@ -2024,6 +2081,7 @@ export default function DrivableModel({
       thunderSpeedMultiplier * bulletBillSpeedMultiplier * coinSpeedMultiplier;
     const effectiveControlMode: ParticipantControlMode =
       bulletBillActive ? 'autopilot' : controlMode;
+    const controlsTemporarilyLocked = controlsLocked || commandInputActive.current || stunActive;
     if (bulletBillWasActiveRef.current && !bulletBillActive) {
       keysRef.current.forward = false;
       keysRef.current.back = false;
@@ -2057,7 +2115,7 @@ export default function DrivableModel({
       keysRef.current.right = autopilotInput.right;
 
       const requestedDriftChargeDirection =
-        !controlsLocked && !commandInputActive.current ? (autopilotInput.driftChargeDirection ?? null) : null;
+        !controlsTemporarilyLocked ? (autopilotInput.driftChargeDirection ?? null) : null;
       const activeDriftChargeDirection = steerChargeDirectionRef.current;
       if (requestedDriftChargeDirection && activeDriftChargeDirection === null) {
         forceStartSteerCharge(requestedDriftChargeDirection, nowMs);
@@ -2138,6 +2196,7 @@ export default function DrivableModel({
     const canChargeStartBoost =
       controlsLocked &&
       !commandInputActive.current &&
+      !stunActive &&
       typeof startCountdownValue === 'number' &&
       startCountdownValue > 0 &&
       startCountdownValue <= START_BOOST_CHARGE_FROM_COUNTDOWN;
@@ -2185,31 +2244,36 @@ export default function DrivableModel({
     }
     previousStartCountdownRef.current = startCountdownValue;
 
-    if (controlsLocked || commandInputActive.current) {
+    if (controlsTemporarilyLocked) {
       releaseSteerCharge({
         nowMs,
         triggerBoost: false,
       });
-      const keepForwardDuringStartCharge = continueStartBoostCharge;
+      const keepForwardDuringStartCharge = continueStartBoostCharge && !stunActive;
       keysRef.current.forward = keepForwardDuringStartCharge;
       keysRef.current.back = false;
       keysRef.current.left = false;
       keysRef.current.right = false;
     }
 
+    if (stunActive) {
+      boostEndTimestampRef.current = nowMs;
+      boostStrengthRef.current = 1;
+    }
+
     if (nowMs >= boostEndTimestampRef.current) {
       boostStrengthRef.current = 1;
     }
 
-    const throttle = controlsLocked || commandInputActive.current
+    const throttle = controlsTemporarilyLocked
       ? 0
       : (keysRef.current.forward ? 1 : 0) + (keysRef.current.back ? -1 : 0);
     const steerChargeDirection =
-      controlsLocked || commandInputActive.current ? null : steerChargeDirectionRef.current;
+      controlsTemporarilyLocked ? null : steerChargeDirectionRef.current;
     const steerChargeActive =
       steerChargeDirection !== null &&
       steerChargeStartMsRef.current !== null;
-    const steer = controlsLocked || commandInputActive.current
+    const steer = controlsTemporarilyLocked
       ? 0
       : steerChargeActive ?
           (steerChargeDirection === 'left' ? 1 : -1)
@@ -2442,16 +2506,19 @@ export default function DrivableModel({
     }
 
     // Speed control (simple, stable)
-    const activeBoostStrength = boostActive ? Math.max(1, boostStrengthRef.current) : 1;
+    const boostEffective = boostActive && !stunActive;
+    const activeBoostStrength = boostEffective ? Math.max(1, boostStrengthRef.current) : 1;
     const effectiveMaxForward = Math.max(0.1, maxForward) * activeSpeedMultiplier;
     const effectiveMaxBackward = Math.max(0.1, maxBackward) * activeSpeedMultiplier;
     const forwardLimit = effectiveMaxForward * activeBoostStrength;
     const backwardLimit = -effectiveMaxBackward;
     const steerInput = steer;
 
-    if (boostActive) {
+    if (boostEffective) {
       const minimumBoostSpeed = effectiveMaxForward * activeBoostStrength;
       speedRef.current = Math.max(speedRef.current, minimumBoostSpeed);
+    } else if (stunActive) {
+      speedRef.current = 0;
     } else if (throttle !== 0) speedRef.current += throttle * ACCEL * dtClamped;
     else {
       const s = speedRef.current;
@@ -2462,7 +2529,7 @@ export default function DrivableModel({
 
     // apply linear damping (drag) to smooth/slow the vehicle over time
     const effectiveDrag = sampledSurfaceDrag ?? Math.max(0, drag);
-    if (!boostActive && effectiveDrag > 0 && Math.abs(speedRef.current) > 0) {
+    if (!boostEffective && effectiveDrag > 0 && Math.abs(speedRef.current) > 0) {
       const damp = Math.max(0, 1 - effectiveDrag * dtClamped);
       speedRef.current *= damp;
       if (Math.abs(speedRef.current) < 0.01) speedRef.current = 0;
@@ -2475,6 +2542,11 @@ export default function DrivableModel({
     const steerAxis = isAttachmentActive ? tmpAttachmentNormal : worldUp;
     if (Math.abs(steerAngle) > 0.00001) {
       headingRef.current.applyAxisAngle(steerAxis, steerAngle);
+    }
+    if (stunActive && stunSpinRemainingRadRef.current > 0) {
+      const spinStep = Math.min(stunSpinRemainingRadRef.current, STUN_SPIN_RATE_RAD_PER_SEC * dtClamped);
+      headingRef.current.applyAxisAngle(steerAxis, spinStep);
+      stunSpinRemainingRadRef.current -= spinStep;
     }
 
     tmpForward.copy(headingRef.current);

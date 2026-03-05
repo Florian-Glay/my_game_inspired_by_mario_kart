@@ -18,6 +18,12 @@ type AttachableObjectProps = {
   bulletBillObjectValue?: number;
   coinModelPath?: string;
   coinObjectValue?: number;
+  bananaModelPath?: string;
+  bananaObjectValue?: number;
+  tripleBananaObjectValue?: number;
+  greenShellModelPath?: string;
+  greenShellObjectValue?: number;
+  tripleGreenShellObjectValue?: number;
   position?: Vec3;
   rotation?: Vec3;
   scale?: number | Vec3;
@@ -61,6 +67,12 @@ export function AttachableObject({
   bulletBillObjectValue = 11,
   coinModelPath = 'models/miniObject/itemCoin.glb',
   coinObjectValue = 13,
+  bananaModelPath = 'models/miniObject/itemBanana.glb',
+  bananaObjectValue = 3,
+  tripleBananaObjectValue = 4,
+  greenShellModelPath = 'models/miniObject/itemGreenShell.glb',
+  greenShellObjectValue = 5,
+  tripleGreenShellObjectValue = 6,
   position = [0, 0, 0],
   rotation = [0, 0, 0],
   scale = 1,
@@ -85,7 +97,23 @@ export function AttachableObject({
       : 0,
     [mushroomObjectValue, myObject, normalizedCharges],
   );
+  const tripleBananaCount = useMemo(
+    () =>
+      myObject === tripleBananaObjectValue ? Math.min(3, Math.max(0, normalizedCharges))
+      : 0,
+    [myObject, normalizedCharges, tripleBananaObjectValue],
+  );
+  const tripleGreenShellCount = useMemo(
+    () =>
+      myObject === tripleGreenShellObjectValue ? Math.min(3, Math.max(0, normalizedCharges))
+      : 0,
+    [myObject, normalizedCharges, tripleGreenShellObjectValue],
+  );
   const shouldRenderMushroomStack = myObject === mushroomObjectValue;
+  const shouldRenderTripleBananaStack = myObject === tripleBananaObjectValue;
+  const shouldRenderSingleBanana = myObject === bananaObjectValue;
+  const shouldRenderTripleGreenShellStack = myObject === tripleGreenShellObjectValue;
+  const shouldRenderSingleGreenShell = myObject === greenShellObjectValue;
   const shouldRenderThunder = myObject === thunderObjectValue;
   const shouldRenderBulletBill = myObject === bulletBillObjectValue;
   const shouldRenderCoin = myObject === coinObjectValue;
@@ -100,6 +128,26 @@ export function AttachableObject({
         ))
       : shouldRenderMushroomStack ?
         <Model src={voidModelPath} scale={scale} />
+      : tripleBananaCount > 0 ?
+        Array.from({ length: tripleBananaCount }, (_, index) => (
+          <group key={`triple-banana-charge-${index}`} position={[0, 0, -index * 0.92]}>
+            <Model src={bananaModelPath} scale={scale} />
+          </group>
+        ))
+      : shouldRenderTripleBananaStack ?
+        <Model src={voidModelPath} scale={scale} />
+      : shouldRenderSingleBanana ?
+        <Model src={bananaModelPath} scale={scale} />
+      : tripleGreenShellCount > 0 ?
+        Array.from({ length: tripleGreenShellCount }, (_, index) => (
+          <group key={`triple-green-shell-charge-${index}`} position={[0, 0, -index * 0.92]}>
+            <Model src={greenShellModelPath} scale={scale} />
+          </group>
+        ))
+      : shouldRenderTripleGreenShellStack ?
+        <Model src={voidModelPath} scale={scale} />
+      : shouldRenderSingleGreenShell ?
+        <Model src={greenShellModelPath} scale={scale} />
       : shouldRenderThunder ?
         <Model src={thunderModelPath} scale={scale} />
       : shouldRenderBulletBill ?

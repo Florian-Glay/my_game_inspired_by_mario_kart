@@ -33,6 +33,7 @@ import { LocalMultiviewCameraController } from './LocalMultiviewCameraController
 import Model from './Model';
 import { ObjectCrate, type ObjectCrateTouch } from './ObjectCrate';
 import { SurfaceWithDrag } from './SurfaceWithDrag';
+import { ThrowableObject } from './ThrowableObject';
 import TextureDebug from './TextureDebug';
 
 useGLTF.preload('models/exemple.glb');
@@ -268,6 +269,17 @@ type TrackCoinSpawnEntry = {
   rotation: [number, number, number];
 };
 
+type ThrowableObjectEntry = {
+  throwableId: string;
+  sourceObjectValue: number;
+  ownerParticipantId: RaceParticipantId;
+  behavior: 'banana' | 'green-shell';
+  modelPath: string;
+  spawnPosition: [number, number, number];
+  launchVelocity: [number, number, number];
+  ttlMs: number;
+};
+
 function MovingClouds() {
   const rootRef = useRef<Group | null>(null);
   const cloudSeeds = useMemo<CloudSeed[]>(
@@ -379,6 +391,11 @@ const TRACK_COIN_COLLIDER_HALF_EXTENTS: [number, number, number] = [0.75, 0.75, 
 const OBJECT_ITEM_MIN_VALUE = 1;
 const OBJECT_ITEM_MAX_VALUE = 13;
 const OBJECT_MUSHROOM_VALUE = 2;
+const OBJECT_BANANA_VALUE = 3;
+const OBJECT_TRIPLE_BANANA_VALUE = 4;
+const OBJECT_GREEN_SHELL_VALUE = 5;
+const OBJECT_TRIPLE_GREEN_SHELL_VALUE = 6;
+const OBJECT_THROWABLE_VALUES = [3, 4, 5, 6, 7, 8, 9, 12] as const;
 const OBJECT_THUNDER_VALUE = 10;
 const OBJECT_THUNDER_ELIGIBLE_MIN_POSITION = 10;
 const OBJECT_THUNDER_BASE_DURATION_SECONDS = 10;
@@ -388,10 +405,16 @@ const OBJECT_BULLET_BILL_DURATION_SECONDS = 15;
 const OBJECT_COIN_VALUE = 13;
 const PLAYER_COIN_MAX = 10;
 const OBJECT_MUSHROOM_INITIAL_CHARGES = 3;
+const OBJECT_TRIPLE_BANANA_INITIAL_CHARGES = 3;
+const OBJECT_TRIPLE_GREEN_SHELL_INITIAL_CHARGES = 3;
 const OBJECT_DEFAULT_INITIAL_CHARGES = 1;
 const OBJECT_AVAILABLE_ITEM_VALUES = [
   1,
   OBJECT_MUSHROOM_VALUE,
+  OBJECT_BANANA_VALUE,
+  OBJECT_TRIPLE_BANANA_VALUE,
+  OBJECT_GREEN_SHELL_VALUE,
+  OBJECT_TRIPLE_GREEN_SHELL_VALUE,
   OBJECT_THUNDER_VALUE,
   OBJECT_BULLET_BILL_VALUE,
   OBJECT_COIN_VALUE,
@@ -399,9 +422,21 @@ const OBJECT_AVAILABLE_ITEM_VALUES = [
 const COIN_HUD_ICON_PATH = 'ui/object/objet-13.png';
 const OBJECT_ATTACHABLE_VOID_MODEL_PATH = 'models/void.glb';
 const OBJECT_ATTACHABLE_MUSHROOM_MODEL_PATH = 'models/miniObject/itemMushroom.glb';
+const OBJECT_BANANA_MODEL_PATH = 'models/miniObject/itemBanana.glb';
+const OBJECT_GREEN_SHELL_MODEL_PATH = 'models/miniObject/itemGreenShell.glb';
 const OBJECT_ATTACHABLE_THUNDER_MODEL_PATH = 'models/miniObject/ItemThunder.glb';
 const OBJECT_ATTACHABLE_BULLET_BILL_MODEL_PATH = 'models/miniObject/itemBulletBill.glb';
 const OBJECT_BULLET_BILL_VEHICLE_MODEL_PATH = 'models/BulletBill.glb';
+const OBJECT_THROWABLE_LIFETIME_MS = 30_000;
+const OBJECT_BANANA_STUN_DURATION_MS = 1000;
+const OBJECT_BANANA_FORWARD_SPEED = 100;
+const OBJECT_BANANA_UPWARD_SPEED = 12.5;
+const OBJECT_BANANA_SPAWN_FORWARD_OFFSET = 2.2;
+const OBJECT_BANANA_SPAWN_UP_OFFSET = 1.6;
+const OBJECT_GREEN_SHELL_SPEED_MULTIPLIER = 2;
+const OBJECT_GREEN_SHELL_MIN_SPEED = 100;
+const OBJECT_GREEN_SHELL_SPAWN_FORWARD_OFFSET = 2.4;
+const OBJECT_GREEN_SHELL_SPAWN_UP_OFFSET = 0.9;
 const miniObjectModelModules = import.meta.glob('/models/miniObject/*.glb', {
   eager: true,
   query: '?url',
@@ -427,6 +462,7 @@ const LIVE_SCOREBOARD_FINISH_WAYPOINT_BY_CIRCUIT: Record<CircuitId, number> = {
   stadium: 239,
   ds_mario_circuit: 75,
 };
+const OBJECT_THROWABLE_VALUE_SET = new Set<number>(OBJECT_THROWABLE_VALUES);
 
 const resolveUiAssetSrc = (assetPath: string) => {
   if (
@@ -607,6 +643,15 @@ function createObjectCrateActivationMap(spawns: ObjectCrateSpawnEntry[]) {
   }, {});
 }
 
+function createInitialParticipantStunUntil(
+  participants: RaceConfig['participants'],
+) {
+  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
+    acc[participant.id] = 0;
+    return acc;
+  }, {});
+}
+
 function createTrackCoinActivationMap(spawns: TrackCoinSpawnEntry[]) {
   return spawns.reduce<Record<string, boolean>>((acc, spawn) => {
     acc[spawn.coinId] = true;
@@ -657,6 +702,10 @@ export function Scene({
     () => createInitialParticipantCoins(raceConfig.participants),
     [raceConfig.participants],
   );
+  const initialParticipantStunUntil = useMemo(
+    () => createInitialParticipantStunUntil(raceConfig.participants),
+    [raceConfig.participants],
+  );
   const [lapProgressByPlayer, setLapProgressByPlayer] = useState<Record<RaceParticipantId, PlayerLapProgress>>(
     initialLapProgress,
   );
@@ -675,6 +724,10 @@ export function Scene({
   const [coinsByParticipant, setCoinsByParticipant] = useState<Record<RaceParticipantId, number>>(
     initialParticipantCoins,
   );
+  const [stunUntilByParticipant, setStunUntilByParticipant] = useState<Record<RaceParticipantId, number>>(
+    initialParticipantStunUntil,
+  );
+  const [activeThrowableObjects, setActiveThrowableObjects] = useState<ThrowableObjectEntry[]>([]);
   const lapProgressRef = useRef<Record<RaceParticipantId, PlayerLapProgress>>(initialLapProgress);
   const myObjectByParticipantRef = useRef<Record<RaceParticipantId, number>>(initialParticipantObjects);
   const myObjectChargesByParticipantRef = useRef<Record<RaceParticipantId, number>>(
@@ -687,6 +740,8 @@ export function Scene({
     initialParticipantBulletBillUntil,
   );
   const coinsByParticipantRef = useRef<Record<RaceParticipantId, number>>(initialParticipantCoins);
+  const stunUntilByParticipantRef = useRef<Record<RaceParticipantId, number>>(initialParticipantStunUntil);
+  const throwableObjectIdCounterRef = useRef(0);
   const [courseRanking, setCourseRanking] = useState<CourseRankingEntry[]>([]);
   const [overlayStep, setOverlayStep] = useState<RaceOverlayStep>('none');
   const [controlsLocked, setControlsLocked] = useState(true);
@@ -721,6 +776,8 @@ export function Scene({
       TRACK_COIN_MODEL_PATH,
       OBJECT_ATTACHABLE_VOID_MODEL_PATH,
       OBJECT_ATTACHABLE_MUSHROOM_MODEL_PATH,
+      OBJECT_BANANA_MODEL_PATH,
+      OBJECT_GREEN_SHELL_MODEL_PATH,
       OBJECT_ATTACHABLE_THUNDER_MODEL_PATH,
       OBJECT_ATTACHABLE_BULLET_BILL_MODEL_PATH,
       OBJECT_BULLET_BILL_VEHICLE_MODEL_PATH,
@@ -915,6 +972,10 @@ export function Scene({
   }, [coinsByParticipant]);
 
   useEffect(() => {
+    stunUntilByParticipantRef.current = stunUntilByParticipant;
+  }, [stunUntilByParticipant]);
+
+  useEffect(() => {
     lapProgressRef.current = initialLapProgress;
     setLapProgressByPlayer(initialLapProgress);
     setCourseRanking([]);
@@ -928,11 +989,15 @@ export function Scene({
     setThunderDebuffUntilByParticipant(initialParticipantThunderDebuffUntil);
     setBulletBillUntilByParticipant(initialParticipantBulletBillUntil);
     setCoinsByParticipant(initialParticipantCoins);
+    setStunUntilByParticipant(initialParticipantStunUntil);
+    setActiveThrowableObjects([]);
     myObjectByParticipantRef.current = initialParticipantObjects;
     myObjectChargesByParticipantRef.current = initialParticipantObjectCharges;
     thunderDebuffUntilByParticipantRef.current = initialParticipantThunderDebuffUntil;
     bulletBillUntilByParticipantRef.current = initialParticipantBulletBillUntil;
     coinsByParticipantRef.current = initialParticipantCoins;
+    stunUntilByParticipantRef.current = initialParticipantStunUntil;
+    throwableObjectIdCounterRef.current = 0;
     courseResultSentRef.current = false;
     startCountdownStartedRef.current = false;
     winModeHandledRef.current = false;
@@ -943,6 +1008,7 @@ export function Scene({
     initialParticipantObjects,
     initialParticipantBulletBillUntil,
     initialParticipantCoins,
+    initialParticipantStunUntil,
     initialParticipantThunderDebuffUntil,
     raceConfig.courseId,
   ]);
@@ -1042,6 +1108,8 @@ export function Scene({
       const randomValue = randomPool[Math.floor(Math.random() * randomPool.length)] ?? OBJECT_ITEM_MIN_VALUE;
       const initialObjectCharges =
         randomValue === OBJECT_MUSHROOM_VALUE ? OBJECT_MUSHROOM_INITIAL_CHARGES
+        : randomValue === OBJECT_TRIPLE_BANANA_VALUE ? OBJECT_TRIPLE_BANANA_INITIAL_CHARGES
+        : randomValue === OBJECT_TRIPLE_GREEN_SHELL_VALUE ? OBJECT_TRIPLE_GREEN_SHELL_INITIAL_CHARGES
         : randomValue > 0 ? OBJECT_DEFAULT_INITIAL_CHARGES
         : 0;
       myObjectByParticipantRef.current = {
@@ -1112,9 +1180,158 @@ export function Scene({
     trackCoinRespawnTimersRef.current.set(coinId, respawnTimer);
   }, []);
 
+  const removeThrowableObject = useCallback((throwableId: string) => {
+    setActiveThrowableObjects((current) => {
+      const next = current.filter((entry) => entry.throwableId !== throwableId);
+      return next.length === current.length ? current : next;
+    });
+  }, []);
+
+  const handleThrowableObjectExpired = useCallback(
+    (throwableId: string) => {
+      removeThrowableObject(throwableId);
+    },
+    [removeThrowableObject],
+  );
+
+  const handleThrowableObjectGroundedParticipantHit = useCallback(
+    (throwableId: string, participantId: RaceParticipantId, sourceObjectValue: number) => {
+      if (
+        sourceObjectValue === OBJECT_BANANA_VALUE ||
+        sourceObjectValue === OBJECT_TRIPLE_BANANA_VALUE ||
+        sourceObjectValue === OBJECT_GREEN_SHELL_VALUE ||
+        sourceObjectValue === OBJECT_TRIPLE_GREEN_SHELL_VALUE
+      ) {
+        const nowMs = performance.now();
+        const nextUntilMs = nowMs + OBJECT_BANANA_STUN_DURATION_MS;
+        const currentUntilMs = stunUntilByParticipantRef.current[participantId] ?? 0;
+        if (nextUntilMs > currentUntilMs) {
+          const nextMap = {
+            ...stunUntilByParticipantRef.current,
+            [participantId]: nextUntilMs,
+          };
+          stunUntilByParticipantRef.current = nextMap;
+          setStunUntilByParticipant(nextMap);
+        }
+      }
+
+      removeThrowableObject(throwableId);
+    },
+    [removeThrowableObject],
+  );
+
+  const resolvePoseForwardVector = useCallback((pose: CarPose) => {
+    const fallbackForwardX = Number.isFinite(pose.yaw) ? Math.sin(pose.yaw) : 0;
+    const fallbackForwardZ = Number.isFinite(pose.yaw) ? Math.cos(pose.yaw) : 1;
+    const rawForwardXCandidate = pose.forwardX ?? fallbackForwardX;
+    const rawForwardZCandidate = pose.forwardZ ?? fallbackForwardZ;
+    const rawForwardX = Number.isFinite(rawForwardXCandidate) ? rawForwardXCandidate : fallbackForwardX;
+    const rawForwardZ = Number.isFinite(rawForwardZCandidate) ? rawForwardZCandidate : fallbackForwardZ;
+    const rawLength = Math.hypot(rawForwardX, rawForwardZ);
+    const forwardX = rawLength > 0.0001 ? rawForwardX / rawLength : fallbackForwardX;
+    const forwardZ = rawLength > 0.0001 ? rawForwardZ / rawLength : fallbackForwardZ;
+    return { forwardX, forwardZ };
+  }, []);
+
+  const spawnBananaThrowableObject = useCallback(
+    (participantId: RaceParticipantId, sourceObjectValue: number) => {
+      const pose = poseRefsByParticipant[participantId]?.current;
+      if (!pose) return;
+      const { forwardX, forwardZ } = resolvePoseForwardVector(pose);
+
+      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      throwableObjectIdCounterRef.current += 1;
+
+      const spawnedObject: ThrowableObjectEntry = {
+        throwableId,
+        sourceObjectValue,
+        ownerParticipantId: participantId,
+        behavior: 'banana',
+        modelPath: OBJECT_BANANA_MODEL_PATH,
+        spawnPosition: [
+          pose.x + forwardX * OBJECT_BANANA_SPAWN_FORWARD_OFFSET,
+          pose.y + OBJECT_BANANA_SPAWN_UP_OFFSET,
+          pose.z + forwardZ * OBJECT_BANANA_SPAWN_FORWARD_OFFSET,
+        ],
+        launchVelocity: [
+          forwardX * OBJECT_BANANA_FORWARD_SPEED,
+          OBJECT_BANANA_UPWARD_SPEED,
+          forwardZ * OBJECT_BANANA_FORWARD_SPEED,
+        ],
+        ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
+      };
+
+      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+    },
+    [poseRefsByParticipant, raceConfig.courseId, resolvePoseForwardVector],
+  );
+
+  const spawnGreenShellThrowableObject = useCallback(
+    (participantId: RaceParticipantId, sourceObjectValue: number) => {
+      const pose = poseRefsByParticipant[participantId]?.current;
+      if (!pose) return;
+      const { forwardX, forwardZ } = resolvePoseForwardVector(pose);
+
+      const currentSpeed = (() => {
+        const candidate = pose.speed;
+        if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+          return Math.max(0, speedProfile.maxForward);
+        }
+        return Math.max(0, Math.abs(candidate));
+      })();
+      const launchSpeed = Math.max(
+        OBJECT_GREEN_SHELL_MIN_SPEED,
+        currentSpeed * OBJECT_GREEN_SHELL_SPEED_MULTIPLIER,
+      );
+
+      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      throwableObjectIdCounterRef.current += 1;
+
+      const spawnedObject: ThrowableObjectEntry = {
+        throwableId,
+        sourceObjectValue,
+        ownerParticipantId: participantId,
+        behavior: 'green-shell',
+        modelPath: OBJECT_GREEN_SHELL_MODEL_PATH,
+        spawnPosition: [
+          pose.x + forwardX * OBJECT_GREEN_SHELL_SPAWN_FORWARD_OFFSET,
+          pose.y + OBJECT_GREEN_SHELL_SPAWN_UP_OFFSET,
+          pose.z + forwardZ * OBJECT_GREEN_SHELL_SPAWN_FORWARD_OFFSET,
+        ],
+        launchVelocity: [forwardX * launchSpeed, 0, forwardZ * launchSpeed],
+        ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
+      };
+
+      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+    },
+    [poseRefsByParticipant, raceConfig.courseId, resolvePoseForwardVector, speedProfile.maxForward],
+  );
+
   const handleParticipantObjectUsed = useCallback(
     (participantId: RaceParticipantId, usedObject: number) => {
       const normalizedObject = Number.isFinite(usedObject) ? Math.floor(usedObject) : 0;
+      if (OBJECT_THROWABLE_VALUE_SET.has(normalizedObject)) {
+        if (
+          normalizedObject === OBJECT_BANANA_VALUE ||
+          normalizedObject === OBJECT_TRIPLE_BANANA_VALUE
+        ) {
+          spawnBananaThrowableObject(participantId, normalizedObject);
+          return;
+        }
+        if (
+          normalizedObject === OBJECT_GREEN_SHELL_VALUE ||
+          normalizedObject === OBJECT_TRIPLE_GREEN_SHELL_VALUE
+        ) {
+          spawnGreenShellThrowableObject(participantId, normalizedObject);
+          return;
+        }
+
+        console.log(
+          `[object][${participantId}] objet jetable ${normalizedObject} utilise mais comportement non implemente.`,
+        );
+        return;
+      }
+
       if (normalizedObject === OBJECT_THUNDER_VALUE) {
         const liveRanking = getLiveScoreboardSnapshot();
         const sourceEntry = liveRanking.find((entry) => entry.participantId === participantId);
@@ -1171,7 +1388,7 @@ export function Scene({
         setCoinsByParticipant(nextMap);
       }
     },
-    [getLiveScoreboardSnapshot],
+    [getLiveScoreboardSnapshot, spawnBananaThrowableObject, spawnGreenShellThrowableObject],
   );
 
   const handleParticipantObjectConsumed = useCallback(
@@ -1183,7 +1400,11 @@ export function Scene({
       const currentObject = myObjectByParticipantRef.current[participantId] ?? 0;
       if (currentObject !== normalizedObject) return;
 
-      if (normalizedObject === OBJECT_MUSHROOM_VALUE) {
+      if (
+        normalizedObject === OBJECT_MUSHROOM_VALUE ||
+        normalizedObject === OBJECT_TRIPLE_BANANA_VALUE ||
+        normalizedObject === OBJECT_TRIPLE_GREEN_SHELL_VALUE
+      ) {
         const currentCharges = myObjectChargesByParticipantRef.current[participantId] ?? 0;
         const nextCharges = Math.max(0, currentCharges - consumeCount);
         myObjectChargesByParticipantRef.current = {
@@ -1962,6 +2183,22 @@ export function Scene({
               ) : null,
             )}
 
+            {activeThrowableObjects.map((throwableObject) => (
+              <ThrowableObject
+                key={throwableObject.throwableId}
+                throwableId={throwableObject.throwableId}
+                sourceObjectValue={throwableObject.sourceObjectValue}
+                ownerParticipantId={throwableObject.ownerParticipantId}
+                behavior={throwableObject.behavior}
+                modelPath={throwableObject.modelPath}
+                spawnPosition={throwableObject.spawnPosition}
+                launchVelocity={throwableObject.launchVelocity}
+                ttlMs={throwableObject.ttlMs}
+                onExpired={handleThrowableObjectExpired}
+                onGroundedParticipantHit={handleThrowableObjectGroundedParticipantHit}
+              />
+            ))}
+
             {drivableParticipants.map((participant) => (
               <DrivableModel
                 key={participant.id}
@@ -1998,6 +2235,7 @@ export function Scene({
                 coinCount={coinsByParticipant[participant.id] ?? 0}
                 thunderDebuffUntilTimestampMs={thunderDebuffUntilByParticipant[participant.id] ?? 0}
                 bulletBillUntilTimestampMs={bulletBillUntilByParticipant[participant.id] ?? 0}
+                stunUntilTimestampMs={stunUntilByParticipant[participant.id] ?? 0}
                 objectItemMaxValue={OBJECT_ITEM_MAX_VALUE}
                 miniObjectModelPaths={OBJECT_ATTACHABLE_MODEL_PATHS}
                 onObjectUsed={handleParticipantObjectUsed}
