@@ -17,6 +17,7 @@ import { CC_SPEEDS, CIRCUITS } from '../config/raceCatalog';
 import { PERF_PROFILE } from '../config/performanceProfile';
 import { gameMode } from '../state/gamemode';
 import type {
+  BotItemTacticalState,
   CircuitId,
   CarPose,
   CourseRaceResult,
@@ -25,7 +26,9 @@ import type {
   HumanPlayerSlotId,
   RaceConfig,
   RaceParticipantId,
+  Vec3,
 } from '../types/game';
+import { getRaceAssetUrls, RACE_ATTACHABLE_MODEL_URLS } from '../utils/raceAssetMemory';
 import { CameraController } from './CameraController';
 import { CircuitMeshCullingController } from './CircuitMeshCullingController';
 import DrivableModel from './DrivableModel';
@@ -273,7 +276,7 @@ type ThrowableObjectEntry = {
   throwableId: string;
   sourceObjectValue: number;
   ownerParticipantId: RaceParticipantId;
-  behavior: 'banana' | 'green-shell';
+  behavior: 'banana' | 'green-shell' | 'red-shell' | 'blue-shell' | 'bomb';
   modelPath: string;
   spawnPosition: [number, number, number];
   launchVelocity: [number, number, number];
@@ -395,10 +398,12 @@ const OBJECT_BANANA_VALUE = 3;
 const OBJECT_TRIPLE_BANANA_VALUE = 4;
 const OBJECT_GREEN_SHELL_VALUE = 5;
 const OBJECT_TRIPLE_GREEN_SHELL_VALUE = 6;
-const OBJECT_THROWABLE_VALUES = [3, 4, 5, 6, 7, 8, 9, 12] as const;
-const OBJECT_THUNDER_VALUE = 10;
-const OBJECT_THUNDER_ELIGIBLE_MIN_POSITION = 10;
-const OBJECT_THUNDER_BASE_DURATION_SECONDS = 10;
+const OBJECT_RED_SHELL_VALUE = 7;
+const OBJECT_TRIPLE_RED_SHELL_VALUE = 8;
+const OBJECT_BLUE_SHELL_VALUE = 9;
+const OBJECT_BLUE_SHELL_ELIGIBLE_MIN_POSITION = 7;
+const OBJECT_BOMB_VALUE = 10;
+const OBJECT_THROWABLE_VALUES = [3, 4, 5, 6, 7, 8, 9, 10, 12] as const;
 const OBJECT_BULLET_BILL_VALUE = 11;
 const OBJECT_BULLET_BILL_ELIGIBLE_MIN_POSITION = 11;
 const OBJECT_BULLET_BILL_DURATION_SECONDS = 15;
@@ -407,6 +412,7 @@ const PLAYER_COIN_MAX = 10;
 const OBJECT_MUSHROOM_INITIAL_CHARGES = 3;
 const OBJECT_TRIPLE_BANANA_INITIAL_CHARGES = 3;
 const OBJECT_TRIPLE_GREEN_SHELL_INITIAL_CHARGES = 3;
+const OBJECT_TRIPLE_RED_SHELL_INITIAL_CHARGES = 3;
 const OBJECT_DEFAULT_INITIAL_CHARGES = 1;
 const OBJECT_AVAILABLE_ITEM_VALUES = [
   1,
@@ -415,45 +421,44 @@ const OBJECT_AVAILABLE_ITEM_VALUES = [
   OBJECT_TRIPLE_BANANA_VALUE,
   OBJECT_GREEN_SHELL_VALUE,
   OBJECT_TRIPLE_GREEN_SHELL_VALUE,
-  OBJECT_THUNDER_VALUE,
+  OBJECT_RED_SHELL_VALUE,
+  OBJECT_TRIPLE_RED_SHELL_VALUE,
+  OBJECT_BLUE_SHELL_VALUE,
+  OBJECT_BOMB_VALUE,
   OBJECT_BULLET_BILL_VALUE,
   OBJECT_COIN_VALUE,
 ] as const;
 const COIN_HUD_ICON_PATH = 'ui/object/objet-13.png';
-const OBJECT_ATTACHABLE_VOID_MODEL_PATH = 'models/void.glb';
-const OBJECT_ATTACHABLE_MUSHROOM_MODEL_PATH = 'models/miniObject/itemMushroom.glb';
 const OBJECT_BANANA_MODEL_PATH = 'models/miniObject/itemBanana.glb';
 const OBJECT_GREEN_SHELL_MODEL_PATH = 'models/miniObject/itemGreenShell.glb';
-const OBJECT_ATTACHABLE_THUNDER_MODEL_PATH = 'models/miniObject/ItemThunder.glb';
-const OBJECT_ATTACHABLE_BULLET_BILL_MODEL_PATH = 'models/miniObject/itemBulletBill.glb';
-const OBJECT_BULLET_BILL_VEHICLE_MODEL_PATH = 'models/BulletBill.glb';
+const OBJECT_RED_SHELL_MODEL_PATH = 'models/miniObject/itemRedShell.glb';
+const OBJECT_BLUE_SHELL_MODEL_PATH = 'models/miniObject/itemBlueShell.glb';
+const OBJECT_BOMB_MODEL_PATH = 'models/miniObject/itemBomb.glb';
 const OBJECT_THROWABLE_LIFETIME_MS = 30_000;
-const OBJECT_BANANA_STUN_DURATION_MS = 1000;
+const OBJECT_THROWABLE_HIT_STUN_DURATION_MS = 1000;
 const OBJECT_BANANA_FORWARD_SPEED = 100;
 const OBJECT_BANANA_UPWARD_SPEED = 12.5;
 const OBJECT_BANANA_SPAWN_FORWARD_OFFSET = 2.2;
 const OBJECT_BANANA_SPAWN_UP_OFFSET = 1.6;
 const OBJECT_GREEN_SHELL_SPEED_MULTIPLIER = 2;
-const OBJECT_GREEN_SHELL_MIN_SPEED = 100;
-const OBJECT_GREEN_SHELL_SPAWN_FORWARD_OFFSET = 2.4;
+const OBJECT_GREEN_SHELL_MIN_SPEED = 0;
+const OBJECT_GREEN_SHELL_SPAWN_FORWARD_OFFSET = 5.2;
 const OBJECT_GREEN_SHELL_SPAWN_UP_OFFSET = 0.9;
-const miniObjectModelModules = import.meta.glob('/models/miniObject/*.glb', {
-  eager: true,
-  query: '?url',
-  import: 'default',
-}) as Record<string, string>;
-const OBJECT_ATTACHABLE_MODEL_PATHS = (() => {
-  const discovered = Object.entries(miniObjectModelModules)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, path]) => path)
-    .filter((path): path is string => typeof path === 'string' && path.length > 0);
-
-  if (discovered.length > 0) return discovered;
-  return ['models/miniObject/itemMushroom.glb',
-          'models/miniObject/itemCoin.glb',
-          'models/miniObject/itemBulletBill.glb',
-  ];
-})();
+const OBJECT_RED_SHELL_SPEED_MULTIPLIER = 2;
+const OBJECT_RED_SHELL_MIN_SPEED = 0;
+const OBJECT_RED_SHELL_SPAWN_FORWARD_OFFSET = 5.2;
+const OBJECT_RED_SHELL_SPAWN_UP_OFFSET = 0.9;
+const OBJECT_RED_SHELL_TARGET_RADIUS = 30;
+const OBJECT_BLUE_SHELL_SPEED_MULTIPLIER = 2;
+const OBJECT_BLUE_SHELL_MIN_SPEED = 0;
+const OBJECT_BLUE_SHELL_SPAWN_FORWARD_OFFSET = 5.2;
+const OBJECT_BLUE_SHELL_SPAWN_UP_OFFSET = 0.9;
+const OBJECT_BOMB_SPEED_MULTIPLIER = 2;
+const OBJECT_BOMB_MIN_FORWARD_SPEED = 30;
+const OBJECT_BOMB_TARGET_DISTANCE = 100;
+const OBJECT_BOMB_SPAWN_FORWARD_OFFSET = 3.2;
+const OBJECT_BOMB_SPAWN_UP_OFFSET = 2.4;
+const OBJECT_BOMB_GRAVITY = 9.81;
 const DEFAULT_CHARACTER_PORTRAIT_PATH = 'ui/select/character/mario.png';
 const COURSE_POINTS_BY_POSITION = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0] as const;
 const LIVE_SCOREBOARD_FINISH_WAYPOINT_BY_CIRCUIT: Record<CircuitId, number> = {
@@ -482,6 +487,20 @@ const getCoursePointsForPosition = (position: number) => {
   return COURSE_POINTS_BY_POSITION[position - 1] ?? 0;
 };
 
+const resolvePoseForwardVector = (pose: CarPose) => {
+  const fallbackForwardX = Number.isFinite(pose.yaw) ? Math.sin(pose.yaw) : 0;
+  const fallbackForwardZ = Number.isFinite(pose.yaw) ? Math.cos(pose.yaw) : 1;
+  const rawForwardXCandidate = pose.forwardX ?? fallbackForwardX;
+  const rawForwardZCandidate = pose.forwardZ ?? fallbackForwardZ;
+  const rawForwardX = Number.isFinite(rawForwardXCandidate) ? rawForwardXCandidate : fallbackForwardX;
+  const rawForwardZ = Number.isFinite(rawForwardZCandidate) ? rawForwardZCandidate : fallbackForwardZ;
+  const rawLength = Math.hypot(rawForwardX, rawForwardZ);
+  return {
+    forwardX: rawLength > 0.0001 ? rawForwardX / rawLength : fallbackForwardX,
+    forwardZ: rawLength > 0.0001 ? rawForwardZ / rawLength : fallbackForwardZ,
+  };
+};
+
 const findNearestWaypointIndex = (
   pose: CarPose | null | undefined,
   waypoints: readonly BotWaypoint[],
@@ -501,6 +520,28 @@ const findNearestWaypointIndex = (
   }
 
   return nearestWaypointIndex;
+};
+
+const findNearestWaypointArrayIndex = (
+  position: Vec3,
+  waypoints: readonly BotWaypoint[],
+) => {
+  if (waypoints.length === 0) return null;
+
+  let nearestWaypointArrayIndex: number | null = null;
+  let nearestDistanceSq = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < waypoints.length; index += 1) {
+    const waypoint = waypoints[index];
+    const dx = waypoint.position[0] - position[0];
+    const dy = waypoint.position[1] - position[1];
+    const dz = waypoint.position[2] - position[2];
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq >= nearestDistanceSq) continue;
+    nearestDistanceSq = distanceSq;
+    nearestWaypointArrayIndex = index;
+  }
+
+  return nearestWaypointArrayIndex;
 };
 
 const getWaypointStepsToFinish = (
@@ -768,44 +809,7 @@ export function Scene({
   const loadingBackdropSrc = `${import.meta.env.BASE_URL}ui/grand-prix/courses/preview-00.png`;
   const loadingMascotSrc = `${import.meta.env.BASE_URL}ui/MK8-Line-Yoshi-Singing.gif`;
   const circuitWaypointTransform = circuit.waypoints?.transform ?? circuit.transform;
-  const requiredAssetUrls = useMemo(() => {
-    const urls = [
-      circuit.road.model,
-      circuit.ext.model,
-      OBJECT_CRATE_MODEL_PATH,
-      TRACK_COIN_MODEL_PATH,
-      OBJECT_ATTACHABLE_VOID_MODEL_PATH,
-      OBJECT_ATTACHABLE_MUSHROOM_MODEL_PATH,
-      OBJECT_BANANA_MODEL_PATH,
-      OBJECT_GREEN_SHELL_MODEL_PATH,
-      OBJECT_ATTACHABLE_THUNDER_MODEL_PATH,
-      OBJECT_ATTACHABLE_BULLET_BILL_MODEL_PATH,
-      OBJECT_BULLET_BILL_VEHICLE_MODEL_PATH,
-      ...OBJECT_ATTACHABLE_MODEL_PATHS,
-    ];
-    if (circuit.antiGravIn?.model) urls.push(circuit.antiGravIn.model);
-    if (circuit.antiGravOut?.model) urls.push(circuit.antiGravOut.model);
-    if (circuit.booster?.model) urls.push(circuit.booster.model);
-    if (circuit.lapStart?.model) urls.push(circuit.lapStart.model);
-    if (circuit.lapCheckpoint?.model) urls.push(circuit.lapCheckpoint.model);
-    if (circuit.waypoints?.model) urls.push(circuit.waypoints.model);
-    for (const player of raceConfig.participants) {
-      urls.push(player.vehicleModel);
-      urls.push(player.characterModel);
-      urls.push(player.wheelModel);
-    }
-    return Array.from(new Set(urls));
-  }, [
-    circuit.antiGravIn?.model,
-    circuit.antiGravOut?.model,
-    circuit.booster?.model,
-    circuit.lapCheckpoint?.model,
-    circuit.lapStart?.model,
-    circuit.ext.model,
-    circuit.road.model,
-    circuit.waypoints?.model,
-    raceConfig.participants,
-  ]);
+  const requiredAssetUrls = useMemo(() => getRaceAssetUrls(raceConfig), [raceConfig]);
   const assetGateKey = useMemo(() => requiredAssetUrls.join('|'), [requiredAssetUrls]);
   const humanParticipants = useMemo(
     () =>
@@ -1078,10 +1082,6 @@ export function Scene({
       const collectorPosition =
         liveRanking.find((entry) => entry.participantId === touch.participantId)?.position ??
         Number.POSITIVE_INFINITY;
-      const thunderAlreadyHeldByAnotherPlayer = Object.entries(myObjectByParticipantRef.current).some(
-        ([participantId, objectValue]) =>
-          participantId !== touch.participantId && objectValue === OBJECT_THUNDER_VALUE,
-      );
       const bulletBillAlreadyHeldByAnotherPlayer = Object.entries(myObjectByParticipantRef.current).some(
         ([participantId, objectValue]) =>
           participantId !== touch.participantId && objectValue === OBJECT_BULLET_BILL_VALUE,
@@ -1090,10 +1090,9 @@ export function Scene({
         (untilMs) => typeof untilMs === 'number' && untilMs > nowMs,
       );
       const availableValues = OBJECT_AVAILABLE_ITEM_VALUES.filter((value) => {
-        if (value === OBJECT_THUNDER_VALUE) {
+        if (value === OBJECT_BLUE_SHELL_VALUE) {
           if (!Number.isFinite(collectorPosition)) return false;
-          if (collectorPosition < OBJECT_THUNDER_ELIGIBLE_MIN_POSITION) return false;
-          return !thunderAlreadyHeldByAnotherPlayer;
+          return collectorPosition >= OBJECT_BLUE_SHELL_ELIGIBLE_MIN_POSITION;
         }
 
         if (value === OBJECT_BULLET_BILL_VALUE) {
@@ -1110,6 +1109,7 @@ export function Scene({
         randomValue === OBJECT_MUSHROOM_VALUE ? OBJECT_MUSHROOM_INITIAL_CHARGES
         : randomValue === OBJECT_TRIPLE_BANANA_VALUE ? OBJECT_TRIPLE_BANANA_INITIAL_CHARGES
         : randomValue === OBJECT_TRIPLE_GREEN_SHELL_VALUE ? OBJECT_TRIPLE_GREEN_SHELL_INITIAL_CHARGES
+        : randomValue === OBJECT_TRIPLE_RED_SHELL_VALUE ? OBJECT_TRIPLE_RED_SHELL_INITIAL_CHARGES
         : randomValue > 0 ? OBJECT_DEFAULT_INITIAL_CHARGES
         : 0;
       myObjectByParticipantRef.current = {
@@ -1196,14 +1196,19 @@ export function Scene({
 
   const handleThrowableObjectGroundedParticipantHit = useCallback(
     (throwableId: string, participantId: RaceParticipantId, sourceObjectValue: number) => {
+      void throwableId;
       if (
         sourceObjectValue === OBJECT_BANANA_VALUE ||
         sourceObjectValue === OBJECT_TRIPLE_BANANA_VALUE ||
         sourceObjectValue === OBJECT_GREEN_SHELL_VALUE ||
-        sourceObjectValue === OBJECT_TRIPLE_GREEN_SHELL_VALUE
+        sourceObjectValue === OBJECT_TRIPLE_GREEN_SHELL_VALUE ||
+        sourceObjectValue === OBJECT_RED_SHELL_VALUE ||
+        sourceObjectValue === OBJECT_TRIPLE_RED_SHELL_VALUE ||
+        sourceObjectValue === OBJECT_BLUE_SHELL_VALUE ||
+        sourceObjectValue === OBJECT_BOMB_VALUE
       ) {
         const nowMs = performance.now();
-        const nextUntilMs = nowMs + OBJECT_BANANA_STUN_DURATION_MS;
+        const nextUntilMs = nowMs + OBJECT_THROWABLE_HIT_STUN_DURATION_MS;
         const currentUntilMs = stunUntilByParticipantRef.current[participantId] ?? 0;
         if (nextUntilMs > currentUntilMs) {
           const nextMap = {
@@ -1214,30 +1219,28 @@ export function Scene({
           setStunUntilByParticipant(nextMap);
         }
       }
-
-      removeThrowableObject(throwableId);
     },
-    [removeThrowableObject],
+    [],
   );
 
-  const resolvePoseForwardVector = useCallback((pose: CarPose) => {
-    const fallbackForwardX = Number.isFinite(pose.yaw) ? Math.sin(pose.yaw) : 0;
-    const fallbackForwardZ = Number.isFinite(pose.yaw) ? Math.cos(pose.yaw) : 1;
-    const rawForwardXCandidate = pose.forwardX ?? fallbackForwardX;
-    const rawForwardZCandidate = pose.forwardZ ?? fallbackForwardZ;
-    const rawForwardX = Number.isFinite(rawForwardXCandidate) ? rawForwardXCandidate : fallbackForwardX;
-    const rawForwardZ = Number.isFinite(rawForwardZCandidate) ? rawForwardZCandidate : fallbackForwardZ;
-    const rawLength = Math.hypot(rawForwardX, rawForwardZ);
-    const forwardX = rawLength > 0.0001 ? rawForwardX / rawLength : fallbackForwardX;
-    const forwardZ = rawLength > 0.0001 ? rawForwardZ / rawLength : fallbackForwardZ;
-    return { forwardX, forwardZ };
-  }, []);
+  const resolveCurrentPoseForwardVector = useCallback((pose: CarPose) => resolvePoseForwardVector(pose), []);
+
+  const resolveCurrentVehicleSpeed = useCallback(
+    (pose: CarPose) => {
+      const candidate = pose.speed;
+      if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
+        return Math.max(0, speedProfile.maxForward);
+      }
+      return Math.max(0, Math.abs(candidate));
+    },
+    [speedProfile.maxForward],
+  );
 
   const spawnBananaThrowableObject = useCallback(
     (participantId: RaceParticipantId, sourceObjectValue: number) => {
       const pose = poseRefsByParticipant[participantId]?.current;
       if (!pose) return;
-      const { forwardX, forwardZ } = resolvePoseForwardVector(pose);
+      const { forwardX, forwardZ } = resolveCurrentPoseForwardVector(pose);
 
       const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
       throwableObjectIdCounterRef.current += 1;
@@ -1263,22 +1266,15 @@ export function Scene({
 
       setActiveThrowableObjects((current) => [...current, spawnedObject]);
     },
-    [poseRefsByParticipant, raceConfig.courseId, resolvePoseForwardVector],
+    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentPoseForwardVector],
   );
 
   const spawnGreenShellThrowableObject = useCallback(
     (participantId: RaceParticipantId, sourceObjectValue: number) => {
       const pose = poseRefsByParticipant[participantId]?.current;
       if (!pose) return;
-      const { forwardX, forwardZ } = resolvePoseForwardVector(pose);
-
-      const currentSpeed = (() => {
-        const candidate = pose.speed;
-        if (typeof candidate !== 'number' || !Number.isFinite(candidate)) {
-          return Math.max(0, speedProfile.maxForward);
-        }
-        return Math.max(0, Math.abs(candidate));
-      })();
+      const { forwardX, forwardZ } = resolveCurrentPoseForwardVector(pose);
+      const currentSpeed = resolveCurrentVehicleSpeed(pose);
       const launchSpeed = Math.max(
         OBJECT_GREEN_SHELL_MIN_SPEED,
         currentSpeed * OBJECT_GREEN_SHELL_SPEED_MULTIPLIER,
@@ -1304,7 +1300,256 @@ export function Scene({
 
       setActiveThrowableObjects((current) => [...current, spawnedObject]);
     },
-    [poseRefsByParticipant, raceConfig.courseId, resolvePoseForwardVector, speedProfile.maxForward],
+    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentVehicleSpeed, resolveCurrentPoseForwardVector],
+  );
+
+  const resolveRedShellDirection = useCallback(
+    (position: [number, number, number], ownerParticipantId: RaceParticipantId) => {
+      let nearestTargetDistance = Number.POSITIVE_INFINITY;
+      let targetDirection: { x: number; z: number } | null = null;
+
+      for (const participant of raceConfig.participants) {
+        if (participant.id === ownerParticipantId) continue;
+        const pose = poseRefsByParticipant[participant.id]?.current;
+        if (!pose) continue;
+
+        const dx = pose.x - position[0];
+        const dz = pose.z - position[2];
+        const distance = Math.hypot(dx, dz);
+        if (distance <= 0.0001 || distance > OBJECT_RED_SHELL_TARGET_RADIUS) continue;
+        if (distance >= nearestTargetDistance) continue;
+
+        nearestTargetDistance = distance;
+        targetDirection = {
+          x: dx / distance,
+          z: dz / distance,
+        };
+      }
+
+      if (targetDirection) return targetDirection;
+      if (circuitWaypoints.length === 0) return null;
+
+      let nearestWaypointIndex = 0;
+      let nearestWaypointDistanceSq = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < circuitWaypoints.length; index += 1) {
+        const waypoint = circuitWaypoints[index];
+        if (!waypoint) continue;
+        const dx = waypoint.position[0] - position[0];
+        const dz = waypoint.position[2] - position[2];
+        const distanceSq = dx * dx + dz * dz;
+        if (distanceSq >= nearestWaypointDistanceSq) continue;
+        nearestWaypointDistanceSq = distanceSq;
+        nearestWaypointIndex = index;
+      }
+
+      const nextWaypoint = circuitWaypoints[(nearestWaypointIndex + 1) % circuitWaypoints.length];
+      if (!nextWaypoint) return null;
+
+      const toWaypointX = nextWaypoint.position[0] - position[0];
+      const toWaypointZ = nextWaypoint.position[2] - position[2];
+      const toWaypointLength = Math.hypot(toWaypointX, toWaypointZ);
+      if (toWaypointLength <= 0.0001) return null;
+
+      return {
+        x: toWaypointX / toWaypointLength,
+        z: toWaypointZ / toWaypointLength,
+      };
+    },
+    [circuitWaypoints, poseRefsByParticipant, raceConfig.participants],
+  );
+
+  const resolveParticipantPose = useCallback(
+    (participantId: RaceParticipantId) => poseRefsByParticipant[participantId]?.current ?? null,
+    [poseRefsByParticipant],
+  );
+
+  const resolveParticipantsWithinRadius = useCallback(
+    (position: Vec3, radius: number) => {
+      const radiusSq = radius * radius;
+      return raceConfig.participants
+        .map((participant) => participant.id)
+        .filter((participantId) => {
+          const pose = poseRefsByParticipant[participantId]?.current;
+          if (!pose) return false;
+
+          const dx = pose.x - position[0];
+          const dy = pose.y - position[1];
+          const dz = pose.z - position[2];
+          return dx * dx + dy * dy + dz * dz <= radiusSq;
+        });
+    },
+    [poseRefsByParticipant, raceConfig.participants],
+  );
+
+  const resolveBlueShellTargetParticipantId = useCallback(() => {
+    const liveRanking = getLiveScoreboardSnapshot();
+    return liveRanking[0]?.participantId ?? null;
+  }, [getLiveScoreboardSnapshot]);
+
+  const resolveBlueShellGroundDirection = useCallback(
+    (
+      position: Vec3,
+      ownerParticipantId: RaceParticipantId,
+      targetParticipantId: RaceParticipantId | null,
+    ) => {
+      const fallbackTargetParticipantId = targetParticipantId ?? ownerParticipantId;
+      const targetPose = poseRefsByParticipant[fallbackTargetParticipantId]?.current;
+
+      if (circuitWaypoints.length === 0) {
+        if (!targetPose) return null;
+
+        const dx = targetPose.x - position[0];
+        const dz = targetPose.z - position[2];
+        const distance = Math.hypot(dx, dz);
+        if (distance <= 0.0001) return null;
+        return {
+          x: dx / distance,
+          z: dz / distance,
+        };
+      }
+
+      const nearestWaypointArrayIndex = findNearestWaypointArrayIndex(position, circuitWaypoints);
+      if (nearestWaypointArrayIndex === null) return null;
+
+      let targetWaypointArrayIndex = (nearestWaypointArrayIndex + 1) % circuitWaypoints.length;
+      if (targetPose) {
+        const targetPoseWaypointArrayIndex = findNearestWaypointArrayIndex(
+          [targetPose.x, targetPose.y, targetPose.z],
+          circuitWaypoints,
+        );
+        if (targetPoseWaypointArrayIndex !== null) {
+          const stepsAhead =
+            (targetPoseWaypointArrayIndex - nearestWaypointArrayIndex + circuitWaypoints.length) %
+            circuitWaypoints.length;
+          if (stepsAhead <= 2) {
+            targetWaypointArrayIndex = targetPoseWaypointArrayIndex;
+          }
+        }
+      }
+
+      const targetWaypoint = circuitWaypoints[targetWaypointArrayIndex];
+      if (!targetWaypoint) return null;
+
+      const dx = targetWaypoint.position[0] - position[0];
+      const dz = targetWaypoint.position[2] - position[2];
+      const distance = Math.hypot(dx, dz);
+      if (distance <= 0.0001) return null;
+
+      return {
+        x: dx / distance,
+        z: dz / distance,
+      };
+    },
+    [circuitWaypoints, poseRefsByParticipant],
+  );
+
+  const spawnRedShellThrowableObject = useCallback(
+    (participantId: RaceParticipantId, sourceObjectValue: number) => {
+      const pose = poseRefsByParticipant[participantId]?.current;
+      if (!pose) return;
+      const { forwardX, forwardZ } = resolveCurrentPoseForwardVector(pose);
+      const currentSpeed = resolveCurrentVehicleSpeed(pose);
+      const launchSpeed = Math.max(
+        OBJECT_RED_SHELL_MIN_SPEED,
+        currentSpeed * OBJECT_RED_SHELL_SPEED_MULTIPLIER,
+      );
+
+      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      throwableObjectIdCounterRef.current += 1;
+
+      const spawnedObject: ThrowableObjectEntry = {
+        throwableId,
+        sourceObjectValue,
+        ownerParticipantId: participantId,
+        behavior: 'red-shell',
+        modelPath: OBJECT_RED_SHELL_MODEL_PATH,
+        spawnPosition: [
+          pose.x + forwardX * OBJECT_RED_SHELL_SPAWN_FORWARD_OFFSET,
+          pose.y + OBJECT_RED_SHELL_SPAWN_UP_OFFSET,
+          pose.z + forwardZ * OBJECT_RED_SHELL_SPAWN_FORWARD_OFFSET,
+        ],
+        launchVelocity: [forwardX * launchSpeed, 0, forwardZ * launchSpeed],
+        ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
+      };
+
+      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+    },
+    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentVehicleSpeed, resolveCurrentPoseForwardVector],
+  );
+
+  const spawnBlueShellThrowableObject = useCallback(
+    (participantId: RaceParticipantId, sourceObjectValue: number) => {
+      const pose = poseRefsByParticipant[participantId]?.current;
+      if (!pose) return;
+      const { forwardX, forwardZ } = resolveCurrentPoseForwardVector(pose);
+      const currentSpeed = resolveCurrentVehicleSpeed(pose);
+      const launchSpeed = Math.max(
+        OBJECT_BLUE_SHELL_MIN_SPEED,
+        currentSpeed * OBJECT_BLUE_SHELL_SPEED_MULTIPLIER,
+      );
+
+      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      throwableObjectIdCounterRef.current += 1;
+
+      const spawnedObject: ThrowableObjectEntry = {
+        throwableId,
+        sourceObjectValue,
+        ownerParticipantId: participantId,
+        behavior: 'blue-shell',
+        modelPath: OBJECT_BLUE_SHELL_MODEL_PATH,
+        spawnPosition: [
+          pose.x + forwardX * OBJECT_BLUE_SHELL_SPAWN_FORWARD_OFFSET,
+          pose.y + OBJECT_BLUE_SHELL_SPAWN_UP_OFFSET,
+          pose.z + forwardZ * OBJECT_BLUE_SHELL_SPAWN_FORWARD_OFFSET,
+        ],
+        launchVelocity: [forwardX * launchSpeed, 0, forwardZ * launchSpeed],
+        ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
+      };
+
+      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+    },
+    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentVehicleSpeed, resolveCurrentPoseForwardVector],
+  );
+
+  const spawnBombThrowableObject = useCallback(
+    (participantId: RaceParticipantId, sourceObjectValue: number) => {
+      const pose = poseRefsByParticipant[participantId]?.current;
+      if (!pose) return;
+
+      const { forwardX, forwardZ } = resolveCurrentPoseForwardVector(pose);
+      const currentSpeed = resolveCurrentVehicleSpeed(pose);
+      const forwardSpeed = Math.max(
+        OBJECT_BOMB_MIN_FORWARD_SPEED,
+        currentSpeed * OBJECT_BOMB_SPEED_MULTIPLIER,
+      );
+      const flightTimeSeconds = OBJECT_BOMB_TARGET_DISTANCE / Math.max(0.001, forwardSpeed);
+      const upwardSpeed = 0.5 * OBJECT_BOMB_GRAVITY * flightTimeSeconds;
+
+      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      throwableObjectIdCounterRef.current += 1;
+
+      const spawnedObject: ThrowableObjectEntry = {
+        throwableId,
+        sourceObjectValue,
+        ownerParticipantId: participantId,
+        behavior: 'bomb',
+        modelPath: OBJECT_BOMB_MODEL_PATH,
+        spawnPosition: [
+          pose.x + forwardX * OBJECT_BOMB_SPAWN_FORWARD_OFFSET,
+          pose.y + OBJECT_BOMB_SPAWN_UP_OFFSET,
+          pose.z + forwardZ * OBJECT_BOMB_SPAWN_FORWARD_OFFSET,
+        ],
+        launchVelocity: [
+          forwardX * forwardSpeed,
+          upwardSpeed,
+          forwardZ * forwardSpeed,
+        ],
+        ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
+      };
+
+      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+    },
+    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentVehicleSpeed, resolveCurrentPoseForwardVector],
   );
 
   const handleParticipantObjectUsed = useCallback(
@@ -1325,38 +1570,27 @@ export function Scene({
           spawnGreenShellThrowableObject(participantId, normalizedObject);
           return;
         }
+        if (
+          normalizedObject === OBJECT_RED_SHELL_VALUE ||
+          normalizedObject === OBJECT_TRIPLE_RED_SHELL_VALUE
+        ) {
+          spawnRedShellThrowableObject(participantId, normalizedObject);
+          return;
+        }
+
+        if (normalizedObject === OBJECT_BLUE_SHELL_VALUE) {
+          spawnBlueShellThrowableObject(participantId, normalizedObject);
+          return;
+        }
+
+        if (normalizedObject === OBJECT_BOMB_VALUE) {
+          spawnBombThrowableObject(participantId, normalizedObject);
+          return;
+        }
 
         console.log(
           `[object][${participantId}] objet jetable ${normalizedObject} utilise mais comportement non implemente.`,
         );
-        return;
-      }
-
-      if (normalizedObject === OBJECT_THUNDER_VALUE) {
-        const liveRanking = getLiveScoreboardSnapshot();
-        const sourceEntry = liveRanking.find((entry) => entry.participantId === participantId);
-        if (!sourceEntry) return;
-
-        const nowMs = performance.now();
-        const nextDebuffMap = { ...thunderDebuffUntilByParticipantRef.current };
-        let hasAnyUpdate = false;
-
-        for (const entry of liveRanking) {
-          if (entry.participantId === participantId) continue;
-          if (entry.position >= sourceEntry.position) continue;
-
-          const durationSeconds = OBJECT_THUNDER_BASE_DURATION_SECONDS / Math.max(1, entry.position);
-          const candidateUntilMs = nowMs + durationSeconds * 1000;
-          const currentUntilMs = nextDebuffMap[entry.participantId] ?? 0;
-          if (candidateUntilMs <= currentUntilMs) continue;
-
-          nextDebuffMap[entry.participantId] = candidateUntilMs;
-          hasAnyUpdate = true;
-        }
-
-        if (!hasAnyUpdate) return;
-        thunderDebuffUntilByParticipantRef.current = nextDebuffMap;
-        setThunderDebuffUntilByParticipant(nextDebuffMap);
         return;
       }
 
@@ -1388,7 +1622,13 @@ export function Scene({
         setCoinsByParticipant(nextMap);
       }
     },
-    [getLiveScoreboardSnapshot, spawnBananaThrowableObject, spawnGreenShellThrowableObject],
+    [
+      spawnBananaThrowableObject,
+      spawnBombThrowableObject,
+      spawnBlueShellThrowableObject,
+      spawnGreenShellThrowableObject,
+      spawnRedShellThrowableObject,
+    ],
   );
 
   const handleParticipantObjectConsumed = useCallback(
@@ -1403,7 +1643,8 @@ export function Scene({
       if (
         normalizedObject === OBJECT_MUSHROOM_VALUE ||
         normalizedObject === OBJECT_TRIPLE_BANANA_VALUE ||
-        normalizedObject === OBJECT_TRIPLE_GREEN_SHELL_VALUE
+        normalizedObject === OBJECT_TRIPLE_GREEN_SHELL_VALUE ||
+        normalizedObject === OBJECT_TRIPLE_RED_SHELL_VALUE
       ) {
         const currentCharges = myObjectChargesByParticipantRef.current[participantId] ?? 0;
         const nextCharges = Math.max(0, currentCharges - consumeCount);
@@ -1632,6 +1873,113 @@ export function Scene({
     () => computeLiveScoreboard(lapProgressByPlayer),
     [computeLiveScoreboard, lapProgressByPlayer, liveScoreboardTick],
   );
+  const livePositionByParticipant = useMemo(() => {
+    const positions = new Map<RaceParticipantId, number>();
+    for (const entry of liveScoreboard) {
+      positions.set(entry.participantId, entry.position);
+    }
+    return positions;
+  }, [liveScoreboard]);
+  const botItemTacticalStateByParticipant = useMemo<Record<RaceParticipantId, BotItemTacticalState>>(() => {
+    const tacticalStateByParticipant = {} as Record<RaceParticipantId, BotItemTacticalState>;
+    const leaderParticipantId = liveScoreboard[0]?.participantId ?? null;
+    const leaderPose = leaderParticipantId ? (poseRefsByParticipant[leaderParticipantId]?.current ?? null) : null;
+
+    for (const participant of raceConfig.participants) {
+      const participantId = participant.id;
+      const pose = poseRefsByParticipant[participantId]?.current;
+      const currentPosition = livePositionByParticipant.get(participantId) ?? null;
+
+      if (!pose) {
+        tacticalStateByParticipant[participantId] = {
+          currentPosition,
+          leaderDistance: null,
+          nearestOpponentAheadDistance: null,
+          nearestOpponentBehindDistance: null,
+          straightAheadTargetDistance: null,
+          straightBehindTargetDistance: null,
+        };
+        continue;
+      }
+
+      const { forwardX, forwardZ } = resolvePoseForwardVector(pose);
+      const rightX = forwardZ;
+      const rightZ = -forwardX;
+      let leaderDistance: number | null = null;
+      if (leaderPose && leaderParticipantId && leaderParticipantId !== participantId) {
+        leaderDistance = Math.hypot(
+          leaderPose.x - pose.x,
+          leaderPose.y - pose.y,
+          leaderPose.z - pose.z,
+        );
+      }
+
+      let nearestOpponentAheadDistance: number | null = null;
+      let nearestOpponentBehindDistance: number | null = null;
+      let straightAheadTargetDistance: number | null = null;
+      let straightBehindTargetDistance: number | null = null;
+
+      for (const otherParticipant of raceConfig.participants) {
+        if (otherParticipant.id === participantId) continue;
+        const otherPose = poseRefsByParticipant[otherParticipant.id]?.current;
+        if (!otherPose) continue;
+
+        const dx = otherPose.x - pose.x;
+        const dy = otherPose.y - pose.y;
+        const dz = otherPose.z - pose.z;
+        const distance = Math.hypot(dx, dy, dz);
+        if (distance <= 0.0001) continue;
+
+        const otherPosition = livePositionByParticipant.get(otherParticipant.id) ?? null;
+        if (currentPosition !== null && otherPosition !== null) {
+          if (otherPosition < currentPosition) {
+            nearestOpponentAheadDistance =
+              nearestOpponentAheadDistance === null ? distance : Math.min(nearestOpponentAheadDistance, distance);
+          } else if (otherPosition > currentPosition) {
+            nearestOpponentBehindDistance =
+              nearestOpponentBehindDistance === null ? distance : Math.min(nearestOpponentBehindDistance, distance);
+          }
+        }
+
+        const forwardDot = dx * forwardX + dz * forwardZ;
+        const lateralDistance = Math.abs(dx * rightX + dz * rightZ);
+        const laneTolerance = Math.max(4, distance * 0.18);
+
+        if (
+          currentPosition !== null &&
+          otherPosition !== null &&
+          otherPosition < currentPosition &&
+          forwardDot > 0 &&
+          lateralDistance <= laneTolerance
+        ) {
+          straightAheadTargetDistance =
+            straightAheadTargetDistance === null ? distance : Math.min(straightAheadTargetDistance, distance);
+        }
+
+        if (
+          currentPosition !== null &&
+          otherPosition !== null &&
+          otherPosition > currentPosition &&
+          forwardDot < 0 &&
+          lateralDistance <= laneTolerance
+        ) {
+          straightBehindTargetDistance =
+            straightBehindTargetDistance === null ? distance : Math.min(straightBehindTargetDistance, distance);
+        }
+      }
+
+      tacticalStateByParticipant[participantId] = {
+        currentPosition,
+        leaderDistance,
+        nearestOpponentAheadDistance,
+        nearestOpponentBehindDistance,
+        straightAheadTargetDistance,
+        straightBehindTargetDistance,
+      };
+    }
+
+    return tacticalStateByParticipant;
+  }, [livePositionByParticipant, liveScoreboard, poseRefsByParticipant, raceConfig.participants]);
   const isCourseRankingVisible = overlayStep === 'course-ranking';
   const isCourseActionVisible = overlayStep === 'course-actions';
   const isGrandPrixResultVisible = overlayStep === 'grand-prix-result';
@@ -2194,6 +2542,11 @@ export function Scene({
                 spawnPosition={throwableObject.spawnPosition}
                 launchVelocity={throwableObject.launchVelocity}
                 ttlMs={throwableObject.ttlMs}
+                resolveRedShellDirection={resolveRedShellDirection}
+                resolveBlueShellTargetParticipantId={resolveBlueShellTargetParticipantId}
+                resolveBlueShellGroundDirection={resolveBlueShellGroundDirection}
+                resolveParticipantPose={resolveParticipantPose}
+                resolveParticipantsWithinRadius={resolveParticipantsWithinRadius}
                 onExpired={handleThrowableObjectExpired}
                 onGroundedParticipantHit={handleThrowableObjectGroundedParticipantHit}
               />
@@ -2236,8 +2589,9 @@ export function Scene({
                 thunderDebuffUntilTimestampMs={thunderDebuffUntilByParticipant[participant.id] ?? 0}
                 bulletBillUntilTimestampMs={bulletBillUntilByParticipant[participant.id] ?? 0}
                 stunUntilTimestampMs={stunUntilByParticipant[participant.id] ?? 0}
+                botItemTacticalState={botItemTacticalStateByParticipant[participant.id] ?? null}
                 objectItemMaxValue={OBJECT_ITEM_MAX_VALUE}
-                miniObjectModelPaths={OBJECT_ATTACHABLE_MODEL_PATHS}
+                miniObjectModelPaths={RACE_ATTACHABLE_MODEL_URLS}
                 onObjectUsed={handleParticipantObjectUsed}
                 onObjectConsumed={handleParticipantObjectConsumed}
               />

@@ -12,8 +12,8 @@ type AttachableObjectProps = {
   voidModelPath?: string;
   mushroomModelPath?: string;
   mushroomObjectValue?: number;
-  thunderModelPath?: string;
-  thunderObjectValue?: number;
+  bombModelPath?: string;
+  bombObjectValue?: number;
   bulletBillModelPath?: string;
   bulletBillObjectValue?: number;
   coinModelPath?: string;
@@ -24,6 +24,11 @@ type AttachableObjectProps = {
   greenShellModelPath?: string;
   greenShellObjectValue?: number;
   tripleGreenShellObjectValue?: number;
+  redShellModelPath?: string;
+  redShellObjectValue?: number;
+  tripleRedShellObjectValue?: number;
+  blueShellModelPath?: string;
+  blueShellObjectValue?: number;
   position?: Vec3;
   rotation?: Vec3;
   scale?: number | Vec3;
@@ -61,8 +66,8 @@ export function AttachableObject({
   voidModelPath = DEFAULT_VOID_MODEL_PATH,
   mushroomModelPath = 'models/miniObject/itemMushroom.glb',
   mushroomObjectValue = 2,
-  thunderModelPath = 'models/miniObject/ItemThunder.glb',
-  thunderObjectValue = 10,
+  bombModelPath = 'models/miniObject/itemBomb.glb',
+  bombObjectValue = 10,
   bulletBillModelPath = 'models/miniObject/itemBulletBill.glb',
   bulletBillObjectValue = 11,
   coinModelPath = 'models/miniObject/itemCoin.glb',
@@ -73,6 +78,11 @@ export function AttachableObject({
   greenShellModelPath = 'models/miniObject/itemGreenShell.glb',
   greenShellObjectValue = 5,
   tripleGreenShellObjectValue = 6,
+  redShellModelPath = 'models/miniObject/itemRedShell.glb',
+  redShellObjectValue = 7,
+  tripleRedShellObjectValue = 8,
+  blueShellModelPath = 'models/miniObject/itemBlueShell.glb',
+  blueShellObjectValue = 9,
   position = [0, 0, 0],
   rotation = [0, 0, 0],
   scale = 1,
@@ -109,12 +119,21 @@ export function AttachableObject({
       : 0,
     [myObject, normalizedCharges, tripleGreenShellObjectValue],
   );
+  const tripleRedShellCount = useMemo(
+    () =>
+      myObject === tripleRedShellObjectValue ? Math.min(3, Math.max(0, normalizedCharges))
+      : 0,
+    [myObject, normalizedCharges, tripleRedShellObjectValue],
+  );
   const shouldRenderMushroomStack = myObject === mushroomObjectValue;
   const shouldRenderTripleBananaStack = myObject === tripleBananaObjectValue;
   const shouldRenderSingleBanana = myObject === bananaObjectValue;
   const shouldRenderTripleGreenShellStack = myObject === tripleGreenShellObjectValue;
   const shouldRenderSingleGreenShell = myObject === greenShellObjectValue;
-  const shouldRenderThunder = myObject === thunderObjectValue;
+  const shouldRenderTripleRedShellStack = myObject === tripleRedShellObjectValue;
+  const shouldRenderSingleRedShell = myObject === redShellObjectValue;
+  const shouldRenderBlueShell = myObject === blueShellObjectValue;
+  const shouldRenderBomb = myObject === bombObjectValue;
   const shouldRenderBulletBill = myObject === bulletBillObjectValue;
   const shouldRenderCoin = myObject === coinObjectValue;
 
@@ -148,8 +167,20 @@ export function AttachableObject({
         <Model src={voidModelPath} scale={scale} />
       : shouldRenderSingleGreenShell ?
         <Model src={greenShellModelPath} scale={scale} />
-      : shouldRenderThunder ?
-        <Model src={thunderModelPath} scale={scale} />
+      : tripleRedShellCount > 0 ?
+        Array.from({ length: tripleRedShellCount }, (_, index) => (
+          <group key={`triple-red-shell-charge-${index}`} position={[0, 0, -index * 0.92]}>
+            <Model src={redShellModelPath} scale={scale} />
+          </group>
+        ))
+      : shouldRenderTripleRedShellStack ?
+        <Model src={voidModelPath} scale={scale} />
+      : shouldRenderSingleRedShell ?
+        <Model src={redShellModelPath} scale={scale} />
+      : shouldRenderBlueShell ?
+        <Model src={blueShellModelPath} scale={scale} />
+      : shouldRenderBomb ?
+        <Model src={bombModelPath} scale={scale} />
       : shouldRenderBulletBill ?
         <Model src={bulletBillModelPath} scale={scale} />
       : shouldRenderCoin ?

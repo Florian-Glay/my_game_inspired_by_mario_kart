@@ -38,6 +38,7 @@ import type {
 import {
   clearGLTFAssetCacheEntries,
   getRaceAssetUrls,
+  preloadGLTFAssetCacheEntries,
   scheduleAllKnownModelCacheClear,
   scheduleGLTFAssetCacheClear,
 } from './utils/raceAssetMemory';
@@ -576,6 +577,8 @@ export function App() {
           setErrorMessage(`Assets manquants: ${missingAssets.join(', ')}`);
           return false;
         }
+
+        preloadGLTFAssetCacheEntries(requiredAssetUrls);
 
         const nextAssetSet = new Set(requiredAssetUrls);
         const staleAssetUrls = Array.from(loadedRaceAssetUrlsRef.current).filter(

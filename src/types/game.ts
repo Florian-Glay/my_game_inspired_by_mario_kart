@@ -68,6 +68,15 @@ export type CarPose = {
   qw?: number;
 };
 
+export type BotItemTacticalState = {
+  currentPosition: number | null;
+  leaderDistance: number | null;
+  nearestOpponentAheadDistance: number | null;
+  nearestOpponentBehindDistance: number | null;
+  straightAheadTargetDistance: number | null;
+  straightBehindTargetDistance: number | null;
+};
+
 export type RaceParticipantConfig = {
   id: RaceParticipantId;
   displayName: string;

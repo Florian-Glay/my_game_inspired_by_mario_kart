@@ -34,6 +34,7 @@ import { gameMode } from '../state/gamemode';
 import { getSurfaceTriggerType, type SurfaceTriggerType } from '../state/surfaceTriggerRegistry';
 import { computeBotAutopilotInput, type BotWaypoint } from '../ai/botAutopilot';
 import type {
+  BotItemTacticalState,
   CarPose,
   KeyBindings,
   ParticipantControlMode,
@@ -103,6 +104,7 @@ type Props = {
   thunderDebuffUntilTimestampMs?: number;
   bulletBillUntilTimestampMs?: number;
   stunUntilTimestampMs?: number;
+  botItemTacticalState?: BotItemTacticalState | null;
   objectItemMaxValue?: number;
   miniObjectModelPaths?: readonly string[];
   onObjectUsed?: (participantId: RaceParticipantId, usedObject: number) => void;
@@ -235,7 +237,10 @@ const OBJECT_3_BANANA_VALUE = 3;
 const OBJECT_4_TRIPLE_BANANA_VALUE = 4;
 const OBJECT_5_GREEN_SHELL_VALUE = 5;
 const OBJECT_6_TRIPLE_GREEN_SHELL_VALUE = 6;
-const OBJECT_10_THUNDER_VALUE = 10;
+const OBJECT_7_RED_SHELL_VALUE = 7;
+const OBJECT_8_TRIPLE_RED_SHELL_VALUE = 8;
+const OBJECT_9_BLUE_SHELL_VALUE = 9;
+const OBJECT_10_BOMB_VALUE = 10;
 const OBJECT_11_BULLET_BILL_VALUE = 11;
 const OBJECT_13_COIN_VALUE = 13;
 const PLAYER_COIN_MAX = 10;
@@ -244,7 +249,21 @@ const BULLET_BILL_SPEED_MULTIPLIER = 2;
 const THUNDER_DEBUFF_SIZE_MULTIPLIER = 0.5;
 const THUNDER_DEBUFF_SPEED_MULTIPLIER = 1 / 1.5;
 const STUN_SPIN_TOTAL_RAD = Math.PI * 2;
-const STUN_SPIN_RATE_RAD_PER_SEC = Math.PI * 2;
+const BOT_AUTO_ITEM_DECISION_MIN_DELAY_MS = 280;
+const BOT_AUTO_ITEM_DECISION_MAX_DELAY_MS = 900;
+const BOT_AUTO_ITEM_RECHECK_MS = 320;
+const BOT_AUTO_ITEM_RECHECK_JITTER_MS = 240;
+const BOT_AUTO_BOOST_SPEED_RATIO = 0.78;
+const BOT_AUTO_MUSHROOM_SPEED_RATIO = 0.88;
+const BOT_AUTO_STRAIGHT_STEER_THRESHOLD = 0.35;
+const BOT_AUTO_GREEN_SHELL_RANGE = 32;
+const BOT_AUTO_RED_SHELL_RANGE = 45;
+const BOT_AUTO_BLUE_SHELL_MIN_LEADER_DISTANCE = 20;
+const BOT_AUTO_BANANA_REAR_RANGE = 18;
+const BOT_AUTO_BOMB_AHEAD_RANGE = 55;
+const BOT_AUTO_BOMB_REAR_RANGE = 18;
+const BOT_AUTO_BULLET_BILL_MIN_POSITION = 8;
+const BOT_AUTO_BULLET_BILL_GAP_RANGE = 28;
 const BOOSTER_RETRIGGER_COOLDOWN_MS = 150;
 const START_BOOST_CHARGE_FROM_COUNTDOWN = 2;
 const START_BOOST_MAX_CHARGE_MS = 2000;
@@ -317,6 +336,7 @@ export default function DrivableModel({
   thunderDebuffUntilTimestampMs = 0,
   bulletBillUntilTimestampMs = 0,
   stunUntilTimestampMs = 0,
+  botItemTacticalState = null,
   objectItemMaxValue = DEFAULT_OBJECT_ITEM_MAX_VALUE,
   miniObjectModelPaths = [],
   onObjectUsed,
@@ -420,7 +440,10 @@ export default function DrivableModel({
   const bulletBillWasActiveRef = useRef(false);
   const stunUntilTimestampMsRef = useRef(stunUntilTimestampMs);
   const wasStunnedRef = useRef(false);
-  const stunSpinRemainingRadRef = useRef(0);
+  const stunSpinStartTimestampMsRef = useRef<number | null>(null);
+  const stunSpinEndTimestampMsRef = useRef<number | null>(null);
+  const stunSpinLastProgressRef = useRef(0);
+  const stunSpinPendingCatchupRadRef = useRef(0);
   const poseAnchorRef = useRef<Group | null>(null);
   const lakituFadeRef = useRef(0);
   const lakituVisibleTargetRef = useRef(false);
@@ -526,6 +549,11 @@ export default function DrivableModel({
   }, [coinCount]);
   const normalizedMyObjectRef = useRef(normalizedMyObject);
   const normalizedMyObjectChargesRef = useRef(normalizedMyObjectCharges);
+  const botItemTacticalStateRef = useRef<BotItemTacticalState | null>(botItemTacticalState ?? null);
+  const botAutoItemObservedObjectRef = useRef(normalizedMyObject);
+  const botAutoItemObservedChargesRef = useRef(normalizedMyObjectCharges);
+  const botAutoItemCooldownUntilMsRef = useRef(0);
+  const botAutoItemNextThinkAtMsRef = useRef(0);
   useEffect(() => {
     stunUntilTimestampMsRef.current = stunUntilTimestampMs;
   }, [stunUntilTimestampMs]);
@@ -535,6 +563,30 @@ export default function DrivableModel({
   useEffect(() => {
     normalizedMyObjectChargesRef.current = normalizedMyObjectCharges;
   }, [normalizedMyObjectCharges]);
+  useEffect(() => {
+    botItemTacticalStateRef.current = botItemTacticalState ?? null;
+  }, [botItemTacticalState]);
+  useEffect(() => {
+    const objectChanged =
+      botAutoItemObservedObjectRef.current !== normalizedMyObject ||
+      botAutoItemObservedChargesRef.current !== normalizedMyObjectCharges;
+    botAutoItemObservedObjectRef.current = normalizedMyObject;
+    botAutoItemObservedChargesRef.current = normalizedMyObjectCharges;
+    if (!objectChanged) return;
+
+    const nowMs = performance.now();
+    if (normalizedMyObject <= 0) {
+      botAutoItemCooldownUntilMsRef.current = 0;
+      botAutoItemNextThinkAtMsRef.current = 0;
+      return;
+    }
+
+    botAutoItemCooldownUntilMsRef.current = 0;
+    botAutoItemNextThinkAtMsRef.current =
+      nowMs +
+      BOT_AUTO_ITEM_DECISION_MIN_DELAY_MS +
+      Math.random() * (BOT_AUTO_ITEM_DECISION_MAX_DELAY_MS - BOT_AUTO_ITEM_DECISION_MIN_DELAY_MS);
+  }, [normalizedMyObject, normalizedMyObjectCharges]);
   const vehicleColliderUserData = useMemo(
     () => ({
       participantId,
@@ -1074,76 +1126,242 @@ export default function DrivableModel({
 
   const tryUseHeldObject = () => {
     const nowMs = performance.now();
-    if (nowMs < stunUntilTimestampMsRef.current) return;
+    if (nowMs < stunUntilTimestampMsRef.current) return false;
 
     const currentObject = normalizedMyObjectRef.current;
-    if (currentObject <= 0) return;
-    if (currentObject > objectItemMaxValue) return;
+    if (currentObject <= 0) return false;
+    if (currentObject > objectItemMaxValue) return false;
 
     if (currentObject === 1) {
       activateBoost(OBJECT_1_BOOST_STRENGTH, OBJECT_1_BOOST_DURATION_MS);
       onObjectConsumed?.(participantId, currentObject);
-      return;
+      return true;
     }
 
     if (currentObject === 2) {
       const currentCharges = normalizedMyObjectChargesRef.current;
-      if (currentCharges <= 0) return;
+      if (currentCharges <= 0) return false;
 
       activateBoost(OBJECT_2_BOOST_STRENGTH, OBJECT_2_BOOST_DURATION_MS);
       onObjectConsumed?.(participantId, currentObject, 1);
-      return;
+      return true;
     }
 
     if (currentObject === OBJECT_3_BANANA_VALUE) {
       onObjectUsed?.(participantId, currentObject);
       onObjectConsumed?.(participantId, currentObject, 1);
-      return;
+      return true;
     }
 
     if (currentObject === OBJECT_4_TRIPLE_BANANA_VALUE) {
       const currentCharges = normalizedMyObjectChargesRef.current;
-      if (currentCharges <= 0) return;
+      if (currentCharges <= 0) return false;
 
       onObjectUsed?.(participantId, currentObject);
       onObjectConsumed?.(participantId, currentObject, 1);
-      return;
+      return true;
     }
 
     if (currentObject === OBJECT_5_GREEN_SHELL_VALUE) {
       onObjectUsed?.(participantId, currentObject);
       onObjectConsumed?.(participantId, currentObject, 1);
-      return;
+      return true;
     }
 
     if (currentObject === OBJECT_6_TRIPLE_GREEN_SHELL_VALUE) {
       const currentCharges = normalizedMyObjectChargesRef.current;
-      if (currentCharges <= 0) return;
+      if (currentCharges <= 0) return false;
 
       onObjectUsed?.(participantId, currentObject);
       onObjectConsumed?.(participantId, currentObject, 1);
-      return;
+      return true;
     }
 
-    if (currentObject === OBJECT_10_THUNDER_VALUE) {
+    if (currentObject === OBJECT_7_RED_SHELL_VALUE) {
       onObjectUsed?.(participantId, currentObject);
       onObjectConsumed?.(participantId, currentObject, 1);
-      return;
+      return true;
+    }
+
+    if (currentObject === OBJECT_8_TRIPLE_RED_SHELL_VALUE) {
+      const currentCharges = normalizedMyObjectChargesRef.current;
+      if (currentCharges <= 0) return false;
+
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return true;
+    }
+
+    if (currentObject === OBJECT_9_BLUE_SHELL_VALUE) {
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return true;
+    }
+
+    if (currentObject === OBJECT_10_BOMB_VALUE) {
+      onObjectUsed?.(participantId, currentObject);
+      onObjectConsumed?.(participantId, currentObject, 1);
+      return true;
     }
 
     if (currentObject === OBJECT_11_BULLET_BILL_VALUE) {
       onObjectUsed?.(participantId, currentObject);
       onObjectConsumed?.(participantId, currentObject, 1);
-      return;
+      return true;
     }
 
     if (currentObject === OBJECT_13_COIN_VALUE) {
       onObjectUsed?.(participantId, currentObject);
       onObjectConsumed?.(participantId, currentObject, 1);
-      return;
+      return true;
     }
 
     console.log(`[object][${participantId}] objet ${currentObject} recupere mais fonctionnalite non implementee.`);
+    return false;
+  };
+
+  const scheduleNextBotAutoItemThink = (
+    nowMs: number,
+    baseDelayMs: number = BOT_AUTO_ITEM_RECHECK_MS,
+    jitterMs: number = BOT_AUTO_ITEM_RECHECK_JITTER_MS,
+  ) => {
+    botAutoItemNextThinkAtMsRef.current =
+      nowMs + baseDelayMs + Math.random() * Math.max(0, jitterMs);
+  };
+
+  const getBotAutoItemCooldownMs = (objectValue: number) => {
+    switch (objectValue) {
+      case 1:
+        return 2200;
+      case 2:
+        return 1600;
+      case OBJECT_3_BANANA_VALUE:
+      case OBJECT_4_TRIPLE_BANANA_VALUE:
+        return 1800;
+      case OBJECT_5_GREEN_SHELL_VALUE:
+      case OBJECT_6_TRIPLE_GREEN_SHELL_VALUE:
+        return 1500;
+      case OBJECT_7_RED_SHELL_VALUE:
+      case OBJECT_8_TRIPLE_RED_SHELL_VALUE:
+        return 1700;
+      case OBJECT_9_BLUE_SHELL_VALUE:
+        return 2600;
+      case OBJECT_10_BOMB_VALUE:
+        return 2200;
+      case OBJECT_11_BULLET_BILL_VALUE:
+        return 4000;
+      case OBJECT_13_COIN_VALUE:
+        return 2600;
+      default:
+        return 1500;
+    }
+  };
+
+  const shouldBotAutoUseHeldObject = ({
+    currentObject,
+    boostActive,
+    bulletBillActive,
+    steerInput,
+  }: {
+    currentObject: number;
+    boostActive: boolean;
+    bulletBillActive: boolean;
+    steerInput: number;
+  }) => {
+    if (bulletBillActive) return false;
+
+    const tacticalState = botItemTacticalStateRef.current;
+    const speedAbs = Math.abs(speedRef.current);
+    const isStraightEnough = Math.abs(steerInput) <= BOT_AUTO_STRAIGHT_STEER_THRESHOLD;
+    const straightAheadDistance = tacticalState?.straightAheadTargetDistance ?? null;
+    const straightBehindDistance = tacticalState?.straightBehindTargetDistance ?? null;
+    const nearestAheadDistance = tacticalState?.nearestOpponentAheadDistance ?? null;
+    const nearestBehindDistance = tacticalState?.nearestOpponentBehindDistance ?? null;
+    const currentPosition = tacticalState?.currentPosition ?? null;
+    const leaderDistance = tacticalState?.leaderDistance ?? null;
+
+    switch (currentObject) {
+      case 1:
+        return !boostActive && isStraightEnough && speedAbs <= maxForward * BOT_AUTO_BOOST_SPEED_RATIO;
+      case 2:
+        return !boostActive && isStraightEnough && speedAbs <= maxForward * BOT_AUTO_MUSHROOM_SPEED_RATIO;
+      case OBJECT_3_BANANA_VALUE:
+      case OBJECT_4_TRIPLE_BANANA_VALUE:
+        return (
+          (straightBehindDistance !== null && straightBehindDistance <= BOT_AUTO_BANANA_REAR_RANGE) ||
+          (nearestBehindDistance !== null && nearestBehindDistance <= BOT_AUTO_BANANA_REAR_RANGE * 0.75)
+        );
+      case OBJECT_5_GREEN_SHELL_VALUE:
+      case OBJECT_6_TRIPLE_GREEN_SHELL_VALUE:
+        return (
+          isStraightEnough &&
+          straightAheadDistance !== null &&
+          straightAheadDistance <= BOT_AUTO_GREEN_SHELL_RANGE
+        );
+      case OBJECT_7_RED_SHELL_VALUE:
+      case OBJECT_8_TRIPLE_RED_SHELL_VALUE:
+        return nearestAheadDistance !== null && nearestAheadDistance <= BOT_AUTO_RED_SHELL_RANGE;
+      case OBJECT_9_BLUE_SHELL_VALUE:
+        return (
+          currentPosition !== null &&
+          currentPosition > 1 &&
+          leaderDistance !== null &&
+          leaderDistance >= BOT_AUTO_BLUE_SHELL_MIN_LEADER_DISTANCE
+        );
+      case OBJECT_10_BOMB_VALUE:
+        return (
+          (isStraightEnough &&
+            straightAheadDistance !== null &&
+            straightAheadDistance <= BOT_AUTO_BOMB_AHEAD_RANGE) ||
+          (nearestBehindDistance !== null && nearestBehindDistance <= BOT_AUTO_BOMB_REAR_RANGE)
+        );
+      case OBJECT_11_BULLET_BILL_VALUE:
+        return (
+          currentPosition !== null &&
+          currentPosition >= BOT_AUTO_BULLET_BILL_MIN_POSITION &&
+          ((nearestAheadDistance !== null && nearestAheadDistance >= BOT_AUTO_BULLET_BILL_GAP_RANGE) ||
+            speedAbs <= maxForward * 0.7)
+        );
+      case OBJECT_13_COIN_VALUE:
+        return (
+          normalizedCoinCount < PLAYER_COIN_MAX &&
+          !boostActive &&
+          (straightAheadDistance === null || straightAheadDistance > 18)
+        );
+      default:
+        return false;
+    }
+  };
+
+  const tryAutoUseHeldObject = ({
+    nowMs,
+    boostActive,
+    bulletBillActive,
+    steerInput,
+  }: {
+    nowMs: number;
+    boostActive: boolean;
+    bulletBillActive: boolean;
+    steerInput: number;
+  }) => {
+    const currentObject = normalizedMyObjectRef.current;
+    if (currentObject <= 0 || currentObject > objectItemMaxValue) return;
+    if (nowMs < botAutoItemCooldownUntilMsRef.current) return;
+    if (nowMs < botAutoItemNextThinkAtMsRef.current) return;
+
+    if (!shouldBotAutoUseHeldObject({ currentObject, boostActive, bulletBillActive, steerInput })) {
+      scheduleNextBotAutoItemThink(nowMs);
+      return;
+    }
+
+    const used = tryUseHeldObject();
+    if (!used) {
+      scheduleNextBotAutoItemThink(nowMs);
+      return;
+    }
+
+    botAutoItemCooldownUntilMsRef.current = nowMs + getBotAutoItemCooldownMs(currentObject);
+    scheduleNextBotAutoItemThink(nowMs);
   };
 
   const resolveSteeringDirectionFromKey = (key: string): SteeringChargeDirection | null => {
@@ -1800,7 +2018,14 @@ export default function DrivableModel({
     lapTriggerDebounceRef.current.clear();
     bulletBillWasActiveRef.current = false;
     wasStunnedRef.current = false;
-    stunSpinRemainingRadRef.current = 0;
+    stunSpinStartTimestampMsRef.current = null;
+    stunSpinEndTimestampMsRef.current = null;
+    stunSpinLastProgressRef.current = 0;
+    stunSpinPendingCatchupRadRef.current = 0;
+    botAutoItemObservedObjectRef.current = normalizedMyObjectRef.current;
+    botAutoItemObservedChargesRef.current = normalizedMyObjectChargesRef.current;
+    botAutoItemCooldownUntilMsRef.current = 0;
+    botAutoItemNextThinkAtMsRef.current = 0;
     speedRef.current = 0;
     verticalVelRef.current = 0;
     attachmentStateRef.current = 'detached';
@@ -2064,11 +2289,21 @@ export default function DrivableModel({
     const nowMs = performance.now();
     const stunActive = nowMs < stunUntilTimestampMsRef.current;
     if (stunActive && !wasStunnedRef.current) {
-      stunSpinRemainingRadRef.current = STUN_SPIN_TOTAL_RAD;
+      stunSpinStartTimestampMsRef.current = nowMs;
+      stunSpinEndTimestampMsRef.current = Math.max(nowMs + 1, stunUntilTimestampMsRef.current);
+      stunSpinLastProgressRef.current = 0;
+      stunSpinPendingCatchupRadRef.current = 0;
     } else if (!stunActive && wasStunnedRef.current) {
-      stunSpinRemainingRadRef.current = 0;
+      const remainingProgress = Math.max(0, 1 - stunSpinLastProgressRef.current);
+      if (remainingProgress > 0) {
+        stunSpinPendingCatchupRadRef.current += remainingProgress * STUN_SPIN_TOTAL_RAD;
+      }
+      stunSpinStartTimestampMsRef.current = null;
+      stunSpinEndTimestampMsRef.current = null;
+      stunSpinLastProgressRef.current = 1;
     }
     wasStunnedRef.current = stunActive;
+    const hasPendingStunSpinCatchup = stunSpinPendingCatchupRadRef.current > 0.0001;
     const bulletBillActive = nowMs < bulletBillUntilTimestampMs;
     const thunderDebuffActive = nowMs < thunderDebuffUntilTimestampMs;
     const thunderSpeedMultiplier =
@@ -2081,7 +2316,8 @@ export default function DrivableModel({
       thunderSpeedMultiplier * bulletBillSpeedMultiplier * coinSpeedMultiplier;
     const effectiveControlMode: ParticipantControlMode =
       bulletBillActive ? 'autopilot' : controlMode;
-    const controlsTemporarilyLocked = controlsLocked || commandInputActive.current || stunActive;
+    const controlsTemporarilyLocked =
+      controlsLocked || commandInputActive.current || stunActive || hasPendingStunSpinCatchup;
     if (bulletBillWasActiveRef.current && !bulletBillActive) {
       keysRef.current.forward = false;
       keysRef.current.back = false;
@@ -2108,6 +2344,7 @@ export default function DrivableModel({
         controlsLocked,
         courseKey: autopilotCourseKey,
         startCountdownValue,
+        sequentialWaypoints: bulletBillActive,
       });
       keysRef.current.forward = autopilotInput.forward;
       keysRef.current.back = autopilotInput.back;
@@ -2279,6 +2516,15 @@ export default function DrivableModel({
           (steerChargeDirection === 'left' ? 1 : -1)
       : (keysRef.current.left ? 1 : 0) + (keysRef.current.right ? -1 : 0);
     const boostActive = nowMs < boostEndTimestampRef.current;
+
+    if (effectiveControlMode === 'autopilot' && !controlsTemporarilyLocked) {
+      tryAutoUseHeldObject({
+        nowMs,
+        boostActive,
+        bulletBillActive,
+        steerInput: steer,
+      });
+    }
 
     const attachmentCapabilityEnabled = surfaceAttachmentSettings.enabled || antiGravSwitchesEnabled;
     const attachmentFeatureEnabled =
@@ -2543,10 +2789,21 @@ export default function DrivableModel({
     if (Math.abs(steerAngle) > 0.00001) {
       headingRef.current.applyAxisAngle(steerAxis, steerAngle);
     }
-    if (stunActive && stunSpinRemainingRadRef.current > 0) {
-      const spinStep = Math.min(stunSpinRemainingRadRef.current, STUN_SPIN_RATE_RAD_PER_SEC * dtClamped);
-      headingRef.current.applyAxisAngle(steerAxis, spinStep);
-      stunSpinRemainingRadRef.current -= spinStep;
+    let stunSpinStep = 0;
+    if (stunActive) {
+      const spinStart = stunSpinStartTimestampMsRef.current ?? nowMs;
+      const spinEnd = stunSpinEndTimestampMsRef.current ?? Math.max(nowMs + 1, stunUntilTimestampMsRef.current);
+      const spinDurationMs = Math.max(1, spinEnd - spinStart);
+      const spinProgress = clamp((nowMs - spinStart) / spinDurationMs, 0, 1);
+      const deltaProgress = Math.max(0, spinProgress - stunSpinLastProgressRef.current);
+      stunSpinLastProgressRef.current = spinProgress;
+      stunSpinStep += deltaProgress * STUN_SPIN_TOTAL_RAD;
+    } else if (stunSpinPendingCatchupRadRef.current > 0) {
+      stunSpinStep += stunSpinPendingCatchupRadRef.current;
+      stunSpinPendingCatchupRadRef.current = 0;
+    }
+    if (stunSpinStep > 0) {
+      headingRef.current.applyAxisAngle(steerAxis, stunSpinStep);
     }
 
     tmpForward.copy(headingRef.current);

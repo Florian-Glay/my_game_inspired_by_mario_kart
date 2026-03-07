@@ -335,6 +335,11 @@ const DS_MARIO_CIRCUIT_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
   { position: [296.331, -48.406, 14.582], rotation: [0, 0, 0] },
   { position: [299.953, -48.31, 15.544], rotation: [0, 0, 0] },
   { position: [305.398, -48.165, 16.98], rotation: [0, 0, 0] },
+  { position: [290.202, -48.573, 42.971], rotation: [0, 0, 0] },
+  { position: [284.901, -48.719, 41.579], rotation: [0, 0, 0] },
+  { position: [296.331, -48.406, 44.582], rotation: [0, 0, 0] },
+  { position: [299.953, -48.31, 45.544], rotation: [0, 0, 0] },
+  { position: [305.398, -48.165, 46.98], rotation: [0, 0, 0] },
 ];
 
 const STADIUM_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [

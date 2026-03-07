@@ -28,6 +28,7 @@ type ComputeBotAutopilotInputArgs = {
   controlsLocked?: boolean;
   courseKey?: string;
   startCountdownValue?: number | null;
+  sequentialWaypoints?: boolean;
 };
 
 type BotWaypointRuntimeState = {
@@ -75,6 +76,7 @@ const IDLE_INPUT: BotAutopilotInput = {
 
 // Kept from the current tuning in the project.
 const WAYPOINT_REACHED_DISTANCE = 10;
+const WAYPOINT_REACHED_DISTANCE_SEQUENTIAL = 18;
 const WAYPOINT_ADVANCE_STEP = 6;
 const RETARGET_DISTANCE_HYSTERESIS = 3;
 const STEER_DEADZONE_RAD = 0.1;
@@ -214,18 +216,16 @@ function getWaypointByIndex(
 function getNextWaypointIndex(
   currentWaypointIndex: number,
   waypoints: readonly BotWaypoint[],
+  advanceStep: number = WAYPOINT_ADVANCE_STEP,
 ) {
-  const lookup = getWaypointLookup(waypoints);
-  const directNextIndex = currentWaypointIndex + WAYPOINT_ADVANCE_STEP;
-  if (lookup.indices.has(directNextIndex)) {
-    return directNextIndex;
-  }
+  if (waypoints.length === 0) return null;
 
-  if (lookup.indices.has(0)) {
-    return 0;
-  }
+  const normalizedAdvanceStep = Math.max(1, Math.floor(advanceStep));
+  const currentArrayIndex = waypoints.findIndex((waypoint) => waypoint.index === currentWaypointIndex);
+  if (currentArrayIndex < 0) return waypoints[0]?.index ?? null;
 
-  return lookup.firstIndex;
+  const nextArrayIndex = (currentArrayIndex + normalizedAdvanceStep) % waypoints.length;
+  return waypoints[nextArrayIndex]?.index ?? waypoints[0]?.index ?? null;
 }
 
 function createBotWaypointState(): BotWaypointRuntimeState {
@@ -268,6 +268,14 @@ function applyWaypointAimProfile(state: BotWaypointRuntimeState, profile: Waypoi
   state.aimBiasZ = profile.aimBiasZ;
 }
 
+function getWaypointCenterAimPoint(waypoint: BotWaypoint): BotTargetPoint {
+  return {
+    x: waypoint.position[0],
+    y: waypoint.position[1],
+    z: waypoint.position[2],
+  };
+}
+
 export function computeBotAutopilotInput(
   args: ComputeBotAutopilotInputArgs,
 ): BotAutopilotInput {
@@ -278,10 +286,15 @@ export function computeBotAutopilotInput(
     courseKey = null,
     waypoints = [],
     startCountdownValue = null,
+    sequentialWaypoints = false,
   } = args;
   if (!pose || waypoints.length === 0) return IDLE_INPUT;
 
   const nowMs = performance.now();
+  const waypointAdvanceStep = sequentialWaypoints ? 1 : WAYPOINT_ADVANCE_STEP;
+  const waypointReachedDistance =
+    sequentialWaypoints ? WAYPOINT_REACHED_DISTANCE_SEQUENTIAL : WAYPOINT_REACHED_DISTANCE;
+  const steerDeadzoneRad = sequentialWaypoints ? STEER_DEADZONE_RAD * 0.7 : STEER_DEADZONE_RAD;
   const state = getOrCreateBotWaypointState(participantId);
 
   if (state.courseKey !== courseKey) {
@@ -339,7 +352,7 @@ export function computeBotAutopilotInput(
   if (state.wasControlsLocked || state.targetWaypointIndex === null) {
     const startWaypointIndex = state.pendingNearestWaypointIndex ?? nearest.waypoint.index;
     state.lastPassedWaypointIndex = startWaypointIndex;
-    state.targetWaypointIndex = getNextWaypointIndex(startWaypointIndex, waypoints);
+    state.targetWaypointIndex = getNextWaypointIndex(startWaypointIndex, waypoints, waypointAdvanceStep);
     state.pendingNearestWaypointIndex = null;
     state.wasControlsLocked = false;
   }
@@ -349,21 +362,24 @@ export function computeBotAutopilotInput(
     targetWaypoint = nearest.waypoint;
     state.targetWaypointIndex = targetWaypoint.index;
   }
-  let targetAimPoint = getWaypointAimPoint(state, targetWaypoint);
+  let targetAimPoint =
+    sequentialWaypoints ? getWaypointCenterAimPoint(targetWaypoint) : getWaypointAimPoint(state, targetWaypoint);
 
   let targetDistance = distanceToTargetPoint(pose, targetAimPoint);
 
-  if (targetDistance <= WAYPOINT_REACHED_DISTANCE) {
+  if (targetDistance <= waypointReachedDistance) {
     state.lastPassedWaypointIndex = targetWaypoint.index;
-    state.targetWaypointIndex = getNextWaypointIndex(targetWaypoint.index, waypoints);
+    state.targetWaypointIndex = getNextWaypointIndex(targetWaypoint.index, waypoints, waypointAdvanceStep);
     targetWaypoint = getWaypointByIndex(waypoints, state.targetWaypointIndex) ?? targetWaypoint;
-    targetAimPoint = getWaypointAimPoint(state, targetWaypoint);
+    targetAimPoint =
+      sequentialWaypoints ? getWaypointCenterAimPoint(targetWaypoint) : getWaypointAimPoint(state, targetWaypoint);
     targetDistance = distanceToTargetPoint(pose, targetAimPoint);
   }
 
   const nearestIsDifferentFromLastPassed =
     state.lastPassedWaypointIndex === null || nearest.waypoint.index !== state.lastPassedWaypointIndex;
   if (
+    !sequentialWaypoints &&
     nearestIsDifferentFromLastPassed &&
     nearest.waypoint.index !== targetWaypoint.index &&
     nearest.waypoint.index > targetWaypoint.index &&
@@ -380,21 +396,27 @@ export function computeBotAutopilotInput(
   const yawDelta = normalizeAngleRad(desiredYaw - pose.yaw);
 
   const turnDirection: BotSteerDirection | null =
-    yawDelta > STEER_DEADZONE_RAD ? 'left'
-    : yawDelta < -STEER_DEADZONE_RAD ? 'right'
+    yawDelta > steerDeadzoneRad ? 'left'
+    : yawDelta < -steerDeadzoneRad ? 'right'
     : null;
 
-  if (turnDirection !== state.turnDirection) {
+  if (sequentialWaypoints) {
     state.turnDirection = turnDirection;
-    state.turnStartMs = turnDirection ? nowMs : null;
+    state.turnStartMs = null;
     state.driftChargeTriggeredForTurn = false;
-  } else if (
-    turnDirection !== null &&
-    state.turnStartMs !== null &&
-    !state.driftChargeTriggeredForTurn &&
-    nowMs - state.turnStartMs >= BOT_DRIFT_TRIGGER_MS
-  ) {
-    state.driftChargeTriggeredForTurn = true;
+  } else {
+    if (turnDirection !== state.turnDirection) {
+      state.turnDirection = turnDirection;
+      state.turnStartMs = turnDirection ? nowMs : null;
+      state.driftChargeTriggeredForTurn = false;
+    } else if (
+      turnDirection !== null &&
+      state.turnStartMs !== null &&
+      !state.driftChargeTriggeredForTurn &&
+      nowMs - state.turnStartMs >= BOT_DRIFT_TRIGGER_MS
+    ) {
+      state.driftChargeTriggeredForTurn = true;
+    }
   }
 
   return {
