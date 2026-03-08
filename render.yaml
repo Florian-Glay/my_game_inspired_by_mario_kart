@@ -3,7 +3,7 @@ services:
     name: mario-kart-multiplayer
     runtime: node
     buildCommand: npm ci
-    startCommand: npm run server:start
+    startCommand: npm start
     envVars:
       - key: MULTIPLAYER_WS_PATH
         value: /ws
