@@ -130,6 +130,51 @@ Important :
 - mettre uniquement l'origine, sans `/portfolio/fr`
 - si le jeu est heberge sur un autre domaine que le portfolio, il faut autoriser l'origine de ce domaine-la
 
+## Deployer le serveur sur Render
+
+Pour Render, il faut deployer uniquement le backend WebSocket, pas le front Vite.
+
+Pourquoi ton erreur arrive :
+
+- Render lance actuellement `npm install && npm run build`
+- `npm run build` appelle `vite build`
+- or sur un service backend Render, tu n'as pas besoin de builder le front
+
+Configuration correcte pour un service Render :
+
+- Service type : `Web Service`
+- Build Command : `npm ci`
+- Start Command : `npm run server:start`
+
+Le repo contient maintenant un fichier [`render.yaml`](./render.yaml) qui decrit cette config.
+
+Variables Render a renseigner :
+
+- `MULTIPLAYER_ALLOWED_ORIGINS=https://florian-glay.github.io`
+- `MULTIPLAYER_WS_PATH=/ws`
+
+Ne mets pas `/portfolio/fr` dans `MULTIPLAYER_ALLOWED_ORIGINS`, seulement l'origine.
+
+Une fois le service deploye, Render te donnera une URL du type :
+
+```text
+https://mario-kart-multiplayer.onrender.com
+```
+
+Et pour builder le front du jeu a integrer dans ton portfolio :
+
+```powershell
+$env:MARIOKART_BASE="./"
+$env:VITE_MULTIPLAYER_WS_URL="wss://mario-kart-multiplayer.onrender.com/ws"
+npm run build
+```
+
+Puis copier tout le contenu de `dist/` vers :
+
+```text
+portfolio/public/games/marioKartDeluxe/
+```
+
 ## Ce que le serveur gere deja
 
 - session de reconnexion avec `resumeToken`

@@ -26,6 +26,7 @@
     "tailwind-merge": "3.4.0",
     "three": "^0.182.0",
     "three-stdlib": "^2.36.1",
+    "tsx": "^4.21.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {
@@ -36,7 +37,6 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "5.1.1",
     "tailwindcss": "4.1.17",
-    "tsx": "^4.21.0",
     "typescript": "5.9.3",
     "vite": "7.2.4",
     "vite-plugin-singlefile": "2.3.0"

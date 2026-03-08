@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: mario-kart-multiplayer
+    runtime: node
+    buildCommand: npm ci
+    startCommand: npm run server:start
+    envVars:
+      - key: MULTIPLAYER_WS_PATH
+        value: /ws
+      - key: MULTIPLAYER_MAX_WS_PAYLOAD_BYTES
+        value: "65536"
+      - key: MULTIPLAYER_ALLOWED_ORIGINS
+        sync: false
