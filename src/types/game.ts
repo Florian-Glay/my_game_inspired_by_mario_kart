@@ -1,6 +1,17 @@
-export type GameScreen = 'home' | 'config' | 'cc' | 'playercount' | 'characters' | 'circuit' | 'race';
+export type GameScreen =
+  | 'home'
+  | 'config'
+  | 'cc'
+  | 'playercount'
+  | 'characters'
+  | 'circuit'
+  | 'online-name'
+  | 'online-lobby-menu'
+  | 'online-lobby-browser'
+  | 'online-lobby'
+  | 'race';
 
-export type RaceMode = 'solo' | 'multi';
+export type RaceMode = 'solo' | 'multi' | 'online';
 
 export type CcLevel = '50cc' | '100cc' | '150cc' | '200cc';
 
@@ -26,8 +37,8 @@ export type GrandPrixId =
 
 export type HumanPlayerSlotId = 'p1' | 'p2' | 'p3' | 'p4';
 export type RaceParticipantId = string;
-export type RaceParticipantKind = 'human' | 'bot';
-export type ParticipantControlMode = 'human' | 'autopilot';
+export type RaceParticipantKind = 'human' | 'remote' | 'bot';
+export type ParticipantControlMode = 'human' | 'autopilot' | 'remote';
 
 export type Vec3 = [number, number, number];
 

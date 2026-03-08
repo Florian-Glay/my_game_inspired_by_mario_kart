@@ -12,6 +12,10 @@ import {
   HERO_IMAGE_PATH,
   MAX_LOCAL_HUMANS,
 } from '../config/raceCatalog';
+import {
+  MULTIPLAYER_MAX_PLAYERS,
+  type MultiplayerLobbyState,
+} from '../../shared/multiplayerProtocol';
 import type {
   CcLevel,
   GameScreen,
@@ -40,6 +44,13 @@ type GameMenuProps = {
   activeLoadout: PlayerLoadoutSelection | null;
   activeHumanSlot: HumanPlayerSlotId;
   selectedGrandPrixId: GrandPrixId | null;
+  onlinePlayerNameInput: string;
+  onlinePlayerName: string | null;
+  selectedOnlineLobbyId: string | null;
+  onlineLobbyCodeInput: string;
+  waitingOnlineLobbies: MultiplayerLobbyState[];
+  selectedOnlineLobby: MultiplayerLobbyState | null;
+  currentOnlineLobby: MultiplayerLobbyState | null;
   errorMessage: string | null;
   isCheckingAssets: boolean;
   onBack: () => void;
@@ -53,6 +64,16 @@ type GameMenuProps = {
   onConfirmLoadout: () => void;
   onSelectGrandPrix: (grandPrixId: GrandPrixId) => void;
   onConfirmGrandPrix: () => void;
+  onChangeOnlinePlayerNameInput: (value: string) => void;
+  onConfirmOnlinePlayerName: () => void;
+  onOpenOnlineLobbyBrowser: () => void;
+  onCreateOnlineLobby: () => void;
+  onChangeOnlineLobbyCodeInput: (value: string) => void;
+  onSelectOnlineLobby: (lobbyId: string) => void;
+  onJoinSelectedOnlineLobby: () => void;
+  onJoinLobbyByCode: () => void;
+  onLaunchOnlineGrandPrix: () => void;
+  onLeaveOnlineLobby: () => void;
 };
 
 type GarageSectionCardProps = {
@@ -85,6 +106,11 @@ type CatalogPreviewItem = {
 
 function getHumanLabel(slot: HumanPlayerSlotId) {
   return `Joueur ${HUMAN_SLOT_ORDER.indexOf(slot) + 1}`;
+}
+
+function getLobbyTitle(lobby: MultiplayerLobbyState | null) {
+  if (!lobby) return 'Aucun lobby selectionne';
+  return `Lobby ${lobby.code}`;
 }
 
 function getSelectedHumanSlots(humanCount: number | null) {
@@ -226,6 +252,27 @@ function GarageSectionCard({
   );
 }
 
+function OnlineLobbyMemberList({ lobby }: { lobby: MultiplayerLobbyState | null }) {
+  if (!lobby) {
+    return <div className="mk-online-empty">Selectionne un lobby pour voir les joueurs.</div>;
+  }
+
+  return (
+    <div className="mk-online-members">
+      {lobby.players.map((player, index) => (
+        <div key={`${lobby.id}-${player.sessionId}`} className="mk-online-member-row">
+          <span className="mk-online-member-rank">#{index + 1}</span>
+          <span className="mk-online-member-name">{player.displayName}</span>
+          <span className="mk-online-member-meta">
+            {player.sessionId === lobby.hostSessionId ? 'Host' : 'Pilote'}
+            {player.connected ? '' : ' hors ligne'}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function GameMenu({
   screen,
   mode,
@@ -235,6 +282,13 @@ export function GameMenu({
   activeLoadout,
   activeHumanSlot,
   selectedGrandPrixId,
+  onlinePlayerNameInput,
+  onlinePlayerName,
+  selectedOnlineLobbyId,
+  onlineLobbyCodeInput,
+  waitingOnlineLobbies,
+  selectedOnlineLobby,
+  currentOnlineLobby,
   errorMessage,
   isCheckingAssets,
   onBack,
@@ -248,8 +302,19 @@ export function GameMenu({
   onConfirmLoadout,
   onSelectGrandPrix,
   onConfirmGrandPrix,
+  onChangeOnlinePlayerNameInput,
+  onConfirmOnlinePlayerName,
+  onOpenOnlineLobbyBrowser,
+  onCreateOnlineLobby,
+  onChangeOnlineLobbyCodeInput,
+  onSelectOnlineLobby,
+  onJoinSelectedOnlineLobby,
+  onJoinLobbyByCode,
+  onLaunchOnlineGrandPrix,
+  onLeaveOnlineLobby,
 }: GameMenuProps) {
   const [heroFailed, setHeroFailed] = useState(false);
+  const [onlineCountdownNow, setOnlineCountdownNow] = useState(() => Date.now());
   const [motionState, setMotionState] = useState<MenuMotionState>(() =>
     screen === 'home' ? 'home' : 'submenu',
   );
@@ -283,6 +348,10 @@ export function GameMenu({
         previewImage: HERO_IMAGE_PATH,
         circuitId: 'ds_mario_circuit' as const,
       }));
+  const onlineCountdownSeconds =
+    currentOnlineLobby?.autoStartAt ?
+      Math.max(0, Math.ceil((currentOnlineLobby.autoStartAt - onlineCountdownNow) / 1000))
+    : 0;
 
   const clearTransitionTimer = () => {
     if (transitionTimerRef.current !== null) {
@@ -292,6 +361,14 @@ export function GameMenu({
   };
 
   useEffect(() => () => clearTransitionTimer(), []);
+  useEffect(() => {
+    if (!currentOnlineLobby?.autoStartAt) return;
+    setOnlineCountdownNow(Date.now());
+    const countdownTimer = window.setInterval(() => {
+      setOnlineCountdownNow(Date.now());
+    }, 250);
+    return () => window.clearInterval(countdownTimer);
+  }, [currentOnlineLobby?.autoStartAt]);
   useEffect(() => {
     if (!isTransitioning) {
       transitionSourceScreenRef.current = screen;
@@ -363,7 +440,15 @@ export function GameMenu({
       return;
     }
 
-    if (screen === 'playercount' || screen === 'characters' || screen === 'circuit') {
+    if (
+      screen === 'playercount' ||
+      screen === 'characters' ||
+      screen === 'circuit' ||
+      screen === 'online-name' ||
+      screen === 'online-lobby-menu' ||
+      screen === 'online-lobby-browser' ||
+      screen === 'online-lobby'
+    ) {
       runBackwardTransitionToSubmenu(onBack);
       return;
     }
@@ -413,6 +498,16 @@ export function GameMenu({
                   <img src="ui/multi.png" alt="multi" />
                 </span>
                 <span className="mk-main-btn-label">MULTIPLAYER</span>
+              </button>
+              <button
+                type="button"
+                className="mk-main-btn"
+                onClick={() => runForwardTransition(() => onSelectMode('online'))}
+              >
+                <span className="mk-main-btn-icon">
+                  <img src="ui/multi.png" alt="online" />
+                </span>
+                <span className="mk-main-btn-label">MULTIPLAYER ONLINE</span>
               </button>
               <button
                 type="button"
@@ -487,8 +582,16 @@ export function GameMenu({
           {displayedScreen === 'characters' && (
             <div className="mk-garage-layout mk-card--animated">
               <div className="mk-garage-selector mk-card">
-                <h2>{mode === 'solo' ? 'Joueur 1 - Selection' : `${currentPlayerLabel} - Selection`}</h2>
-                <p>Choisis un personnage, un vehicule et un type de roues.</p>
+                <h2>
+                  {mode === 'solo' ? 'Joueur 1 - Selection'
+                  : mode === 'online' ? 'Mode Online - Selection'
+                  : `${currentPlayerLabel} - Selection`}
+                </h2>
+                <p>
+                  {mode === 'online' ?
+                    'Choisis ton personnage, ton vehicule et tes roues. Le mode online verrouille 150cc et Grand Prix 1.'
+                  : 'Choisis un personnage, un vehicule et un type de roues.'}
+                </p>
 
                 <div className="mk-character-tags">
                   {selectedHumanSlots.map((slot) => (
@@ -571,6 +674,171 @@ export function GameMenu({
                   {errorMessage ? <div className="mk-error">{errorMessage}</div> : null}
                 </div>
               </div>
+            </div>
+          )}
+
+          {displayedScreen === 'online-name' && (
+            <div className="mk-card mk-card--animated">
+              <h2>Nom du joueur</h2>
+              <p>Entre ton nom avant de creer ou rejoindre un lobby.</p>
+
+              <form
+                className="mk-online-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  runForwardTransition(onConfirmOnlinePlayerName);
+                }}
+              >
+                <input
+                  type="text"
+                  value={onlinePlayerNameInput}
+                  onChange={(event) => onChangeOnlinePlayerNameInput(event.currentTarget.value)}
+                  placeholder="Ton nom"
+                  maxLength={24}
+                  className="mk-online-input"
+                />
+                <button type="submit" className="mk-confirm-btn">
+                  Confirmer le nom
+                </button>
+              </form>
+
+              {errorMessage ? <div className="mk-error">{errorMessage}</div> : null}
+            </div>
+          )}
+
+          {displayedScreen === 'online-lobby-menu' && (
+            <div className="mk-card mk-card--animated">
+              <h2>Multiplayer Online</h2>
+              <p>
+                {onlinePlayerName ?
+                  `${onlinePlayerName}, choisis si tu veux rejoindre un lobby ou en creer un nouveau.`
+                : 'Choisis si tu veux rejoindre un lobby ou en creer un nouveau.'}
+              </p>
+
+              <div className="mk-menu-list mk-menu-list--animated mk-online-menu-actions">
+                <button
+                  type="button"
+                  className="mk-main-btn"
+                  onClick={() => runForwardTransition(onOpenOnlineLobbyBrowser)}
+                >
+                  <span className="mk-main-btn-icon">
+                    <img src="ui/multi.png" alt="rejoindre" />
+                  </span>
+                  <span className="mk-main-btn-label">REJOINDRE UN LOBBY</span>
+                </button>
+                <button
+                  type="button"
+                  className="mk-main-btn"
+                  onClick={() => runForwardTransition(onCreateOnlineLobby)}
+                >
+                  <span className="mk-main-btn-icon">
+                    <img src="ui/150cc.png" alt="creer" />
+                  </span>
+                  <span className="mk-main-btn-label">CREER UN LOBBY</span>
+                </button>
+              </div>
+
+              {errorMessage ? <div className="mk-error">{errorMessage}</div> : null}
+            </div>
+          )}
+
+          {displayedScreen === 'online-lobby-browser' && (
+            <div className="mk-card mk-card--animated mk-online-browser">
+              <h2>Lobbies en attente</h2>
+              <p>Selectionne un lobby pour voir les joueurs deja presents.</p>
+
+              <div className="mk-online-browser-grid">
+                <div className="mk-online-lobby-list">
+                  {waitingOnlineLobbies.length > 0 ?
+                    waitingOnlineLobbies.map((lobby) => (
+                      <button
+                        key={lobby.id}
+                        type="button"
+                        className={`mk-online-lobby-btn ${selectedOnlineLobbyId === lobby.id ? 'is-active' : ''}`}
+                        onClick={() => onSelectOnlineLobby(lobby.id)}
+                      >
+                        <span className="mk-online-lobby-title">{getLobbyTitle(lobby)}</span>
+                        <span className="mk-online-lobby-meta">
+                          {lobby.code} · {lobby.players.length}/{MULTIPLAYER_MAX_PLAYERS} joueurs
+                        </span>
+                      </button>
+                    ))
+                  : <div className="mk-online-empty">Aucun lobby en attente pour le moment.</div>}
+                </div>
+
+                <div className="mk-online-lobby-panel">
+                  <div className="mk-online-lobby-heading">
+                    {getLobbyTitle(selectedOnlineLobby)}
+                  </div>
+                  <OnlineLobbyMemberList lobby={selectedOnlineLobby} />
+                </div>
+              </div>
+
+              <form
+                className="mk-online-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  runForwardTransition(onJoinLobbyByCode);
+                }}
+              >
+                <input
+                  type="text"
+                  value={onlineLobbyCodeInput}
+                  onChange={(event) => onChangeOnlineLobbyCodeInput(event.currentTarget.value.toUpperCase())}
+                  placeholder="Code du lobby"
+                  maxLength={6}
+                  className="mk-online-input"
+                />
+                <button type="submit" className="mk-confirm-btn">
+                  Rejoindre par code
+                </button>
+              </form>
+
+              <button
+                type="button"
+                className="mk-confirm-btn"
+                onClick={() => runForwardTransition(onJoinSelectedOnlineLobby)}
+                disabled={!selectedOnlineLobby}
+              >
+                Rejoindre ce lobby
+              </button>
+
+              {errorMessage ? <div className="mk-error">{errorMessage}</div> : null}
+            </div>
+          )}
+
+          {displayedScreen === 'online-lobby' && (
+            <div className="mk-card mk-card--animated mk-online-lobby-card">
+              <h2>{getLobbyTitle(currentOnlineLobby)}</h2>
+              <p>150cc et Grand Prix 1 sont deja preselectionnes pour ce mode.</p>
+
+              <div className="mk-online-summary-grid">
+                <div className="mk-online-summary-pill">
+                  Joueurs: {currentOnlineLobby?.players.length ?? 0}/{MULTIPLAYER_MAX_PLAYERS}
+                </div>
+                <div className="mk-online-summary-pill">Code: {currentOnlineLobby?.code ?? '------'}</div>
+                <div className="mk-online-summary-pill">Grand Prix 1</div>
+                <div className="mk-online-summary-pill">150cc</div>
+              </div>
+
+              {currentOnlineLobby?.status === 'countdown' ? (
+                <div className="mk-online-countdown">
+                  Lobby complet. Depart automatique dans {onlineCountdownSeconds}s.
+                </div>
+              ) : null}
+
+              <OnlineLobbyMemberList lobby={currentOnlineLobby} />
+
+              <div className="mk-online-actions">
+                <button type="button" className="mk-confirm-btn" onClick={onLaunchOnlineGrandPrix}>
+                  Lancer le Grand Prix
+                </button>
+                <button type="button" className="mk-confirm-btn mk-confirm-btn--ghost" onClick={onLeaveOnlineLobby}>
+                  Quitter le lobby
+                </button>
+              </div>
+
+              {errorMessage ? <div className="mk-error">{errorMessage}</div> : null}
             </div>
           )}
 

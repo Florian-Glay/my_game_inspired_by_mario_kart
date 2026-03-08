@@ -29,6 +29,15 @@ import type {
   Vec3,
 } from '../types/game';
 import { getRaceAssetUrls, RACE_ATTACHABLE_MODEL_URLS } from '../utils/raceAssetMemory';
+import type {
+  MultiplayerRaceEvent,
+  MultiplayerRaceState,
+  MultiplayerThrowableRemovalReason,
+} from '../../shared/multiplayerProtocol';
+import {
+  MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS,
+  MULTIPLAYER_TRACK_COIN_RESPAWN_MS,
+} from '../../shared/multiplayerProtocol';
 import { CameraController } from './CameraController';
 import { CircuitMeshCullingController } from './CircuitMeshCullingController';
 import DrivableModel from './DrivableModel';
@@ -56,6 +65,19 @@ type SceneProps = {
   hasNextCourse: boolean;
   isAdvancingCourse: boolean;
   grandPrixStandings: GrandPrixStanding[];
+  networkRaceState?: MultiplayerRaceState | null;
+  networkOwnedParticipantIds?: string[];
+  onNetworkSceneReady?: (raceId: string) => void;
+  onNetworkLocalPose?: (
+    raceId: string,
+    participantId: string,
+    pose: CarPose,
+    options?: {
+      lapProgress?: MultiplayerRaceState['participants'][number]['lapProgress'];
+      itemState?: MultiplayerRaceState['participants'][number]['itemState'];
+    },
+  ) => void;
+  onNetworkRaceEvent?: (raceId: string, event: MultiplayerRaceEvent) => void;
 };
 
 type SceneAssetGateProps = {
@@ -239,7 +261,7 @@ type PlayerLapProgress = {
   finishTimestamp: number | null;
 };
 
-type RaceOverlayStep = 'none' | 'course-ranking' | 'course-actions' | 'grand-prix-result';
+type RaceOverlayStep = 'none' | 'course-ranking' | 'grand-prix-result';
 
 type LiveScoreboardEntry = {
   participantId: RaceParticipantId;
@@ -385,11 +407,10 @@ const START_COUNTDOWN_ZERO_HOLD_MS = 450;
 const LOADING_OVERLAY_FADE_MS = 500;
 const START_COUNTDOWN_DELAY_AFTER_LOADING_MS = 1500;
 const LIVE_SCOREBOARD_REFRESH_MS = 280;
+const COURSE_RESULT_OVERLAY_MS = 10_000;
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 const OBJECT_CRATE_MODEL_PATH = 'models/item_box.glb';
-const OBJECT_CRATE_RESPAWN_MS = 10_000;
 const TRACK_COIN_MODEL_PATH = 'models/miniObject/itemCoin.glb';
-const TRACK_COIN_RESPAWN_MS = 10_000;
 const TRACK_COIN_COLLIDER_HALF_EXTENTS: [number, number, number] = [0.75, 0.75, 0.75];
 const OBJECT_ITEM_MIN_VALUE = 1;
 const OBJECT_ITEM_MAX_VALUE = 13;
@@ -693,6 +714,27 @@ function createInitialParticipantStunUntil(
   }, {});
 }
 
+function buildParticipantItemStateSnapshot(
+  participantId: RaceParticipantId,
+  state: {
+    objects: Record<RaceParticipantId, number>;
+    objectCharges: Record<RaceParticipantId, number>;
+    coins: Record<RaceParticipantId, number>;
+    thunderDebuffUntil: Record<RaceParticipantId, number>;
+    bulletBillUntil: Record<RaceParticipantId, number>;
+    stunUntil: Record<RaceParticipantId, number>;
+  },
+) {
+  return {
+    heldObject: state.objects[participantId] ?? 0,
+    objectCharges: state.objectCharges[participantId] ?? 0,
+    coins: state.coins[participantId] ?? 0,
+    thunderDebuffUntilTimestampMs: state.thunderDebuffUntil[participantId] ?? 0,
+    bulletBillUntilTimestampMs: state.bulletBillUntil[participantId] ?? 0,
+    stunUntilTimestampMs: state.stunUntil[participantId] ?? 0,
+  };
+}
+
 function createTrackCoinActivationMap(spawns: TrackCoinSpawnEntry[]) {
   return spawns.reduce<Record<string, boolean>>((acc, spawn) => {
     acc[spawn.coinId] = true;
@@ -708,6 +750,11 @@ export function Scene({
   hasNextCourse,
   isAdvancingCourse,
   grandPrixStandings,
+  networkRaceState = null,
+  networkOwnedParticipantIds = [],
+  onNetworkSceneReady,
+  onNetworkLocalPose,
+  onNetworkRaceEvent,
 }: SceneProps) {
   const circuit = CIRCUITS[raceConfig.circuit];
   const speedProfile = CC_SPEEDS[raceConfig.cc];
@@ -769,6 +816,7 @@ export function Scene({
     initialParticipantStunUntil,
   );
   const [activeThrowableObjects, setActiveThrowableObjects] = useState<ThrowableObjectEntry[]>([]);
+  const activeThrowableObjectsRef = useRef<ThrowableObjectEntry[]>([]);
   const lapProgressRef = useRef<Record<RaceParticipantId, PlayerLapProgress>>(initialLapProgress);
   const myObjectByParticipantRef = useRef<Record<RaceParticipantId, number>>(initialParticipantObjects);
   const myObjectChargesByParticipantRef = useRef<Record<RaceParticipantId, number>>(
@@ -796,6 +844,8 @@ export function Scene({
   const courseResultSentRef = useRef(false);
   const startCountdownStartedRef = useRef(false);
   const winModeHandledRef = useRef(false);
+  const ownedParticipantDirtyStateRef = useRef<Set<RaceParticipantId>>(new Set());
+  const pendingThrowableRemovalIdsRef = useRef<Set<string>>(new Set());
   const circuitPhysicsKey = [
     raceConfig.circuit,
     circuit.road.model,
@@ -858,6 +908,20 @@ export function Scene({
     () => new Map(raceConfig.participants.map((participant, index) => [participant.id, index])),
     [raceConfig.participants],
   );
+  const isNetworkRace = networkRaceState !== null;
+  const networkOwnedParticipantIdSet = useMemo(
+    () => new Set(networkOwnedParticipantIds),
+    [networkOwnedParticipantIds],
+  );
+  const remotePoseByParticipantId = useMemo(() => {
+    const map = new Map<RaceParticipantId, CarPose>();
+    if (!networkRaceState) return map;
+    networkRaceState.participants.forEach((participant) => {
+      if (!participant.pose) return;
+      map.set(participant.participantId, participant.pose);
+    });
+    return map;
+  }, [networkRaceState]);
   const participantPortraitSrcById = useMemo(() => {
     const fallbackSrc = resolveUiAssetSrc(DEFAULT_CHARACTER_PORTRAIT_PATH);
     const portraitsByParticipant = new Map<RaceParticipantId, string>();
@@ -980,6 +1044,10 @@ export function Scene({
   }, [stunUntilByParticipant]);
 
   useEffect(() => {
+    activeThrowableObjectsRef.current = activeThrowableObjects;
+  }, [activeThrowableObjects]);
+
+  useEffect(() => {
     lapProgressRef.current = initialLapProgress;
     setLapProgressByPlayer(initialLapProgress);
     setCourseRanking([]);
@@ -1005,6 +1073,8 @@ export function Scene({
     courseResultSentRef.current = false;
     startCountdownStartedRef.current = false;
     winModeHandledRef.current = false;
+    ownedParticipantDirtyStateRef.current.clear();
+    pendingThrowableRemovalIdsRef.current.clear();
     gameMode.current = 'run';
   }, [
     initialLapProgress,
@@ -1037,13 +1107,136 @@ export function Scene({
     return () => window.clearTimeout(fadeTimer);
   }, [sceneReady]);
 
+  useEffect(() => {
+    if (!isNetworkRace || !networkRaceState || !sceneReady) return;
+    if (networkRaceState.status !== 'loading') return;
+    onNetworkSceneReady?.(networkRaceState.raceId);
+  }, [isNetworkRace, networkRaceState, onNetworkSceneReady, sceneReady]);
+
+  useEffect(() => {
+    if (!isNetworkRace || !networkRaceState) return;
+
+    if (networkRaceState.sharedState.activeObjectCrateIds) {
+      const activeCrates = networkRaceState.sharedState.activeObjectCrateIds;
+      setActiveObjectCrates(
+        objectCrateSpawnEntries.reduce<Record<string, boolean>>((acc, spawn) => {
+          acc[spawn.crateId] = activeCrates.includes(spawn.crateId);
+          return acc;
+        }, {}),
+      );
+    }
+
+    if (networkRaceState.sharedState.activeTrackCoinIds) {
+      const activeCoins = networkRaceState.sharedState.activeTrackCoinIds;
+      setActiveTrackCoins(
+        trackCoinSpawnEntries.reduce<Record<string, boolean>>((acc, spawn) => {
+          acc[spawn.coinId] = activeCoins.includes(spawn.coinId);
+          return acc;
+        }, {}),
+      );
+    }
+
+    const serverThrowableIds = new Set(
+      networkRaceState.sharedState.throwableObjects.map((throwableObject) => throwableObject.throwableId),
+    );
+    pendingThrowableRemovalIdsRef.current.forEach((throwableId) => {
+      if (!serverThrowableIds.has(throwableId)) {
+        pendingThrowableRemovalIdsRef.current.delete(throwableId);
+      }
+    });
+
+    setActiveThrowableObjects(
+      networkRaceState.sharedState.throwableObjects.filter(
+        (throwableObject) => !pendingThrowableRemovalIdsRef.current.has(throwableObject.throwableId),
+      ),
+    );
+  }, [isNetworkRace, networkRaceState, objectCrateSpawnEntries, trackCoinSpawnEntries]);
+
+  useEffect(() => {
+    if (!isNetworkRace || !networkRaceState) return;
+
+    const nextLapProgress = createInitialLapProgress(raceConfig.participants);
+    const nextObjects = createInitialParticipantObjects(raceConfig.participants);
+    const nextObjectCharges = createInitialParticipantObjectCharges(raceConfig.participants);
+    const nextThunderDebuffUntil = createInitialParticipantThunderDebuffUntil(raceConfig.participants);
+    const nextBulletBillUntil = createInitialParticipantBulletBillUntil(raceConfig.participants);
+    const nextCoins = createInitialParticipantCoins(raceConfig.participants);
+    const nextStunUntil = createInitialParticipantStunUntil(raceConfig.participants);
+
+    networkRaceState.participants.forEach((participant) => {
+      const shouldPreserveOwnedState =
+        networkOwnedParticipantIdSet.has(participant.participantId) &&
+        ownedParticipantDirtyStateRef.current.has(participant.participantId);
+
+      nextLapProgress[participant.participantId] =
+        shouldPreserveOwnedState ?
+          { ...(lapProgressRef.current[participant.participantId] ?? participant.lapProgress) }
+        : { ...participant.lapProgress };
+      nextObjects[participant.participantId] =
+        shouldPreserveOwnedState ?
+          myObjectByParticipantRef.current[participant.participantId] ?? participant.itemState.heldObject
+        : participant.itemState.heldObject;
+      nextObjectCharges[participant.participantId] =
+        shouldPreserveOwnedState ?
+          myObjectChargesByParticipantRef.current[participant.participantId] ?? participant.itemState.objectCharges
+        : participant.itemState.objectCharges;
+      nextThunderDebuffUntil[participant.participantId] =
+        shouldPreserveOwnedState ?
+          thunderDebuffUntilByParticipantRef.current[participant.participantId] ??
+            participant.itemState.thunderDebuffUntilTimestampMs
+        : participant.itemState.thunderDebuffUntilTimestampMs;
+      nextBulletBillUntil[participant.participantId] =
+        shouldPreserveOwnedState ?
+          bulletBillUntilByParticipantRef.current[participant.participantId] ??
+            participant.itemState.bulletBillUntilTimestampMs
+        : participant.itemState.bulletBillUntilTimestampMs;
+      nextCoins[participant.participantId] =
+        shouldPreserveOwnedState ?
+          coinsByParticipantRef.current[participant.participantId] ?? participant.itemState.coins
+        : participant.itemState.coins;
+      nextStunUntil[participant.participantId] =
+        shouldPreserveOwnedState ?
+          stunUntilByParticipantRef.current[participant.participantId] ?? participant.itemState.stunUntilTimestampMs
+        : participant.itemState.stunUntilTimestampMs;
+    });
+
+    lapProgressRef.current = nextLapProgress;
+    myObjectByParticipantRef.current = nextObjects;
+    myObjectChargesByParticipantRef.current = nextObjectCharges;
+    thunderDebuffUntilByParticipantRef.current = nextThunderDebuffUntil;
+    bulletBillUntilByParticipantRef.current = nextBulletBillUntil;
+    coinsByParticipantRef.current = nextCoins;
+    stunUntilByParticipantRef.current = nextStunUntil;
+
+    setLapProgressByPlayer(nextLapProgress);
+    setMyObjectByParticipant(nextObjects);
+    setMyObjectChargesByParticipant(nextObjectCharges);
+    setThunderDebuffUntilByParticipant(nextThunderDebuffUntil);
+    setBulletBillUntilByParticipant(nextBulletBillUntil);
+    setCoinsByParticipant(nextCoins);
+    setStunUntilByParticipant(nextStunUntil);
+  }, [isNetworkRace, networkOwnedParticipantIdSet, networkRaceState, raceConfig.participants]);
+
   const handlePoseUpdate = useCallback(
     (participantId: RaceParticipantId, pose: CarPose) => {
       const poseRef = poseRefsByParticipant[participantId];
       if (!poseRef) return;
       poseRef.current = pose;
+      if (networkRaceState && networkOwnedParticipantIdSet.has(participantId)) {
+        onNetworkLocalPose?.(networkRaceState.raceId, participantId, pose, {
+          lapProgress: lapProgressRef.current[participantId],
+          itemState: buildParticipantItemStateSnapshot(participantId, {
+            objects: myObjectByParticipantRef.current,
+            objectCharges: myObjectChargesByParticipantRef.current,
+            coins: coinsByParticipantRef.current,
+            thunderDebuffUntil: thunderDebuffUntilByParticipantRef.current,
+            bulletBillUntil: bulletBillUntilByParticipantRef.current,
+            stunUntil: stunUntilByParticipantRef.current,
+          }),
+        });
+      }
     },
-    [poseRefsByParticipant],
+    [networkOwnedParticipantIdSet, networkRaceState, onNetworkLocalPose, poseRefsByParticipant],
   );
 
   const getLiveScoreboardSnapshot = useCallback(
@@ -1070,6 +1263,10 @@ export function Scene({
   );
 
   const handleObjectCrateCollected = useCallback((crateId: string, touch: ObjectCrateTouch) => {
+    if (isNetworkRace && !networkOwnedParticipantIdSet.has(touch.participantId)) {
+      return;
+    }
+
     setActiveObjectCrates((current) => {
       if (!current[crateId]) return current;
       return { ...current, [crateId]: false };
@@ -1129,25 +1326,45 @@ export function Scene({
         ...current,
         [touch.participantId]: initialObjectCharges,
       }));
+      ownedParticipantDirtyStateRef.current.add(touch.participantId);
     }
 
-    const existingTimer = objectCrateRespawnTimersRef.current.get(crateId);
-    if (typeof existingTimer === 'number') {
-      window.clearTimeout(existingTimer);
-    }
+    if (!isNetworkRace) {
+      const existingTimer = objectCrateRespawnTimersRef.current.get(crateId);
+      if (typeof existingTimer === 'number') {
+        window.clearTimeout(existingTimer);
+      }
 
-    const respawnTimer = window.setTimeout(() => {
-      setActiveObjectCrates((current) => {
-        if (current[crateId]) return current;
-        return { ...current, [crateId]: true };
+      const respawnTimer = window.setTimeout(() => {
+        setActiveObjectCrates((current) => {
+          if (current[crateId]) return current;
+          return { ...current, [crateId]: true };
+        });
+        objectCrateRespawnTimersRef.current.delete(crateId);
+      }, MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS);
+
+      objectCrateRespawnTimersRef.current.set(crateId, respawnTimer);
+    }
+    if (networkRaceState) {
+      onNetworkRaceEvent?.(networkRaceState.raceId, {
+        type: 'object-crate-collected',
+        participantId: touch.participantId,
+        crateId,
       });
-      objectCrateRespawnTimersRef.current.delete(crateId);
-    }, OBJECT_CRATE_RESPAWN_MS);
-
-    objectCrateRespawnTimersRef.current.set(crateId, respawnTimer);
-  }, [getLiveScoreboardSnapshot]);
+    }
+  }, [
+    getLiveScoreboardSnapshot,
+    isNetworkRace,
+    networkOwnedParticipantIdSet,
+    networkRaceState,
+    onNetworkRaceEvent,
+  ]);
 
   const handleTrackCoinCollected = useCallback((coinId: string, touch: ObjectCrateTouch) => {
+    if (isNetworkRace && !networkOwnedParticipantIdSet.has(touch.participantId)) {
+      return;
+    }
+
     setActiveTrackCoins((current) => {
       if (!current[coinId]) return current;
       return { ...current, [coinId]: false };
@@ -1162,23 +1379,54 @@ export function Scene({
       };
       coinsByParticipantRef.current = nextMap;
       setCoinsByParticipant(nextMap);
+      ownedParticipantDirtyStateRef.current.add(touch.participantId);
     }
 
-    const existingTimer = trackCoinRespawnTimersRef.current.get(coinId);
-    if (typeof existingTimer === 'number') {
-      window.clearTimeout(existingTimer);
-    }
+    if (!isNetworkRace) {
+      const existingTimer = trackCoinRespawnTimersRef.current.get(coinId);
+      if (typeof existingTimer === 'number') {
+        window.clearTimeout(existingTimer);
+      }
 
-    const respawnTimer = window.setTimeout(() => {
-      setActiveTrackCoins((current) => {
-        if (current[coinId]) return current;
-        return { ...current, [coinId]: true };
+      const respawnTimer = window.setTimeout(() => {
+        setActiveTrackCoins((current) => {
+          if (current[coinId]) return current;
+          return { ...current, [coinId]: true };
+        });
+        trackCoinRespawnTimersRef.current.delete(coinId);
+      }, MULTIPLAYER_TRACK_COIN_RESPAWN_MS);
+
+      trackCoinRespawnTimersRef.current.set(coinId, respawnTimer);
+    }
+    if (networkRaceState) {
+      onNetworkRaceEvent?.(networkRaceState.raceId, {
+        type: 'track-coin-collected',
+        participantId: touch.participantId,
+        coinId,
       });
-      trackCoinRespawnTimersRef.current.delete(coinId);
-    }, TRACK_COIN_RESPAWN_MS);
+    }
+  }, [isNetworkRace, networkOwnedParticipantIdSet, networkRaceState, onNetworkRaceEvent]);
 
-    trackCoinRespawnTimersRef.current.set(coinId, respawnTimer);
-  }, []);
+  const reportThrowableRemoval = useCallback(
+    (
+      throwableId: string,
+      reporterParticipantId: RaceParticipantId | null,
+      reason: MultiplayerThrowableRemovalReason,
+    ) => {
+      if (!networkRaceState || !reporterParticipantId) return;
+      if (!networkOwnedParticipantIdSet.has(reporterParticipantId)) return;
+      if (pendingThrowableRemovalIdsRef.current.has(throwableId)) return;
+
+      pendingThrowableRemovalIdsRef.current.add(throwableId);
+      onNetworkRaceEvent?.(networkRaceState.raceId, {
+        type: 'throwable-removed',
+        participantId: reporterParticipantId,
+        throwableId,
+        reason,
+      });
+    },
+    [networkOwnedParticipantIdSet, networkRaceState, onNetworkRaceEvent],
+  );
 
   const removeThrowableObject = useCallback((throwableId: string) => {
     setActiveThrowableObjects((current) => {
@@ -1189,14 +1437,17 @@ export function Scene({
 
   const handleThrowableObjectExpired = useCallback(
     (throwableId: string) => {
+      const throwableObject =
+        activeThrowableObjectsRef.current.find((entry) => entry.throwableId === throwableId) ?? null;
+      reportThrowableRemoval(throwableId, throwableObject?.ownerParticipantId ?? null, 'expired');
       removeThrowableObject(throwableId);
     },
-    [removeThrowableObject],
+    [removeThrowableObject, reportThrowableRemoval],
   );
 
   const handleThrowableObjectGroundedParticipantHit = useCallback(
     (throwableId: string, participantId: RaceParticipantId, sourceObjectValue: number) => {
-      void throwableId;
+      reportThrowableRemoval(throwableId, participantId, 'hit');
       if (
         sourceObjectValue === OBJECT_BANANA_VALUE ||
         sourceObjectValue === OBJECT_TRIPLE_BANANA_VALUE ||
@@ -1217,10 +1468,13 @@ export function Scene({
           };
           stunUntilByParticipantRef.current = nextMap;
           setStunUntilByParticipant(nextMap);
+          if (networkOwnedParticipantIdSet.has(participantId)) {
+            ownedParticipantDirtyStateRef.current.add(participantId);
+          }
         }
       }
     },
-    [],
+    [networkOwnedParticipantIdSet, reportThrowableRemoval],
   );
 
   const resolveCurrentPoseForwardVector = useCallback((pose: CarPose) => resolvePoseForwardVector(pose), []);
@@ -1236,13 +1490,36 @@ export function Scene({
     [speedProfile.maxForward],
   );
 
+  const publishThrowableObjectSpawn = useCallback(
+    (spawnedObject: ThrowableObjectEntry) => {
+      if (
+        networkRaceState &&
+        networkOwnedParticipantIdSet.has(spawnedObject.ownerParticipantId)
+      ) {
+        onNetworkRaceEvent?.(networkRaceState.raceId, {
+          type: 'throwable-spawned',
+          throwable: spawnedObject,
+        });
+        return;
+      }
+
+      setActiveThrowableObjects((current) => {
+        if (current.some((entry) => entry.throwableId === spawnedObject.throwableId)) {
+          return current;
+        }
+        return [...current, spawnedObject];
+      });
+    },
+    [networkOwnedParticipantIdSet, networkRaceState, onNetworkRaceEvent],
+  );
+
   const spawnBananaThrowableObject = useCallback(
     (participantId: RaceParticipantId, sourceObjectValue: number) => {
       const pose = poseRefsByParticipant[participantId]?.current;
       if (!pose) return;
       const { forwardX, forwardZ } = resolveCurrentPoseForwardVector(pose);
 
-      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      const throwableId = `${raceConfig.courseId}-${participantId}-throwable-${throwableObjectIdCounterRef.current}`;
       throwableObjectIdCounterRef.current += 1;
 
       const spawnedObject: ThrowableObjectEntry = {
@@ -1264,9 +1541,9 @@ export function Scene({
         ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
       };
 
-      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+      publishThrowableObjectSpawn(spawnedObject);
     },
-    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentPoseForwardVector],
+    [poseRefsByParticipant, publishThrowableObjectSpawn, raceConfig.courseId, resolveCurrentPoseForwardVector],
   );
 
   const spawnGreenShellThrowableObject = useCallback(
@@ -1280,7 +1557,7 @@ export function Scene({
         currentSpeed * OBJECT_GREEN_SHELL_SPEED_MULTIPLIER,
       );
 
-      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      const throwableId = `${raceConfig.courseId}-${participantId}-throwable-${throwableObjectIdCounterRef.current}`;
       throwableObjectIdCounterRef.current += 1;
 
       const spawnedObject: ThrowableObjectEntry = {
@@ -1298,9 +1575,15 @@ export function Scene({
         ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
       };
 
-      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+      publishThrowableObjectSpawn(spawnedObject);
     },
-    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentVehicleSpeed, resolveCurrentPoseForwardVector],
+    [
+      poseRefsByParticipant,
+      publishThrowableObjectSpawn,
+      raceConfig.courseId,
+      resolveCurrentVehicleSpeed,
+      resolveCurrentPoseForwardVector,
+    ],
   );
 
   const resolveRedShellDirection = useCallback(
@@ -1454,7 +1737,7 @@ export function Scene({
         currentSpeed * OBJECT_RED_SHELL_SPEED_MULTIPLIER,
       );
 
-      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      const throwableId = `${raceConfig.courseId}-${participantId}-throwable-${throwableObjectIdCounterRef.current}`;
       throwableObjectIdCounterRef.current += 1;
 
       const spawnedObject: ThrowableObjectEntry = {
@@ -1472,9 +1755,15 @@ export function Scene({
         ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
       };
 
-      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+      publishThrowableObjectSpawn(spawnedObject);
     },
-    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentVehicleSpeed, resolveCurrentPoseForwardVector],
+    [
+      poseRefsByParticipant,
+      publishThrowableObjectSpawn,
+      raceConfig.courseId,
+      resolveCurrentVehicleSpeed,
+      resolveCurrentPoseForwardVector,
+    ],
   );
 
   const spawnBlueShellThrowableObject = useCallback(
@@ -1488,7 +1777,7 @@ export function Scene({
         currentSpeed * OBJECT_BLUE_SHELL_SPEED_MULTIPLIER,
       );
 
-      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      const throwableId = `${raceConfig.courseId}-${participantId}-throwable-${throwableObjectIdCounterRef.current}`;
       throwableObjectIdCounterRef.current += 1;
 
       const spawnedObject: ThrowableObjectEntry = {
@@ -1506,9 +1795,15 @@ export function Scene({
         ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
       };
 
-      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+      publishThrowableObjectSpawn(spawnedObject);
     },
-    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentVehicleSpeed, resolveCurrentPoseForwardVector],
+    [
+      poseRefsByParticipant,
+      publishThrowableObjectSpawn,
+      raceConfig.courseId,
+      resolveCurrentVehicleSpeed,
+      resolveCurrentPoseForwardVector,
+    ],
   );
 
   const spawnBombThrowableObject = useCallback(
@@ -1525,7 +1820,7 @@ export function Scene({
       const flightTimeSeconds = OBJECT_BOMB_TARGET_DISTANCE / Math.max(0.001, forwardSpeed);
       const upwardSpeed = 0.5 * OBJECT_BOMB_GRAVITY * flightTimeSeconds;
 
-      const throwableId = `${raceConfig.courseId}-throwable-${throwableObjectIdCounterRef.current}`;
+      const throwableId = `${raceConfig.courseId}-${participantId}-throwable-${throwableObjectIdCounterRef.current}`;
       throwableObjectIdCounterRef.current += 1;
 
       const spawnedObject: ThrowableObjectEntry = {
@@ -1547,14 +1842,27 @@ export function Scene({
         ttlMs: OBJECT_THROWABLE_LIFETIME_MS,
       };
 
-      setActiveThrowableObjects((current) => [...current, spawnedObject]);
+      publishThrowableObjectSpawn(spawnedObject);
     },
-    [poseRefsByParticipant, raceConfig.courseId, resolveCurrentVehicleSpeed, resolveCurrentPoseForwardVector],
+    [
+      poseRefsByParticipant,
+      publishThrowableObjectSpawn,
+      raceConfig.courseId,
+      resolveCurrentVehicleSpeed,
+      resolveCurrentPoseForwardVector,
+    ],
   );
 
   const handleParticipantObjectUsed = useCallback(
     (participantId: RaceParticipantId, usedObject: number) => {
       const normalizedObject = Number.isFinite(usedObject) ? Math.floor(usedObject) : 0;
+      if (networkRaceState && networkOwnedParticipantIdSet.has(participantId)) {
+        onNetworkRaceEvent?.(networkRaceState.raceId, {
+          type: 'object-used',
+          participantId,
+          usedObject: normalizedObject,
+        });
+      }
       if (OBJECT_THROWABLE_VALUE_SET.has(normalizedObject)) {
         if (
           normalizedObject === OBJECT_BANANA_VALUE ||
@@ -1606,6 +1914,7 @@ export function Scene({
         };
         bulletBillUntilByParticipantRef.current = nextMap;
         setBulletBillUntilByParticipant(nextMap);
+        ownedParticipantDirtyStateRef.current.add(participantId);
         return;
       }
 
@@ -1620,9 +1929,13 @@ export function Scene({
         };
         coinsByParticipantRef.current = nextMap;
         setCoinsByParticipant(nextMap);
+        ownedParticipantDirtyStateRef.current.add(participantId);
       }
     },
     [
+      networkOwnedParticipantIdSet,
+      networkRaceState,
+      onNetworkRaceEvent,
       spawnBananaThrowableObject,
       spawnBombThrowableObject,
       spawnBlueShellThrowableObject,
@@ -1636,6 +1949,14 @@ export function Scene({
       const normalizedObject = Number.isFinite(consumedObject) ? Math.floor(consumedObject) : 0;
       const consumeCount = Number.isFinite(consumedUnits) ? Math.max(1, Math.floor(consumedUnits)) : 1;
       if (normalizedObject <= 0) return;
+      if (networkRaceState && networkOwnedParticipantIdSet.has(participantId)) {
+        onNetworkRaceEvent?.(networkRaceState.raceId, {
+          type: 'object-consumed',
+          participantId,
+          consumedObject: normalizedObject,
+          consumedUnits: consumeCount,
+        });
+      }
 
       const currentObject = myObjectByParticipantRef.current[participantId] ?? 0;
       if (currentObject !== normalizedObject) return;
@@ -1688,8 +2009,9 @@ export function Scene({
         ...current,
         [participantId]: 0,
       }));
+      ownedParticipantDirtyStateRef.current.add(participantId);
     },
-    [],
+    [networkOwnedParticipantIdSet, networkRaceState, onNetworkRaceEvent],
   );
 
   const handleCircuitWaypointsReady = useCallback((waypoints: BotWaypoint[]) => {
@@ -1742,11 +2064,11 @@ export function Scene({
   );
 
   const validateAllLapsFromWinMode = useCallback(() => {
-    if (overlayStep !== 'none') return false;
+    if (isNetworkRace || overlayStep !== 'none') return false;
 
     finalizeCourse(lapProgressRef.current);
     return true;
-  }, [finalizeCourse, overlayStep]);
+  }, [finalizeCourse, isNetworkRace, overlayStep]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -1769,6 +2091,14 @@ export function Scene({
     (participantId: RaceParticipantId, triggerType: LapTriggerType) => {
       if (controlsLocked || overlayStep !== 'none') return;
 
+      if (networkRaceState && networkOwnedParticipantIdSet.has(participantId)) {
+        onNetworkRaceEvent?.(networkRaceState.raceId, {
+          type: 'lap-trigger',
+          participantId,
+          triggerType,
+        });
+      }
+
       const currentPlayerProgress = lapProgressRef.current[participantId];
       if (!currentPlayerProgress || currentPlayerProgress.finished) return;
 
@@ -1783,6 +2113,7 @@ export function Scene({
         };
         lapProgressRef.current = nextProgress;
         setLapProgressByPlayer(nextProgress);
+        ownedParticipantDirtyStateRef.current.add(participantId);
         return;
       }
 
@@ -1803,8 +2134,9 @@ export function Scene({
 
       lapProgressRef.current = nextProgress;
       setLapProgressByPlayer(nextProgress);
+      ownedParticipantDirtyStateRef.current.add(participantId);
 
-      if (hasFinished) {
+      if (hasFinished && !isNetworkRace) {
         const allHumansFinished = raceConfig.participants
           .filter((participant) => participant.kind === 'human')
           .every((participant) => nextProgress[participant.id]?.finished);
@@ -1813,16 +2145,20 @@ export function Scene({
         }
       }
     },
-    [controlsLocked, finalizeCourse, overlayStep, raceConfig.participants],
+    [
+      controlsLocked,
+      finalizeCourse,
+      networkOwnedParticipantIdSet,
+      networkRaceState,
+      onNetworkRaceEvent,
+      overlayStep,
+      raceConfig.participants,
+      isNetworkRace,
+    ],
   );
 
-  const handleContinueAfterCourse = useCallback(() => {
+  const handleAdvanceAfterCourse = useCallback(async () => {
     if (overlayStep !== 'course-ranking') return;
-    setOverlayStep('course-actions');
-  }, [overlayStep]);
-
-  const handlePrimaryAction = useCallback(async () => {
-    if (overlayStep !== 'course-actions') return;
     if (!hasNextCourse) {
       setOverlayStep('grand-prix-result');
       return;
@@ -1981,7 +2317,6 @@ export function Scene({
     return tacticalStateByParticipant;
   }, [livePositionByParticipant, liveScoreboard, poseRefsByParticipant, raceConfig.participants]);
   const isCourseRankingVisible = overlayStep === 'course-ranking';
-  const isCourseActionVisible = overlayStep === 'course-actions';
   const isGrandPrixResultVisible = overlayStep === 'grand-prix-result';
   const shouldRenderRaceWorld = !isGrandPrixResultVisible;
   const participantPortraitFallbackSrc = resolveUiAssetSrc(DEFAULT_CHARACTER_PORTRAIT_PATH);
@@ -2000,6 +2335,7 @@ export function Scene({
   }));
 
   useEffect(() => {
+    if (isNetworkRace) return;
     if (!sceneReady || isLoadingOverlayActive || overlayStep !== 'none') return;
     if (startCountdownStartedRef.current) return;
 
@@ -2010,7 +2346,7 @@ export function Scene({
     }, START_COUNTDOWN_DELAY_AFTER_LOADING_MS);
 
     return () => window.clearTimeout(delayTimer);
-  }, [isLoadingOverlayActive, overlayStep, sceneReady]);
+  }, [isLoadingOverlayActive, isNetworkRace, overlayStep, sceneReady]);
 
   useEffect(() => {
     if (!sceneReady || isLoadingOverlayActive || overlayStep !== 'none') return;
@@ -2020,6 +2356,43 @@ export function Scene({
     }, LIVE_SCOREBOARD_REFRESH_MS);
     return () => window.clearInterval(timerId);
   }, [isLoadingOverlayActive, overlayStep, sceneReady]);
+
+  useEffect(() => {
+    if (!isNetworkRace || !networkRaceState || !sceneReady || isLoadingOverlayActive) return;
+
+    if (networkRaceState.status === 'loading') {
+      setControlsLocked(true);
+      setStartCountdownValue(null);
+      return;
+    }
+
+    if (networkRaceState.status === 'countdown') {
+      const syncCountdown = () => {
+        const remainingMs = Math.max(0, (networkRaceState.countdownStartAt ?? Date.now()) - Date.now());
+        setStartCountdownValue(Math.max(0, Math.ceil(remainingMs / 1000)));
+      };
+      syncCountdown();
+      const countdownSyncTimer = window.setInterval(syncCountdown, 120);
+      return () => window.clearInterval(countdownSyncTimer);
+    }
+
+    if (networkRaceState.status === 'running') {
+      setControlsLocked(false);
+      setStartCountdownValue(null);
+      return;
+    }
+
+    if (networkRaceState.status === 'finished') {
+      setControlsLocked(true);
+      setStartCountdownValue(null);
+    }
+  }, [isLoadingOverlayActive, isNetworkRace, networkRaceState, sceneReady]);
+
+  useEffect(() => {
+    if (!isNetworkRace || !networkRaceState) return;
+    if (networkRaceState.status !== 'finished') return;
+    finalizeCourse(lapProgressRef.current);
+  }, [finalizeCourse, isNetworkRace, networkRaceState]);
 
   useEffect(() => {
     if (startCountdownValue === null) return;
@@ -2040,6 +2413,14 @@ export function Scene({
     }, START_COUNTDOWN_TICK_MS);
     return () => window.clearTimeout(tickTimer);
   }, [startCountdownValue]);
+
+  useEffect(() => {
+    if (overlayStep !== 'course-ranking') return;
+    const autoAdvanceTimer = window.setTimeout(() => {
+      void handleAdvanceAfterCourse();
+    }, COURSE_RESULT_OVERLAY_MS);
+    return () => window.clearTimeout(autoAdvanceTimer);
+  }, [handleAdvanceAfterCourse, overlayStep]);
 
   return (
     <div className="relative h-full w-full">
@@ -2196,49 +2577,19 @@ export function Scene({
                 );
               })}
             </div>
+            <p className="mt-4 text-sm font-semibold text-white/80">
+              {hasNextCourse
+                ? 'Passage automatique a la course suivante dans 10 secondes.'
+                : 'Affichage du resultat final du Grand Prix dans 10 secondes.'}
+            </p>
             <button
               type="button"
-              className="mt-5 w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25"
-              onClick={handleContinueAfterCourse}
+              className="mt-5 w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={handleAdvanceAfterCourse}
+              disabled={menuBusy || isAdvancingCourse}
             >
-              Continuer
+              {hasNextCourse ? (menuBusy || isAdvancingCourse ? 'Chargement...' : 'Course suivante') : 'Resultat final'}
             </button>
-          </div>
-        </div>
-      ) : null}
-
-      {sceneReady && isCourseActionVisible ? (
-        <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/70 backdrop-blur-sm">
-          <div className="w-[min(92cqw,580px)] rounded-2xl border border-white/35 bg-[#0a2d66]/88 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
-            <h2 className="text-2xl font-black">
-              {hasNextCourse ? 'Course terminee' : 'Grand Prix termine'}
-            </h2>
-            <p className="mt-2 text-sm text-white/85">
-              {hasNextCourse
-                ? `Passe a la course ${raceConfig.courseIndex + 2}/${raceConfig.totalCourses} ou retourne au menu.`
-                : 'Consulte le resultat cumule du Grand Prix ou retourne au menu.'}
-            </p>
-            <div className="mt-5 grid gap-3">
-              <button
-                type="button"
-                className="w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={handlePrimaryAction}
-                disabled={menuBusy || isAdvancingCourse}
-              >
-                {hasNextCourse
-                  ? menuBusy || isAdvancingCourse
-                    ? 'Chargement...'
-                    : 'Course Suivante'
-                  : 'Resultat'}
-              </button>
-              <button
-                type="button"
-                className="w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-[#1c376f]"
-                onClick={onRaceBack}
-              >
-                Retour au Menu
-              </button>
-            </div>
           </div>
         </div>
       ) : null}
@@ -2574,6 +2925,7 @@ export function Scene({
                 maxForward={speedProfile.maxForward}
                 maxBackward={speedProfile.maxBackward}
                 maxYawRate={speedProfile.maxYawRate}
+                remotePose={remotePoseByParticipantId.get(participant.id) ?? null}
                 onPoseUpdate={handlePoseUpdate}
                 onLapTrigger={handleLapTrigger}
                 controlsLocked={controlsLocked}

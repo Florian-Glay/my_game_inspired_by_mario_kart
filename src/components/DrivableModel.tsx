@@ -95,6 +95,7 @@ type Props = {
   maxBackward?: number;
   maxYawRate?: number;
   controlMode?: ParticipantControlMode;
+  remotePose?: CarPose | null;
   onPoseUpdate?: (participantId: RaceParticipantId, pose: CarPose) => void;
   participantId?: RaceParticipantId;
   participantName?: string;
@@ -327,6 +328,7 @@ export default function DrivableModel({
   maxBackward = MAX_BACK,
   maxYawRate = MAX_YAW_RATE,
   controlMode = 'human',
+  remotePose = null,
   onPoseUpdate,
   participantId = 'participant-1',
   participantName = participantId,
@@ -550,6 +552,7 @@ export default function DrivableModel({
   const normalizedMyObjectRef = useRef(normalizedMyObject);
   const normalizedMyObjectChargesRef = useRef(normalizedMyObjectCharges);
   const botItemTacticalStateRef = useRef<BotItemTacticalState | null>(botItemTacticalState ?? null);
+  const remotePoseRef = useRef<CarPose | null>(remotePose);
   const botAutoItemObservedObjectRef = useRef(normalizedMyObject);
   const botAutoItemObservedChargesRef = useRef(normalizedMyObjectCharges);
   const botAutoItemCooldownUntilMsRef = useRef(0);
@@ -566,6 +569,10 @@ export default function DrivableModel({
   useEffect(() => {
     botItemTacticalStateRef.current = botItemTacticalState ?? null;
   }, [botItemTacticalState]);
+
+  useEffect(() => {
+    remotePoseRef.current = remotePose ?? null;
+  }, [remotePose]);
   useEffect(() => {
     const objectChanged =
       botAutoItemObservedObjectRef.current !== normalizedMyObject ||
@@ -1767,7 +1774,8 @@ export default function DrivableModel({
   };
 
   const publishRenderedPose = (boostActiveNow: boolean) => {
-    const shouldSyncFallbackCamera = controlMode === 'human' && participantId === 'human-p1';
+    const shouldSyncFallbackCamera =
+      controlMode === 'human' && (participantId === 'human-p1' || participantId.startsWith('player-'));
     if (!onPoseUpdate && !shouldSyncFallbackCamera) return;
 
     const anchor = poseAnchorRef.current;
@@ -2330,6 +2338,48 @@ export default function DrivableModel({
     }
     bulletBillWasActiveRef.current = bulletBillActive;
     const tCurrent = body.translation();
+
+    if (effectiveControlMode === 'remote') {
+      const pose = remotePoseRef.current;
+      if (!pose) return;
+
+      const positionLerpAlpha = clamp(dtClamped * 14, 0, 1);
+      const rotationLerpAlpha = clamp(dtClamped * 12, 0, 1);
+      const targetPosition = nextTranslationRef.current;
+      targetPosition.x = tCurrent.x + (pose.x - tCurrent.x) * positionLerpAlpha;
+      targetPosition.y = tCurrent.y + (pose.y - tCurrent.y) * positionLerpAlpha;
+      targetPosition.z = tCurrent.z + (pose.z - tCurrent.z) * positionLerpAlpha;
+      body.setNextKinematicTranslation(targetPosition);
+
+      const bodyRotationNow = body.rotation();
+      tmpBodyQuat.set(bodyRotationNow.x, bodyRotationNow.y, bodyRotationNow.z, bodyRotationNow.w).normalize();
+      if (
+        typeof pose.qx === 'number' &&
+        typeof pose.qy === 'number' &&
+        typeof pose.qz === 'number' &&
+        typeof pose.qw === 'number'
+      ) {
+        tmpQuat.set(pose.qx, pose.qy, pose.qz, pose.qw).normalize();
+      } else {
+        tmpQuat.setFromAxisAngle(worldUp, pose.yaw);
+      }
+
+      tmpBodyQuat.slerp(tmpQuat, rotationLerpAlpha).normalize();
+      body.setNextKinematicRotation({
+        x: tmpBodyQuat.x,
+        y: tmpBodyQuat.y,
+        z: tmpBodyQuat.z,
+        w: tmpBodyQuat.w,
+      });
+
+      speedRef.current = Number.isFinite(pose.speed) ? pose.speed ?? 0 : speedRef.current;
+      rotRef.current.copy(tmpBodyQuat);
+      tmpForward.set(0, 0, 1).applyQuaternion(tmpBodyQuat).normalize();
+      headingRef.current.copy(tmpForward);
+      yawRef.current = Math.atan2(tmpForward.x, tmpForward.z);
+      setLakituTarget(targetPosition.x, targetPosition.y, targetPosition.z, false);
+      return;
+    }
 
     if (effectiveControlMode === 'autopilot') {
       const autopilotInput = computeBotAutopilotInput({

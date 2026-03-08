@@ -221,12 +221,77 @@ export function ThrowableObject({
     [rapier],
   );
   const activeLifetimeMs = explosionState?.durationMs ?? resolvedTtlMs;
+  const isDynamicBodyRendered =
+    groundedBananaPosition === null && groundedBombPosition === null && explosionState === null;
+
+  const setBodyRef = useCallback((body: RapierRigidBody | null) => {
+    bodyRef.current = body;
+  }, []);
+
+  const detachDynamicBody = useCallback(() => {
+    bodyRef.current = null;
+  }, []);
+
+  const readBodySnapshot = useCallback(() => {
+    const body = bodyRef.current;
+    if (!body) return null;
+
+    try {
+      const translation = body.translation();
+      const velocity = body.linvel();
+      return {
+        body,
+        translation,
+        velocity,
+      };
+    } catch {
+      bodyRef.current = null;
+      return null;
+    }
+  }, []);
+
+  const readBodyPosition = useCallback(() => {
+    const snapshot = readBodySnapshot();
+    if (!snapshot) return null;
+
+    return {
+      body: snapshot.body,
+      position: [
+        snapshot.translation.x,
+        snapshot.translation.y,
+        snapshot.translation.z,
+      ] as Vec3,
+      velocity: snapshot.velocity,
+    };
+  }, [readBodySnapshot]);
+
+  const applyBodyVelocity = useCallback(
+    (
+      body: RapierRigidBody,
+      linearVelocity: { x: number; y: number; z: number },
+      angularVelocity: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 },
+    ) => {
+      try {
+        body.setLinvel(linearVelocity, true);
+        body.setAngvel(angularVelocity, true);
+        return true;
+      } catch {
+        if (bodyRef.current === body) {
+          bodyRef.current = null;
+        }
+        return false;
+      }
+    },
+    [],
+  );
 
   const resolveAndExpire = useCallback(() => {
     if (expiredRef.current) return;
     expiredRef.current = true;
+    projectileActiveRef.current = false;
+    detachDynamicBody();
     onExpired(throwableId);
-  }, [onExpired, throwableId]);
+  }, [detachDynamicBody, onExpired, throwableId]);
 
   const registerParticipantHit = useCallback(
     (participantId: RaceParticipantId) => {
@@ -255,10 +320,11 @@ export function ThrowableObject({
       if (!projectileActiveRef.current) return;
 
       projectileActiveRef.current = false;
+      detachDynamicBody();
       setExplosionState(nextExplosion);
       applyExplosionHits(nextExplosion.position, nextExplosion.radius);
     },
-    [applyExplosionHits],
+    [applyExplosionHits, detachDynamicBody],
   );
 
   const triggerBlueShellExplosion = useCallback(
@@ -315,11 +381,14 @@ export function ThrowableObject({
   }, [behavior, explosionState, groundedBombPosition, triggerBombExplosion]);
 
   useEffect(() => {
-    const body = bodyRef.current;
-    if (!body) return;
+    if (!isDynamicBodyRendered) {
+      detachDynamicBody();
+      return;
+    }
 
     areaHitParticipantsRef.current.clear();
     shellSpawnAtMsRef.current = performance.now();
+    bananaPhaseRef.current = 'flying';
 
     if (
       behavior === 'green-shell' ||
@@ -336,41 +405,14 @@ export function ThrowableObject({
       shellBounceCountRef.current = 0;
       shellLastBounceColliderHandleRef.current = null;
       shellLastBounceAtMsRef.current = 0;
-      body.setLinvel(
-        {
-          x: directionX * speed,
-          y: launchVelocity[1],
-          z: directionZ * speed,
-        },
-        true,
-      );
-      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       return;
     }
 
     if (behavior === 'bomb') {
       bombPhaseRef.current = 'flying';
-      body.setLinvel(
-        {
-          x: launchVelocity[0],
-          y: launchVelocity[1],
-          z: launchVelocity[2],
-        },
-        true,
-      );
-      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       return;
     }
-
-    body.setLinvel(
-      {
-        x: launchVelocity[0],
-        y: launchVelocity[1],
-        z: launchVelocity[2],
-      },
-      true,
-    );
-  }, [behavior, launchVelocity]);
+  }, [behavior, detachDynamicBody, isDynamicBodyRendered, launchVelocity]);
 
   useBeforePhysicsStep(() => {
     if (
@@ -382,12 +424,11 @@ export function ThrowableObject({
     }
     if (expiredRef.current || !projectileActiveRef.current) return;
 
-    const body = bodyRef.current;
-    if (!body) return;
+    const bodySnapshot = readBodySnapshot();
+    if (!bodySnapshot) return;
 
+    const { body, translation, velocity: currentVelocity } = bodySnapshot;
     const speed = shellSpeedRef.current;
-    const currentVelocity = body.linvel();
-    const translation = body.translation();
     const position: Vec3 = [translation.x, translation.y, translation.z];
 
     if (behavior === 'red-shell') {
@@ -412,15 +453,14 @@ export function ThrowableObject({
       }
 
       const direction = shellDirectionRef.current;
-      body.setLinvel(
+      applyBodyVelocity(
+        body,
         {
           x: direction.x * speed,
           y: Math.max(-12, Math.min(6, currentVelocity.y)),
           z: direction.z * speed,
         },
-        true,
       );
-      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       return;
     }
 
@@ -457,7 +497,8 @@ export function ThrowableObject({
           ) {
             blueShellPhaseRef.current = 'dive';
           } else {
-            body.setLinvel(
+            applyBodyVelocity(
+              body,
               {
                 x: shellDirectionRef.current.x * speed,
                 y: Math.max(
@@ -466,9 +507,7 @@ export function ThrowableObject({
                 ),
                 z: shellDirectionRef.current.z * speed,
               },
-              true,
             );
-            body.setAngvel({ x: 0, y: 0, z: 0 }, true);
             return;
           }
         }
@@ -481,22 +520,23 @@ export function ThrowableObject({
           const distanceToImpact = Math.hypot(toTargetX, toTargetY, toTargetZ);
 
           if (distanceToImpact <= BLUE_SHELL_IMPACT_DISTANCE) {
-            registerParticipantHit(targetParticipantId);
+            if (targetParticipantId) {
+              registerParticipantHit(targetParticipantId);
+            }
             triggerBlueShellExplosion(position);
             return;
           }
 
           if (distanceToImpact > 0.0001) {
             const velocityScale = BLUE_SHELL_DIVE_SPEED / distanceToImpact;
-            body.setLinvel(
+            applyBodyVelocity(
+              body,
               {
                 x: toTargetX * velocityScale,
                 y: toTargetY * velocityScale,
                 z: toTargetZ * velocityScale,
               },
-              true,
             );
-            body.setAngvel({ x: 0, y: 0, z: 0 }, true);
           }
           return;
         }
@@ -517,28 +557,26 @@ export function ThrowableObject({
         }
       }
 
-      body.setLinvel(
+      applyBodyVelocity(
+        body,
         {
           x: shellDirectionRef.current.x * speed,
           y: Math.max(-12, Math.min(8, currentVelocity.y)),
           z: shellDirectionRef.current.z * speed,
         },
-        true,
       );
-      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       return;
     }
 
     const direction = shellDirectionRef.current;
-    body.setLinvel(
+    applyBodyVelocity(
+      body,
       {
         x: direction.x * speed,
         y: Math.max(-12, Math.min(6, currentVelocity.y)),
         z: direction.z * speed,
       },
-      true,
     );
-    body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   });
 
   const handleBananaFlyingCollisionEnter = (payload: CollisionEnterPayload) => {
@@ -548,12 +586,12 @@ export function ThrowableObject({
     const participantId = resolveParticipantIdFromCollisionPayload(payload);
     if (participantId) return;
 
-    const body = bodyRef.current;
-    if (!body) return;
+    const bodySnapshot = readBodyPosition();
+    if (!bodySnapshot) return;
 
-    const translation = body.translation();
     bananaPhaseRef.current = 'grounded';
-    setGroundedBananaPosition([translation.x, translation.y, translation.z]);
+    detachDynamicBody();
+    setGroundedBananaPosition(bodySnapshot.position);
   };
 
   const handleBananaGroundedIntersectionEnter = (payload: IntersectionEnterPayload) => {
@@ -624,16 +662,16 @@ export function ThrowableObject({
       return;
     }
 
-    const body = bodyRef.current;
-    if (!body) return;
+    const bodySnapshot = readBodySnapshot();
+    if (!bodySnapshot) return;
     const speed = shellSpeedRef.current;
-    body.setLinvel(
+    applyBodyVelocity(
+      bodySnapshot.body,
       {
         x: nextDirectionX * speed,
-        y: Math.max(-6, Math.min(2, body.linvel().y)),
+        y: Math.max(-6, Math.min(2, bodySnapshot.velocity.y)),
         z: nextDirectionZ * speed,
       },
-      true,
     );
   };
 
@@ -688,30 +726,27 @@ export function ThrowableObject({
       }
 
       registerParticipantHit(participantId);
-      const body = bodyRef.current;
-      if (!body) return;
-      const translation = body.translation();
-      triggerBlueShellExplosion([translation.x, translation.y, translation.z]);
+      const bodySnapshot = readBodyPosition();
+      if (!bodySnapshot) return;
+      triggerBlueShellExplosion(bodySnapshot.position);
       return;
     }
 
     if (blueShellPhaseRef.current !== 'dive') return;
 
-    const body = bodyRef.current;
-    if (!body) return;
-    const translation = body.translation();
-    triggerBlueShellExplosion([translation.x, translation.y, translation.z]);
+    const bodySnapshot = readBodyPosition();
+    if (!bodySnapshot) return;
+    triggerBlueShellExplosion(bodySnapshot.position);
   };
 
   const handleBombCollisionEnter = (payload: CollisionEnterPayload) => {
     if (behavior !== 'bomb') return;
     if (expiredRef.current || !projectileActiveRef.current) return;
 
-    const body = bodyRef.current;
-    if (!body) return;
+    const bodySnapshot = readBodyPosition();
+    if (!bodySnapshot) return;
 
-    const translation = body.translation();
-    const bombPosition: Vec3 = [translation.x, translation.y, translation.z];
+    const bombPosition = bodySnapshot.position;
     const participantId = resolveParticipantIdFromCollisionPayload(payload);
     if (participantId) {
       registerParticipantHit(participantId);
@@ -721,6 +756,7 @@ export function ThrowableObject({
 
     if (bombPhaseRef.current !== 'flying') return;
     bombPhaseRef.current = 'grounded';
+    detachDynamicBody();
     setGroundedBombPosition(bombPosition);
   };
 
@@ -748,7 +784,12 @@ export function ThrowableObject({
 
   if (groundedBananaPosition) {
     return (
-      <RigidBody type="fixed" colliders={false} position={groundedBananaPosition}>
+      <RigidBody
+        key={`${throwableId}-banana-grounded`}
+        type="fixed"
+        colliders={false}
+        position={groundedBananaPosition}
+      >
         <CuboidCollider
           sensor
           args={[colliderHalfExtents[0], colliderHalfExtents[1], colliderHalfExtents[2]]}
@@ -762,7 +803,12 @@ export function ThrowableObject({
 
   if (explosionState) {
     return (
-      <RigidBody type="fixed" colliders={false} position={explosionState.position}>
+      <RigidBody
+        key={`${throwableId}-explosion`}
+        type="fixed"
+        colliders={false}
+        position={explosionState.position}
+      >
         <BallCollider
           sensor
           args={[explosionState.radius]}
@@ -786,7 +832,12 @@ export function ThrowableObject({
 
   if (groundedBombPosition) {
     return (
-      <RigidBody type="fixed" colliders={false} position={groundedBombPosition}>
+      <RigidBody
+        key={`${throwableId}-bomb-grounded`}
+        type="fixed"
+        colliders={false}
+        position={groundedBombPosition}
+      >
         <CuboidCollider
           sensor
           args={[colliderHalfExtents[0], colliderHalfExtents[1], colliderHalfExtents[2]]}
@@ -806,13 +857,16 @@ export function ThrowableObject({
   ) {
     return (
       <RigidBody
-        ref={bodyRef}
+        key={`${throwableId}-dynamic-${behavior}`}
+        ref={setBodyRef}
         type="dynamic"
         colliders={false}
         position={spawnPosition}
         canSleep={false}
         linearDamping={behavior === 'bomb' ? 0.05 : 0}
         angularDamping={behavior === 'bomb' ? 2 : 5}
+        linearVelocity={launchVelocity}
+        angularVelocity={[0, 0, 0]}
         enabledRotations={[false, false, false]}
       >
         <CuboidCollider
@@ -836,7 +890,15 @@ export function ThrowableObject({
   }
 
   return (
-    <RigidBody ref={bodyRef} type="dynamic" colliders={false} position={spawnPosition}>
+    <RigidBody
+      key={`${throwableId}-dynamic-banana`}
+      ref={setBodyRef}
+      type="dynamic"
+      colliders={false}
+      position={spawnPosition}
+      linearVelocity={launchVelocity}
+      angularVelocity={[0, 0, 0]}
+    >
       <CuboidCollider
         args={[colliderHalfExtents[0], colliderHalfExtents[1], colliderHalfExtents[2]]}
         restitution={0}

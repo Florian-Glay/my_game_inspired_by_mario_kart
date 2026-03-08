@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import CommandBubble from './components/CommandBubble';
 import { GameMenu } from './components/GameMenu';
 import { Scene } from './components/Scene';
@@ -22,6 +22,20 @@ import {
 import { PERF_PROFILE } from './config/performanceProfile';
 import { clearDragRegistry } from './state/dragRegistry';
 import { gameMode } from './state/gamemode';
+import {
+  connectMultiplayerClient,
+  createServerLobby,
+  getMultiplayerStateSnapshot,
+  joinServerLobby,
+  joinServerLobbyByCode,
+  leaveServerLobby,
+  markServerRaceLoaded,
+  publishServerRacePose,
+  sendServerRaceEvent,
+  startServerRace,
+  subscribeToMultiplayerState,
+  updateServerLobbyProfile,
+} from './state/multiplayerClient';
 import { clearSurfaceTriggerRegistry } from './state/surfaceTriggerRegistry';
 import type {
   CcLevel,
@@ -49,8 +63,12 @@ type GrandPrixProgressState = {
   courseResults: CourseRaceResult[];
 };
 
+const HUMAN_NETWORK_POSE_PUBLISH_INTERVAL_MS = 33;
+const BOT_NETWORK_POSE_PUBLISH_INTERVAL_MS = 100;
+
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 const GRAND_PRIX_POINTS_BY_POSITION = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0] as const;
+const ONLINE_PLAYER_NAME_STORAGE_KEY = 'mk-online-player-name';
 
 function getGrandPrixPointsForPosition(position: number) {
   if (!Number.isFinite(position) || position <= 0) return 0;
@@ -105,6 +123,56 @@ function createRandomLoadoutSelection(): PlayerLoadoutSelection {
   };
 }
 
+function getStoredOnlinePlayerName() {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(ONLINE_PLAYER_NAME_STORAGE_KEY) ?? '';
+}
+
+function createResolvedParticipantConfig({
+  id,
+  displayName,
+  kind,
+  controlMode,
+  loadout,
+  humanSlotId,
+  keyBindings,
+}: {
+  id: string;
+  displayName: string;
+  kind: RaceParticipantConfig['kind'];
+  controlMode: RaceParticipantConfig['controlMode'];
+  loadout: PlayerLoadoutSelection;
+  humanSlotId?: HumanPlayerSlotId;
+  keyBindings?: RaceParticipantConfig['keyBindings'];
+}): RaceParticipantConfig {
+  const character = getCatalogItemById(CHARACTERS, loadout.characterId);
+  const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
+  const wheel = getCatalogItemById(WHEELS, loadout.wheelId);
+  const wheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[wheel.size];
+
+  return {
+    id,
+    displayName,
+    kind,
+    humanSlotId,
+    controlMode,
+    loadout,
+    vehicleModel: vehicle.model,
+    vehicleScale: vehicle.scale,
+    characterModel: character.model,
+    characterScale: character.scale,
+    wheelModel: wheel.model,
+    wheelScale: wheel.scale,
+    characterMount: vehicle.characterMount,
+    wheelMounts: vehicle.wheelMounts,
+    chassisLift: wheelProfile.chassisLift,
+    driverLift: wheelProfile.driverLift,
+    spawn: [0, 0, 0],
+    spawnRotation: [0, 0, 0],
+    keyBindings,
+  };
+}
+
 function shuffleParticipants(participants: RaceParticipantConfig[]) {
   const shuffled = [...participants];
   for (let i = shuffled.length - 1; i > 0; i -= 1) {
@@ -117,6 +185,11 @@ function shuffleParticipants(participants: RaceParticipantConfig[]) {
 }
 
 export function App() {
+  const multiplayerSnapshot = useSyncExternalStore(
+    subscribeToMultiplayerState,
+    getMultiplayerStateSnapshot,
+    getMultiplayerStateSnapshot,
+  );
   const [screen, setScreen] = useState<GameScreen>('home');
   const [mode, setMode] = useState<RaceMode | null>(null);
   const [cc, setCc] = useState<CcLevel | null>(null);
@@ -130,8 +203,19 @@ export function App() {
   const [isCheckingAssets, setIsCheckingAssets] = useState(false);
   const [raceConfig, setRaceConfig] = useState<RaceConfig | null>(null);
   const [grandPrixProgress, setGrandPrixProgress] = useState<GrandPrixProgressState | null>(null);
+  const [onlinePlayerNameInput, setOnlinePlayerNameInput] = useState(() => getStoredOnlinePlayerName());
+  const [onlinePlayerName, setOnlinePlayerName] = useState<string | null>(() => {
+    const storedName = getStoredOnlinePlayerName().trim();
+    return storedName.length > 0 ? storedName : null;
+  });
+  const [selectedOnlineLobbyId, setSelectedOnlineLobbyId] = useState<string | null>(null);
+  const [onlineLobbyCodeInput, setOnlineLobbyCodeInput] = useState('');
   const loadedRaceAssetUrlsRef = useRef<Set<string>>(new Set());
   const pendingCacheClearCancelRef = useRef<(() => void) | null>(null);
+  const handledOnlineRaceIdRef = useRef<string | null>(null);
+  const reportedOnlineRaceLoadedIdRef = useRef<string | null>(null);
+  const pendingOnlineLobbyEntryRef = useRef(false);
+  const lastPublishedNetworkPoseAtRef = useRef<Map<string, number>>(new Map());
 
   useEffect(
     () => () => {
@@ -141,15 +225,66 @@ export function App() {
     [],
   );
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const trimmedName = onlinePlayerNameInput.trim();
+    if (trimmedName.length > 0) {
+      window.localStorage.setItem(ONLINE_PLAYER_NAME_STORAGE_KEY, trimmedName);
+      return;
+    }
+    window.localStorage.removeItem(ONLINE_PLAYER_NAME_STORAGE_KEY);
+  }, [onlinePlayerNameInput]);
+
+  useEffect(() => {
+    connectMultiplayerClient();
+  }, []);
+
   const activeLoadout = humanLoadoutsBySlot[activeHumanSlot] ?? null;
+  const onlineCurrentPlayerLoadout = humanLoadoutsBySlot.p1 ?? getDefaultLoadoutSelection();
+  const onlineSessionId = multiplayerSnapshot.sessionId;
+  const currentOnlineLobby = multiplayerSnapshot.currentLobby;
+  const currentOnlineRace = multiplayerSnapshot.currentRace;
+  const selectedOnlineLobby =
+    selectedOnlineLobbyId ?
+      multiplayerSnapshot.lobbies.find((lobby) => lobby.id === selectedOnlineLobbyId) ?? null
+    : null;
+  const waitingOnlineLobbies = useMemo(
+    () =>
+      multiplayerSnapshot.lobbies.filter(
+        (lobby) => lobby.status === 'waiting' || lobby.status === 'countdown',
+      ),
+    [multiplayerSnapshot.lobbies],
+  );
+  const onlinePlayerPresence = useMemo(
+    () =>
+      onlinePlayerName ?
+        {
+          name: onlinePlayerName,
+          loadout: onlineCurrentPlayerLoadout,
+        }
+      : null,
+    [onlineCurrentPlayerLoadout, onlinePlayerName],
+  );
 
   const isMultiplayerRace = useMemo(
-    () => screen === 'race' && (raceConfig?.humanCount ?? 1) > 1,
-    [raceConfig?.humanCount, screen],
+    () => screen === 'race' && (mode === 'online' || (raceConfig?.humanCount ?? 1) > 1),
+    [mode, raceConfig?.humanCount, screen],
   );
 
   const selectedGrandPrix =
     selectedGrandPrixId ? GRAND_PRIXS[selectedGrandPrixId] : null;
+  const isCurrentOnlineLobbyHost =
+    currentOnlineLobby?.hostSessionId === onlineSessionId;
+  const currentOnlineOwnedParticipantIds = useMemo(
+    () =>
+      currentOnlineRace?.participants
+        .filter((participant) => {
+          if (participant.sessionId === onlineSessionId) return true;
+          return isCurrentOnlineLobbyHost && participant.sessionId.startsWith('bot-');
+        })
+        .map((participant) => participant.participantId) ?? [],
+    [currentOnlineRace?.participants, isCurrentOnlineLobbyHost, onlineSessionId],
+  );
 
   const grandPrixStandings = useMemo<GrandPrixStanding[]>(() => {
     if (!grandPrixProgress || !raceConfig) return [];
@@ -166,7 +301,7 @@ export function App() {
         const position = participantEntry?.position ?? raceConfig.participants.length;
         return getGrandPrixPointsForPosition(position);
       });
-      const totalScore = courseScores.reduce((sum, value) => sum + value, 0);
+      const totalScore = courseScores.reduce<number>((sum, value) => sum + value, 0);
       return {
         participantId: participant.id,
         displayName: participant.displayName,
@@ -188,6 +323,20 @@ export function App() {
     return standings;
   }, [grandPrixProgress, raceConfig]);
 
+  const clearOnlineLobbyMembership = useCallback(() => {
+    if (!currentOnlineLobby) return;
+    leaveServerLobby();
+  }, [currentOnlineLobby]);
+
+  const resetOnlineFlowState = useCallback(() => {
+    setSelectedOnlineLobbyId(null);
+    setOnlineLobbyCodeInput('');
+    handledOnlineRaceIdRef.current = null;
+    reportedOnlineRaceLoadedIdRef.current = null;
+    pendingOnlineLobbyEntryRef.current = false;
+    lastPublishedNetworkPoseAtRef.current.clear();
+  }, []);
+
   const resetToHome = () => {
     const completedGrandPrix =
       raceConfig &&
@@ -203,6 +352,7 @@ export function App() {
     loadedRaceAssetUrlsRef.current.clear();
     clearDragRegistry();
     clearSurfaceTriggerRegistry();
+    clearOnlineLobbyMembership();
 
     if (completedGrandPrix) {
       window.setTimeout(() => {
@@ -217,11 +367,11 @@ export function App() {
     setHumanCount(null);
     setHumanLoadoutsBySlot({});
     setActiveHumanSlot('p1');
-    setSelectedGrandPrixId(null);
     setErrorMessage(null);
     setIsCheckingAssets(false);
     setRaceConfig(null);
     setGrandPrixProgress(null);
+    resetOnlineFlowState();
     gameMode.current = 'run';
   };
 
@@ -242,6 +392,29 @@ export function App() {
       return;
     }
 
+    if (screen === 'online-name') {
+      setScreen('characters');
+      return;
+    }
+
+    if (screen === 'online-lobby-menu') {
+      setScreen('online-name');
+      return;
+    }
+
+    if (screen === 'online-lobby-browser') {
+      setSelectedOnlineLobbyId(null);
+      setScreen('online-lobby-menu');
+      return;
+    }
+
+    if (screen === 'online-lobby') {
+      clearOnlineLobbyMembership();
+      resetOnlineFlowState();
+      setScreen('online-lobby-menu');
+      return;
+    }
+
     if (screen === 'playercount') {
       setHumanCount(null);
       setHumanLoadoutsBySlot({});
@@ -258,6 +431,11 @@ export function App() {
           setActiveHumanSlot(previousSlot);
           return;
         }
+      }
+
+      if (mode === 'online') {
+        setScreen('home');
+        return;
       }
 
       if (mode === 'multi') {
@@ -282,15 +460,23 @@ export function App() {
 
   const handleSelectMode = (nextMode: RaceMode) => {
     setMode(nextMode);
-    setCc(null);
-    setHumanCount(nextMode === 'solo' ? 1 : null);
-    setHumanLoadoutsBySlot({});
+    setCc(nextMode === 'online' ? '150cc' : null);
+    setHumanCount(nextMode === 'solo' || nextMode === 'online' ? 1 : null);
+    setHumanLoadoutsBySlot(
+      nextMode === 'online' ?
+        {
+          p1: humanLoadoutsBySlot.p1 ?? getDefaultLoadoutSelection(),
+        }
+      : {},
+    );
     setSelectedGrandPrixId(null);
     setErrorMessage(null);
     setActiveHumanSlot('p1');
     setRaceConfig(null);
     setGrandPrixProgress(null);
-    setScreen('cc');
+    resetOnlineFlowState();
+    setSelectedGrandPrixId(nextMode === 'online' ? GRAND_PRIX_ORDER[0] ?? null : null);
+    setScreen(nextMode === 'online' ? 'characters' : 'cc');
     gameMode.current = 'run';
   };
 
@@ -395,6 +581,11 @@ export function App() {
       return;
     }
 
+    if (mode === 'online') {
+      setScreen('online-name');
+      return;
+    }
+
     setScreen('circuit');
   };
 
@@ -403,6 +594,135 @@ export function App() {
     setGrandPrixProgress(null);
     setErrorMessage(null);
   };
+
+  const handleConfirmOnlinePlayerName = () => {
+    const trimmedName = onlinePlayerNameInput.trim().slice(0, 24);
+    if (trimmedName.length === 0) {
+      setErrorMessage('Saisis ton nom avant de continuer.');
+      return;
+    }
+
+    setOnlinePlayerName(trimmedName);
+    setOnlinePlayerNameInput(trimmedName);
+    setErrorMessage(null);
+    setScreen('online-lobby-menu');
+  };
+
+  const handleOpenOnlineLobbyBrowser = () => {
+    setErrorMessage(null);
+    const firstLobby = waitingOnlineLobbies[0] ?? null;
+    setSelectedOnlineLobbyId(firstLobby?.id ?? null);
+    setOnlineLobbyCodeInput(firstLobby?.code ?? '');
+    setScreen('online-lobby-browser');
+  };
+
+  const handleCreateOnlineLobby = () => {
+    if (!onlinePlayerPresence) {
+      setErrorMessage('Confirme ton nom avant de creer un lobby.');
+      return;
+    }
+
+    createServerLobby(onlinePlayerPresence);
+    setSelectedOnlineLobbyId(null);
+    pendingOnlineLobbyEntryRef.current = true;
+    setErrorMessage(null);
+  };
+
+  const handleSelectOnlineLobby = useCallback(
+    (lobbyId: string) => {
+      setSelectedOnlineLobbyId(lobbyId);
+      const lobby = waitingOnlineLobbies.find((entry) => entry.id === lobbyId) ?? null;
+      if (lobby) {
+        setOnlineLobbyCodeInput(lobby.code);
+      }
+    },
+    [waitingOnlineLobbies],
+  );
+
+  const handleJoinSelectedOnlineLobby = () => {
+    if (!selectedOnlineLobbyId) {
+      setErrorMessage('Choisis un lobby a rejoindre.');
+      return;
+    }
+
+    if (!onlinePlayerPresence) {
+      setErrorMessage('Confirme ton nom avant de rejoindre un lobby.');
+      return;
+    }
+
+    joinServerLobby(selectedOnlineLobbyId, onlinePlayerPresence);
+    pendingOnlineLobbyEntryRef.current = true;
+    setErrorMessage(null);
+  };
+
+  const handleJoinLobbyByCode = () => {
+    const normalizedCode = onlineLobbyCodeInput.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+    if (normalizedCode.length !== 6) {
+      setErrorMessage('Saisis un code lobby a 6 caracteres.');
+      return;
+    }
+
+    if (!onlinePlayerPresence) {
+      setErrorMessage('Confirme ton nom avant de rejoindre un lobby.');
+      return;
+    }
+
+    joinServerLobbyByCode(normalizedCode, onlinePlayerPresence);
+    setOnlineLobbyCodeInput(normalizedCode);
+    pendingOnlineLobbyEntryRef.current = true;
+    setErrorMessage(null);
+  };
+
+  const handleLeaveOnlineLobby = () => {
+    clearOnlineLobbyMembership();
+    resetOnlineFlowState();
+    setErrorMessage(null);
+    setScreen('online-lobby-menu');
+  };
+
+  const handleLaunchOnlineGrandPrix = useCallback(async () => {
+    if (!currentOnlineLobby || !selectedGrandPrixId) {
+      setErrorMessage('Aucun lobby actif a lancer.');
+      return;
+    }
+
+    startServerRace(selectedGrandPrixId, '150cc');
+    setErrorMessage(null);
+  }, [currentOnlineLobby, selectedGrandPrixId]);
+
+  useEffect(() => {
+    if (screen !== 'online-lobby') return;
+    if (!onlineSessionId) return;
+    if (currentOnlineLobby?.players.some((player) => player.sessionId === onlineSessionId)) {
+      return;
+    }
+    if (multiplayerSnapshot.currentLobbyId && !currentOnlineLobby) return;
+
+    setSelectedOnlineLobbyId(null);
+    setScreen('online-lobby-menu');
+    setErrorMessage('Le lobby a ete ferme ou tu en as ete retire.');
+  }, [currentOnlineLobby, multiplayerSnapshot.currentLobbyId, onlineSessionId, screen]);
+
+  useEffect(() => {
+    if (!selectedOnlineLobbyId) return;
+    if (selectedOnlineLobby) return;
+    setSelectedOnlineLobbyId(waitingOnlineLobbies[0]?.id ?? null);
+    setOnlineLobbyCodeInput(waitingOnlineLobbies[0]?.code ?? '');
+  }, [selectedOnlineLobby, selectedOnlineLobbyId, waitingOnlineLobbies]);
+
+  useEffect(() => {
+    if (!pendingOnlineLobbyEntryRef.current) return;
+    if (!currentOnlineLobby || !onlineSessionId) return;
+    const isMember = currentOnlineLobby.players.some((player) => player.sessionId === onlineSessionId);
+    if (!isMember) return;
+    pendingOnlineLobbyEntryRef.current = false;
+    setScreen('online-lobby');
+  }, [currentOnlineLobby, onlineSessionId]);
+
+  useEffect(() => {
+    if (!currentOnlineLobby || !onlinePlayerPresence) return;
+    updateServerLobbyProfile(onlinePlayerPresence);
+  }, [currentOnlineLobby, onlinePlayerPresence]);
 
   const buildRaceConfigForCourseIndex = useCallback(
     (courseIndex: number): RaceConfig | null => {
@@ -417,54 +737,82 @@ export function App() {
 
       const circuitConfig = CIRCUITS[selectedCircuit];
 
-      const humanSlots = getHumanSlots(humanCount);
+      const isOnlineMode = mode === 'online';
       const humanParticipants: RaceParticipantConfig[] = [];
-      for (const slot of humanSlots) {
-        const loadout = humanLoadoutsBySlot[slot];
-        if (!loadout) return null;
-        const defaultKeyBindings = PLAYER_KEY_BINDINGS[slot];
-        const resolvedKeyBindings =
-          mode === 'solo' && slot === 'p1' ?
-            {
-              ...defaultKeyBindings,
-              useObject: [' '],
-            }
-          : defaultKeyBindings;
+      const onlineRace = currentOnlineRace;
+      const orderedOnlineParticipants: RaceParticipantConfig[] = [];
 
-        const character = getCatalogItemById(CHARACTERS, loadout.characterId);
-        const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
-        const wheel = getCatalogItemById(WHEELS, loadout.wheelId);
-        const wheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[wheel.size];
+      if (isOnlineMode) {
+        if (!onlineRace || !onlineSessionId) return null;
+        const localOnlinePlayer =
+          onlineRace.participants.find((player) => player.sessionId === onlineSessionId) ?? null;
+        if (!localOnlinePlayer) return null;
 
-        humanParticipants.push({
-          id: `human-${slot}`,
-          displayName: getHumanDisplayName(slot),
-          kind: 'human',
-          humanSlotId: slot,
-          controlMode: 'human',
-          loadout,
-          vehicleModel: vehicle.model,
-          vehicleScale: vehicle.scale,
-          characterModel: character.model,
-          characterScale: character.scale,
-          wheelModel: wheel.model,
-          wheelScale: wheel.scale,
-          characterMount: vehicle.characterMount,
-          wheelMounts: vehicle.wheelMounts,
-          chassisLift: wheelProfile.chassisLift,
-          driverLift: wheelProfile.driverLift,
-          spawn: [0, 0, 0],
-          spawnRotation: [0, 0, 0],
-          keyBindings: resolvedKeyBindings,
-        });
+        for (const player of onlineRace.participants) {
+          const isLocalPlayer = player.sessionId === onlineSessionId;
+          const isBotParticipant = player.sessionId.startsWith('bot-');
+          const isBotAuthority = isBotParticipant && isCurrentOnlineLobbyHost;
+          orderedOnlineParticipants.push(
+            createResolvedParticipantConfig({
+              id: player.participantId,
+              displayName: player.displayName,
+              kind:
+                isLocalPlayer ? 'human'
+                : isBotParticipant ? 'bot'
+                : 'remote',
+              ...(isLocalPlayer ? { humanSlotId: 'p1' as const } : {}),
+              controlMode:
+                isLocalPlayer ? 'human'
+                : isBotAuthority ? 'autopilot'
+                : 'remote',
+              loadout: player.loadout,
+              ...(isLocalPlayer ?
+                {
+                  keyBindings: {
+                    ...PLAYER_KEY_BINDINGS.p1,
+                    useObject: [' '],
+                  },
+                }
+              : {}),
+            }),
+          );
+        }
+      } else {
+        const humanSlots = getHumanSlots(humanCount);
+        for (const slot of humanSlots) {
+          const loadout = humanLoadoutsBySlot[slot];
+          if (!loadout) return null;
+          const defaultKeyBindings = PLAYER_KEY_BINDINGS[slot];
+          const resolvedKeyBindings =
+            mode === 'solo' && slot === 'p1' ?
+              {
+                ...defaultKeyBindings,
+                useObject: [' '],
+              }
+            : defaultKeyBindings;
+
+          humanParticipants.push(
+            createResolvedParticipantConfig({
+              id: `human-${slot}`,
+              displayName: getHumanDisplayName(slot),
+              kind: 'human',
+              humanSlotId: slot,
+              controlMode: 'human',
+              loadout,
+              keyBindings: resolvedKeyBindings,
+            }),
+          );
+        }
       }
 
-      const desiredParticipantCount = Math.max(
-        humanParticipants.length,
-        PERF_PROFILE.simulateBots ?
-          Math.min(TOTAL_RACE_PARTICIPANTS, Math.max(humanCount, PERF_PROFILE.maxRaceParticipants))
-        : humanParticipants.length,
-      );
+      const desiredParticipantCount =
+        isOnlineMode ? orderedOnlineParticipants.length
+        : Math.max(
+            humanParticipants.length,
+            PERF_PROFILE.simulateBots ?
+              Math.min(TOTAL_RACE_PARTICIPANTS, Math.max(humanCount, PERF_PROFILE.maxRaceParticipants))
+            : humanParticipants.length,
+          );
       if (circuitConfig.spawnSlots.length < desiredParticipantCount) {
         return null;
       }
@@ -500,35 +848,22 @@ export function App() {
           });
         }
 
-        const botParticipants: RaceParticipantConfig[] = Array.from(
-          { length: desiredParticipantCount - humanParticipants.length },
-          (_, index) => {
-            const loadout = createRandomLoadoutSelection();
-            const character = getCatalogItemById(CHARACTERS, loadout.characterId);
-            const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
-            const wheel = getCatalogItemById(WHEELS, loadout.wheelId);
-            const wheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[wheel.size];
-            return {
-              id: `bot-${index + 1}`,
-              displayName: `Bot ${index + 1}`,
-              kind: 'bot',
-              controlMode: 'autopilot',
-              loadout,
-              vehicleModel: vehicle.model,
-              vehicleScale: vehicle.scale,
-              characterModel: character.model,
-              characterScale: character.scale,
-              wheelModel: wheel.model,
-              wheelScale: wheel.scale,
-              characterMount: vehicle.characterMount,
-              wheelMounts: vehicle.wheelMounts,
-              chassisLift: wheelProfile.chassisLift,
-              driverLift: wheelProfile.driverLift,
-              spawn: [0, 0, 0],
-              spawnRotation: [0, 0, 0],
-            };
-          },
-        );
+        const botParticipants: RaceParticipantConfig[] =
+          isOnlineMode ?
+            []
+          : Array.from({ length: desiredParticipantCount - humanParticipants.length }, (_, index) =>
+              createResolvedParticipantConfig({
+                id: `bot-${index + 1}`,
+                displayName: `Bot ${index + 1}`,
+                kind: 'bot',
+                controlMode: 'autopilot',
+                loadout: createRandomLoadoutSelection(),
+              }),
+            );
+
+        if (isOnlineMode) {
+          return orderedOnlineParticipants;
+        }
 
         // GP race 1: humans start on the last grid slots, bots are randomized on front slots.
         return [...shuffleParticipants(botParticipants), ...humanParticipants];
@@ -543,20 +878,31 @@ export function App() {
         };
       });
 
-      return {
-        mode,
-        humanCount,
-        cc,
-        circuit: selectedCircuit,
-        grandPrixId: selectedGrandPrixId,
-        courseId: selectedCourse.id,
-        courseLabel: selectedCourse.label,
-        courseIndex,
-        totalCourses: currentGrandPrix.courses.length,
-        participants,
-      };
-    },
-    [cc, grandPrixProgress?.courseResults, humanCount, humanLoadoutsBySlot, mode, raceConfig, selectedGrandPrixId],
+        return {
+          mode,
+          humanCount: isOnlineMode ? 1 : humanCount,
+          cc,
+          circuit: selectedCircuit,
+          grandPrixId: selectedGrandPrixId,
+          courseId: selectedCourse.id,
+          courseLabel: selectedCourse.label,
+          courseIndex,
+          totalCourses: isOnlineMode ? onlineRace?.totalCourses ?? 1 : currentGrandPrix.courses.length,
+          participants,
+        };
+      },
+    [
+      cc,
+      currentOnlineRace,
+      grandPrixProgress?.courseResults,
+      humanCount,
+      humanLoadoutsBySlot,
+      isCurrentOnlineLobbyHost,
+      mode,
+      onlineSessionId,
+      raceConfig,
+      selectedGrandPrixId,
+    ],
   );
 
   const launchCourseAtIndex = useCallback(
@@ -614,6 +960,81 @@ export function App() {
     [buildRaceConfigForCourseIndex],
   );
 
+  const handleObservedOnlineRace = useCallback(
+    async (onlineRace: NonNullable<typeof currentOnlineRace>) => {
+      if (handledOnlineRaceIdRef.current === onlineRace.raceId) return;
+
+      const localPlayer =
+        onlineSessionId ?
+          onlineRace.participants.find((player) => player.sessionId === onlineSessionId) ?? null
+        : null;
+      if (!localPlayer) {
+        setErrorMessage('La course reseau ne contient pas ce joueur.');
+        return;
+      }
+
+      handledOnlineRaceIdRef.current = onlineRace.raceId;
+      setMode('online');
+      setCc(onlineRace.cc);
+      setHumanCount(1);
+      setActiveHumanSlot('p1');
+      setSelectedGrandPrixId(onlineRace.grandPrixId);
+      setHumanLoadoutsBySlot({
+        p1: localPlayer.loadout,
+      });
+      setErrorMessage(null);
+
+      const launched = await launchCourseAtIndex(0);
+      if (!launched) {
+        handledOnlineRaceIdRef.current = null;
+        return;
+      }
+
+      setGrandPrixProgress({
+        grandPrixId: onlineRace.grandPrixId,
+        currentCourseIndex: 0,
+        courseResults: [],
+      });
+    },
+    [currentOnlineRace, launchCourseAtIndex, onlineSessionId],
+  );
+
+  useEffect(() => {
+    if (!currentOnlineRace) return;
+    void handleObservedOnlineRace(currentOnlineRace);
+  }, [currentOnlineRace, handleObservedOnlineRace]);
+
+  const handleNetworkSceneReady = useCallback((raceId: string) => {
+    if (reportedOnlineRaceLoadedIdRef.current === raceId) return;
+    reportedOnlineRaceLoadedIdRef.current = raceId;
+    markServerRaceLoaded(raceId);
+  }, []);
+
+  const handleNetworkLocalPose = useCallback(
+    (
+      raceId: string,
+      participantId: string,
+      pose: Parameters<typeof publishServerRacePose>[2],
+      options?: Parameters<typeof publishServerRacePose>[3],
+    ) => {
+      if (mode !== 'online') return;
+      const now = performance.now();
+      const lastPublishedAt = lastPublishedNetworkPoseAtRef.current.get(participantId) ?? 0;
+      const minIntervalMs =
+        participantId.startsWith('bot-') ?
+          BOT_NETWORK_POSE_PUBLISH_INTERVAL_MS
+        : HUMAN_NETWORK_POSE_PUBLISH_INTERVAL_MS;
+      if (now - lastPublishedAt < minIntervalMs) return;
+      lastPublishedNetworkPoseAtRef.current.set(participantId, now);
+      publishServerRacePose(raceId, participantId, pose, options);
+    },
+    [mode],
+  );
+
+  const handleNetworkRaceEvent = useCallback((raceId: string, event: Parameters<typeof sendServerRaceEvent>[1]) => {
+    sendServerRaceEvent(raceId, event);
+  }, []);
+
   const handleConfirmGrandPrix = async () => {
     if (!mode || !cc || !selectedGrandPrixId || !humanCount) {
       setErrorMessage('Selection incomplete avant lancement.');
@@ -629,7 +1050,7 @@ export function App() {
     }
 
     const selectedCup = GRAND_PRIXS[selectedGrandPrixId];
-    if (!selectedCup || selectedCup.courses.length === 0) {
+    if (!selectedCup || !selectedCup.courses[0]) {
       console.warn('[grand-prix] Configuration invalide', {
         grandPrixId: selectedGrandPrixId,
       });
@@ -702,6 +1123,8 @@ export function App() {
 
   const hasNextCourse =
     raceConfig ? raceConfig.courseIndex + 1 < raceConfig.totalCourses : false;
+  const effectiveMenuErrorMessage =
+    errorMessage ?? (mode === 'online' ? multiplayerSnapshot.connectionError : null);
 
   const menuScreen: Exclude<GameScreen, 'race'> = screen === 'race' ? 'home' : screen;
   const sceneKey =
@@ -728,6 +1151,11 @@ export function App() {
               hasNextCourse={hasNextCourse}
               isAdvancingCourse={isCheckingAssets}
               grandPrixStandings={grandPrixStandings}
+              networkRaceState={mode === 'online' ? currentOnlineRace : null}
+              networkOwnedParticipantIds={mode === 'online' ? currentOnlineOwnedParticipantIds : []}
+              onNetworkSceneReady={handleNetworkSceneReady}
+              onNetworkLocalPose={handleNetworkLocalPose}
+              onNetworkRaceEvent={handleNetworkRaceEvent}
             />
           ) : (
             <GameMenu
@@ -739,7 +1167,14 @@ export function App() {
               activeLoadout={activeLoadout}
               activeHumanSlot={activeHumanSlot}
               selectedGrandPrixId={selectedGrandPrix?.id ?? selectedGrandPrixId}
-              errorMessage={errorMessage}
+              onlinePlayerNameInput={onlinePlayerNameInput}
+              onlinePlayerName={onlinePlayerName}
+              selectedOnlineLobbyId={selectedOnlineLobbyId}
+              onlineLobbyCodeInput={onlineLobbyCodeInput}
+              waitingOnlineLobbies={waitingOnlineLobbies}
+              selectedOnlineLobby={selectedOnlineLobby}
+              currentOnlineLobby={currentOnlineLobby}
+              errorMessage={effectiveMenuErrorMessage}
               isCheckingAssets={isCheckingAssets}
               onBack={handleBack}
               onSelectMode={handleSelectMode}
@@ -752,6 +1187,16 @@ export function App() {
               onConfirmLoadout={handleConfirmLoadout}
               onSelectGrandPrix={handleSelectGrandPrix}
               onConfirmGrandPrix={handleConfirmGrandPrix}
+              onChangeOnlinePlayerNameInput={setOnlinePlayerNameInput}
+              onConfirmOnlinePlayerName={handleConfirmOnlinePlayerName}
+              onOpenOnlineLobbyBrowser={handleOpenOnlineLobbyBrowser}
+              onCreateOnlineLobby={handleCreateOnlineLobby}
+              onChangeOnlineLobbyCodeInput={setOnlineLobbyCodeInput}
+              onSelectOnlineLobby={handleSelectOnlineLobby}
+              onJoinSelectedOnlineLobby={handleJoinSelectedOnlineLobby}
+              onJoinLobbyByCode={handleJoinLobbyByCode}
+              onLaunchOnlineGrandPrix={handleLaunchOnlineGrandPrix}
+              onLeaveOnlineLobby={handleLeaveOnlineLobby}
             />
           )}
 
