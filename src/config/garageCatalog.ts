@@ -53,15 +53,20 @@ export const WHEEL_SIZE_HEIGHT_PROFILES: Record<WheelSize, WheelSizeHeightProfil
 };
 
 const DEFAULT_THUMBNAIL = 'ui/home-hero.png';
-const DEFAULT_CHARACTER_MODEL = 'models/mario.glb';
+const DEFAULT_CHARACTER_MODEL = 'models/character/mario.glb';
 const DEFAULT_VEHICLE_MODEL = 'models/exemple.glb';
 const DEFAULT_WHEEL_MODEL = 'models/exemple_wheel.glb';
 
 // Listes de modeles 3D utilises par le garage.
 // Le changement d'index dans le menu pointe vers l'element correspondant de ces listes.
 export const CHARACTER_MODEL_LIST = [
-  'models/mario.glb',
-  'models/peach.glb'
+  'models/character/mario.glb',
+  'models/character/peach.glb',
+  'models/character/luigi.glb',
+  'models/character/daisy.glb',
+  'models/character/harmony.glb',
+  'models/character/toad.glb',
+  'models/character/yoshi.glb',
 ] as const;
 
 export const VEHICLE_MODEL_LIST = [
@@ -79,8 +84,11 @@ export const WHEEL_MODEL_LIST = [
 export const CHARACTER_THUMBNAIL_LIST = [
   'ui/select/character/mario.png',
   'ui/select/character/peach.png',
-  'ui/150cc.png',
-  'ui/200cc.png',
+  'ui/select/character/luigi.png',
+  'ui/select/character/daisy.png',
+  'ui/select/character/harmony.png',
+  'ui/select/character/toad.png',
+  'ui/select/character/yoshi.png',
 ] as const;
 
 export const VEHICLE_THUMBNAIL_LIST = [
