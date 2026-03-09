@@ -34,6 +34,7 @@ import { gameMode } from '../state/gamemode';
 import { getSurfaceTriggerType, type SurfaceTriggerType } from '../state/surfaceTriggerRegistry';
 import { computeBotAutopilotInput, type BotWaypoint } from '../ai/botAutopilot';
 import type {
+  BotDrivingTacticalState,
   BotItemTacticalState,
   CarPose,
   KeyBindings,
@@ -106,6 +107,7 @@ type Props = {
   bulletBillUntilTimestampMs?: number;
   stunUntilTimestampMs?: number;
   botItemTacticalState?: BotItemTacticalState | null;
+  botDrivingTacticalState?: BotDrivingTacticalState | null;
   objectItemMaxValue?: number;
   miniObjectModelPaths?: readonly string[];
   onObjectUsed?: (participantId: RaceParticipantId, usedObject: number) => void;
@@ -339,6 +341,7 @@ export default function DrivableModel({
   bulletBillUntilTimestampMs = 0,
   stunUntilTimestampMs = 0,
   botItemTacticalState = null,
+  botDrivingTacticalState = null,
   objectItemMaxValue = DEFAULT_OBJECT_ITEM_MAX_VALUE,
   miniObjectModelPaths = [],
   onObjectUsed,
@@ -552,6 +555,7 @@ export default function DrivableModel({
   const normalizedMyObjectRef = useRef(normalizedMyObject);
   const normalizedMyObjectChargesRef = useRef(normalizedMyObjectCharges);
   const botItemTacticalStateRef = useRef<BotItemTacticalState | null>(botItemTacticalState ?? null);
+  const botDrivingTacticalStateRef = useRef<BotDrivingTacticalState | null>(botDrivingTacticalState ?? null);
   const remotePoseRef = useRef<CarPose | null>(remotePose);
   const botAutoItemObservedObjectRef = useRef(normalizedMyObject);
   const botAutoItemObservedChargesRef = useRef(normalizedMyObjectCharges);
@@ -569,6 +573,9 @@ export default function DrivableModel({
   useEffect(() => {
     botItemTacticalStateRef.current = botItemTacticalState ?? null;
   }, [botItemTacticalState]);
+  useEffect(() => {
+    botDrivingTacticalStateRef.current = botDrivingTacticalState ?? null;
+  }, [botDrivingTacticalState]);
 
   useEffect(() => {
     remotePoseRef.current = remotePose ?? null;
@@ -2395,6 +2402,7 @@ export default function DrivableModel({
         courseKey: autopilotCourseKey,
         startCountdownValue,
         sequentialWaypoints: bulletBillActive,
+        drivingTacticalState: botDrivingTacticalStateRef.current,
       });
       keysRef.current.forward = autopilotInput.forward;
       keysRef.current.back = autopilotInput.back;

@@ -88,6 +88,11 @@ export type BotItemTacticalState = {
   straightBehindTargetDistance: number | null;
 };
 
+export type BotDrivingTacticalState = {
+  overtakeTargetDistance: number | null;
+  desiredLaneOffset: number | null;
+};
+
 export type RaceParticipantConfig = {
   id: RaceParticipantId;
   displayName: string;

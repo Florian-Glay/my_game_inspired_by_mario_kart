@@ -1,4 +1,4 @@
-import type { CarPose } from '../types/game';
+import type { BotDrivingTacticalState, CarPose } from '../types/game';
 
 type BotSteerDirection = 'left' | 'right';
 
@@ -29,6 +29,7 @@ type ComputeBotAutopilotInputArgs = {
   courseKey?: string;
   startCountdownValue?: number | null;
   sequentialWaypoints?: boolean;
+  drivingTacticalState?: BotDrivingTacticalState | null;
 };
 
 type BotWaypointRuntimeState = {
@@ -57,8 +58,7 @@ type WaypointDistance = {
 
 type WaypointLookup = {
   byIndex: Map<number, BotWaypoint>;
-  indices: Set<number>;
-  firstIndex: number | null;
+  arrayIndexByIndex: Map<number, number>;
 };
 
 type WaypointAimProfile = Pick<
@@ -88,9 +88,21 @@ const START_BOOST_BOT_ENABLE_CHANCE = 0.9;
 const WAYPOINT_AIM_OFFSET_RADIUS_MIN = 0.5;
 const WAYPOINT_AIM_OFFSET_RADIUS_MAX = 2.1;
 const WAYPOINT_AIM_BIAS_MAX = 0.75;
+const OVERTAKE_ACTIVATION_DISTANCE = 26;
+const OVERTAKE_COMMIT_DISTANCE = 8;
+const OVERTAKE_DIRECTION_LOOKAHEAD = 2;
 
 const botWaypointStateByParticipant = new Map<string, BotWaypointRuntimeState>();
 const waypointLookupCache = new WeakMap<readonly BotWaypoint[], WaypointLookup>();
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function smoothstep01(t: number) {
+  const x = clamp(t, 0, 1);
+  return x * x * (3 - 2 * x);
+}
 
 function normalizeAngleRad(angle: number) {
   let value = angle;
@@ -190,16 +202,15 @@ function getWaypointLookup(waypoints: readonly BotWaypoint[]): WaypointLookup {
   if (cached) return cached;
 
   const byIndex = new Map<number, BotWaypoint>();
-  const indices = new Set<number>();
-  for (const waypoint of waypoints) {
+  const arrayIndexByIndex = new Map<number, number>();
+  waypoints.forEach((waypoint, arrayIndex) => {
     byIndex.set(waypoint.index, waypoint);
-    indices.add(waypoint.index);
-  }
+    arrayIndexByIndex.set(waypoint.index, arrayIndex);
+  });
 
   const created: WaypointLookup = {
     byIndex,
-    indices,
-    firstIndex: waypoints[0]?.index ?? null,
+    arrayIndexByIndex,
   };
   waypointLookupCache.set(waypoints, created);
   return created;
@@ -211,6 +222,14 @@ function getWaypointByIndex(
 ) {
   if (waypointIndex === null) return null;
   return getWaypointLookup(waypoints).byIndex.get(waypointIndex) ?? null;
+}
+
+function getWaypointArrayIndex(
+  waypoints: readonly BotWaypoint[],
+  waypointIndex: number | null,
+) {
+  if (waypointIndex === null) return null;
+  return getWaypointLookup(waypoints).arrayIndexByIndex.get(waypointIndex) ?? null;
 }
 
 function getNextWaypointIndex(
@@ -226,6 +245,87 @@ function getNextWaypointIndex(
 
   const nextArrayIndex = (currentArrayIndex + normalizedAdvanceStep) % waypoints.length;
   return waypoints[nextArrayIndex]?.index ?? waypoints[0]?.index ?? null;
+}
+
+function getWaypointDirectionXZ(
+  waypoints: readonly BotWaypoint[],
+  waypointIndex: number | null,
+  lookaheadSteps: number = OVERTAKE_DIRECTION_LOOKAHEAD,
+) {
+  if (waypoints.length === 0 || waypointIndex === null) return null;
+
+  const startArrayIndex = getWaypointArrayIndex(waypoints, waypointIndex);
+  if (startArrayIndex === null) return null;
+
+  const startWaypoint = waypoints[startArrayIndex];
+  const normalizedLookahead = Math.max(1, Math.floor(lookaheadSteps));
+
+  for (let step = 1; step <= normalizedLookahead; step += 1) {
+    const nextWaypoint = waypoints[(startArrayIndex + step) % waypoints.length];
+    if (!nextWaypoint) continue;
+
+    const dx = nextWaypoint.position[0] - startWaypoint.position[0];
+    const dz = nextWaypoint.position[2] - startWaypoint.position[2];
+    const length = Math.hypot(dx, dz);
+    if (length <= 0.0001) continue;
+
+    return {
+      x: dx / length,
+      z: dz / length,
+    };
+  }
+
+  return null;
+}
+
+function getDesiredOvertakeLaneOffset(
+  drivingTacticalState: BotDrivingTacticalState | null | undefined,
+) {
+  const targetDistance = drivingTacticalState?.overtakeTargetDistance ?? null;
+  const desiredLaneOffset = drivingTacticalState?.desiredLaneOffset ?? null;
+  if (
+    targetDistance === null ||
+    !Number.isFinite(targetDistance) ||
+    desiredLaneOffset === null ||
+    !Number.isFinite(desiredLaneOffset) ||
+    Math.abs(desiredLaneOffset) <= 0.0001 ||
+    targetDistance > OVERTAKE_ACTIVATION_DISTANCE
+  ) {
+    return null;
+  }
+
+  const blendT =
+    (OVERTAKE_ACTIVATION_DISTANCE - targetDistance) /
+    Math.max(0.001, OVERTAKE_ACTIVATION_DISTANCE - OVERTAKE_COMMIT_DISTANCE);
+  const blend = 0.25 + smoothstep01(blendT) * 0.75;
+  return desiredLaneOffset * blend;
+}
+
+function applyLaneOffsetToAimPoint(
+  pose: CarPose,
+  targetPoint: BotTargetPoint,
+  targetWaypoint: BotWaypoint,
+  waypoints: readonly BotWaypoint[],
+  laneOffset: number,
+): BotTargetPoint {
+  const direction = getWaypointDirectionXZ(waypoints, targetWaypoint.index);
+  const fallbackDirectionX = Math.sin(pose.yaw);
+  const fallbackDirectionZ = Math.cos(pose.yaw);
+  const rawDirectionX = direction?.x ?? fallbackDirectionX;
+  const rawDirectionZ = direction?.z ?? fallbackDirectionZ;
+  const directionLength = Math.hypot(rawDirectionX, rawDirectionZ);
+  if (directionLength <= 0.0001) return targetPoint;
+
+  const directionX = rawDirectionX / directionLength;
+  const directionZ = rawDirectionZ / directionLength;
+  const rightX = directionZ;
+  const rightZ = -directionX;
+
+  return {
+    x: targetPoint.x + rightX * laneOffset,
+    y: targetPoint.y,
+    z: targetPoint.z + rightZ * laneOffset,
+  };
 }
 
 function createBotWaypointState(): BotWaypointRuntimeState {
@@ -287,6 +387,7 @@ export function computeBotAutopilotInput(
     waypoints = [],
     startCountdownValue = null,
     sequentialWaypoints = false,
+    drivingTacticalState = null,
   } = args;
   if (!pose || waypoints.length === 0) return IDLE_INPUT;
 
@@ -390,8 +491,15 @@ export function computeBotAutopilotInput(
     targetAimPoint = getWaypointAimPoint(state, targetWaypoint);
   }
 
-  const dx = targetAimPoint.x - pose.x;
-  const dz = targetAimPoint.z - pose.z;
+  const overtakeLaneOffset =
+    !sequentialWaypoints ? getDesiredOvertakeLaneOffset(drivingTacticalState) : null;
+  const steeringAimPoint =
+    overtakeLaneOffset === null ?
+      targetAimPoint
+    : applyLaneOffsetToAimPoint(pose, targetAimPoint, targetWaypoint, waypoints, overtakeLaneOffset);
+
+  const dx = steeringAimPoint.x - pose.x;
+  const dz = steeringAimPoint.z - pose.z;
   const desiredYaw = Math.atan2(dx, dz);
   const yawDelta = normalizeAngleRad(desiredYaw - pose.yaw);
 

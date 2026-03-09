@@ -17,6 +17,7 @@ import { CC_SPEEDS, CIRCUITS } from '../config/raceCatalog';
 import { PERF_PROFILE } from '../config/performanceProfile';
 import { gameMode } from '../state/gamemode';
 import type {
+  BotDrivingTacticalState,
   BotItemTacticalState,
   CircuitId,
   CarPose,
@@ -56,6 +57,14 @@ const CLOUD_FAR_Z = -420;
 const CLOUD_NEAR_Z = 160;
 const TINY_VIEWPORT_AREA = 420_000;
 const MEDIUM_VIEWPORT_AREA = 820_000;
+const BOT_OVERTAKE_MAX_DISTANCE = 26;
+const BOT_OVERTAKE_MAX_WAYPOINT_STEPS = 5;
+const BOT_OVERTAKE_DIRECTION_LOOKAHEAD = 3;
+const BOT_OVERTAKE_FUTURE_TURN_LOOKAHEAD = 6;
+const BOT_OVERTAKE_LATERAL_DEADZONE = 0.9;
+const BOT_OVERTAKE_LANE_OFFSET_MIN = 1.8;
+const BOT_OVERTAKE_LANE_OFFSET_MAX = 3.2;
+const BOT_OVERTAKE_TURN_BIAS_THRESHOLD = 0.14;
 
 type SceneProps = {
   raceConfig: RaceConfig;
@@ -574,6 +583,58 @@ const getWaypointStepsToFinish = (
     return Number.POSITIVE_INFINITY;
   }
   return (finishWaypointOrder - currentWaypointOrder + waypointCount) % waypointCount;
+};
+
+const getWaypointAtOffset = (
+  waypoints: readonly BotWaypoint[],
+  currentWaypointOrder: number | null,
+  offset: number,
+) => {
+  if (currentWaypointOrder === null || waypoints.length === 0) return null;
+  const normalizedIndex =
+    ((currentWaypointOrder + offset) % waypoints.length + waypoints.length) % waypoints.length;
+  return waypoints[normalizedIndex] ?? null;
+};
+
+const getWaypointDirectionXZ = (
+  waypoints: readonly BotWaypoint[],
+  currentWaypointOrder: number | null,
+  lookaheadOffset: number,
+) => {
+  const originWaypoint = getWaypointAtOffset(waypoints, currentWaypointOrder, 0);
+  if (!originWaypoint) return null;
+
+  const normalizedLookahead = Math.max(1, Math.floor(lookaheadOffset));
+  for (let offset = 1; offset <= normalizedLookahead; offset += 1) {
+    const nextWaypoint = getWaypointAtOffset(waypoints, currentWaypointOrder, offset);
+    if (!nextWaypoint) continue;
+
+    const dx = nextWaypoint.position[0] - originWaypoint.position[0];
+    const dz = nextWaypoint.position[2] - originWaypoint.position[2];
+    const length = Math.hypot(dx, dz);
+    if (length <= 0.0001) continue;
+
+    return {
+      x: dx / length,
+      z: dz / length,
+    };
+  }
+
+  return null;
+};
+
+const getUpcomingTurnBias = (
+  waypoints: readonly BotWaypoint[],
+  currentWaypointOrder: number | null,
+) => {
+  const nearDirection = getWaypointDirectionXZ(waypoints, currentWaypointOrder, BOT_OVERTAKE_DIRECTION_LOOKAHEAD);
+  const futureDirection = getWaypointDirectionXZ(
+    waypoints,
+    currentWaypointOrder,
+    BOT_OVERTAKE_FUTURE_TURN_LOOKAHEAD,
+  );
+  if (!nearDirection || !futureDirection) return 0;
+  return nearDirection.x * futureDirection.z - nearDirection.z * futureDirection.x;
 };
 
 const buildLiveScoreboardEntries = ({
@@ -2216,6 +2277,126 @@ export function Scene({
     }
     return positions;
   }, [liveScoreboard]);
+  const botDrivingTacticalStateByParticipant = useMemo<Record<RaceParticipantId, BotDrivingTacticalState>>(() => {
+    const tacticalStateByParticipant = {} as Record<RaceParticipantId, BotDrivingTacticalState>;
+    const waypointOrderByParticipant = new Map<RaceParticipantId, number | null>();
+
+    for (const participant of raceConfig.participants) {
+      const participantId = participant.id;
+      const pose = poseRefsByParticipant[participantId]?.current ?? null;
+      const currentWaypointIndex = findNearestWaypointIndex(pose, circuitWaypoints);
+      waypointOrderByParticipant.set(
+        participantId,
+        currentWaypointIndex === null ? null : (waypointOrderByIndex.get(currentWaypointIndex) ?? null),
+      );
+    }
+
+    for (const participant of raceConfig.participants) {
+      const participantId = participant.id;
+      const pose = poseRefsByParticipant[participantId]?.current ?? null;
+      const currentPosition = livePositionByParticipant.get(participantId) ?? null;
+      const currentWaypointOrder = waypointOrderByParticipant.get(participantId) ?? null;
+      const trackDirection = getWaypointDirectionXZ(
+        circuitWaypoints,
+        currentWaypointOrder,
+        BOT_OVERTAKE_DIRECTION_LOOKAHEAD,
+      );
+
+      if (!pose || currentPosition === null || !trackDirection) {
+        tacticalStateByParticipant[participantId] = {
+          overtakeTargetDistance: null,
+          desiredLaneOffset: null,
+        };
+        continue;
+      }
+
+      const rightX = trackDirection.z;
+      const rightZ = -trackDirection.x;
+      let bestCandidate:
+        | {
+            distance: number;
+            lateralOffset: number;
+          }
+        | null = null;
+
+      for (const otherParticipant of raceConfig.participants) {
+        if (otherParticipant.id === participantId) continue;
+
+        const otherPosition = livePositionByParticipant.get(otherParticipant.id) ?? null;
+        if (otherPosition === null || otherPosition >= currentPosition) continue;
+
+        const otherPose = poseRefsByParticipant[otherParticipant.id]?.current ?? null;
+        if (!otherPose) continue;
+
+        const dx = otherPose.x - pose.x;
+        const dy = otherPose.y - pose.y;
+        const dz = otherPose.z - pose.z;
+        const distance = Math.hypot(dx, dy, dz);
+        if (distance > BOT_OVERTAKE_MAX_DISTANCE) continue;
+
+        const forwardProgress = dx * trackDirection.x + dz * trackDirection.z;
+        if (forwardProgress <= 0.5) continue;
+
+        const otherWaypointOrder = waypointOrderByParticipant.get(otherParticipant.id) ?? null;
+        if (currentWaypointOrder !== null && otherWaypointOrder !== null && circuitWaypoints.length > 0) {
+          const waypointSteps =
+            (otherWaypointOrder - currentWaypointOrder + circuitWaypoints.length) % circuitWaypoints.length;
+          if (waypointSteps > BOT_OVERTAKE_MAX_WAYPOINT_STEPS && distance > BOT_OVERTAKE_MAX_DISTANCE * 0.45) {
+            continue;
+          }
+        }
+
+        const lateralOffset = dx * rightX + dz * rightZ;
+        const score = distance + Math.abs(lateralOffset) * 0.25;
+        if (bestCandidate && score >= bestCandidate.distance + Math.abs(bestCandidate.lateralOffset) * 0.25) {
+          continue;
+        }
+
+        bestCandidate = {
+          distance,
+          lateralOffset,
+        };
+      }
+
+      if (!bestCandidate) {
+        tacticalStateByParticipant[participantId] = {
+          overtakeTargetDistance: null,
+          desiredLaneOffset: null,
+        };
+        continue;
+      }
+
+      const turnBias = getUpcomingTurnBias(circuitWaypoints, currentWaypointOrder);
+      let laneSign = 0;
+      if (Math.abs(bestCandidate.lateralOffset) > BOT_OVERTAKE_LATERAL_DEADZONE) {
+        laneSign = bestCandidate.lateralOffset > 0 ? -1 : 1;
+      } else if (turnBias > BOT_OVERTAKE_TURN_BIAS_THRESHOLD) {
+        laneSign = 1;
+      } else if (turnBias < -BOT_OVERTAKE_TURN_BIAS_THRESHOLD) {
+        laneSign = -1;
+      } else {
+        laneSign = currentPosition % 2 === 0 ? 1 : -1;
+      }
+
+      const distanceT = 1 - Math.min(1, bestCandidate.distance / BOT_OVERTAKE_MAX_DISTANCE);
+      const laneOffsetMagnitude =
+        BOT_OVERTAKE_LANE_OFFSET_MIN +
+        (BOT_OVERTAKE_LANE_OFFSET_MAX - BOT_OVERTAKE_LANE_OFFSET_MIN) * distanceT;
+
+      tacticalStateByParticipant[participantId] = {
+        overtakeTargetDistance: bestCandidate.distance,
+        desiredLaneOffset: laneSign * laneOffsetMagnitude,
+      };
+    }
+
+    return tacticalStateByParticipant;
+  }, [
+    circuitWaypoints,
+    livePositionByParticipant,
+    poseRefsByParticipant,
+    raceConfig.participants,
+    waypointOrderByIndex,
+  ]);
   const botItemTacticalStateByParticipant = useMemo<Record<RaceParticipantId, BotItemTacticalState>>(() => {
     const tacticalStateByParticipant = {} as Record<RaceParticipantId, BotItemTacticalState>;
     const leaderParticipantId = liveScoreboard[0]?.participantId ?? null;
@@ -2942,6 +3123,7 @@ export function Scene({
                 bulletBillUntilTimestampMs={bulletBillUntilByParticipant[participant.id] ?? 0}
                 stunUntilTimestampMs={stunUntilByParticipant[participant.id] ?? 0}
                 botItemTacticalState={botItemTacticalStateByParticipant[participant.id] ?? null}
+                botDrivingTacticalState={botDrivingTacticalStateByParticipant[participant.id] ?? null}
                 objectItemMaxValue={OBJECT_ITEM_MAX_VALUE}
                 miniObjectModelPaths={RACE_ATTACHABLE_MODEL_URLS}
                 onObjectUsed={handleParticipantObjectUsed}
