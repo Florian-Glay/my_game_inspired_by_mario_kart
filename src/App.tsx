@@ -51,10 +51,6 @@ import type {
   RaceParticipantConfig,
 } from './types/game';
 import {
-  getOnlineRaceBotControllerSessionId,
-  isMultiplayerBotSessionId,
-} from '../shared/multiplayerProtocol';
-import {
   clearGLTFAssetCacheEntries,
   getRaceAssetUrls,
   preloadGLTFAssetCacheEntries,
@@ -281,20 +277,14 @@ export function App() {
   const isCurrentOnlineLobbyHost =
     currentOnlineLobby?.hostSessionId === onlineSessionId;
   const currentOnlineOwnedParticipantIds = useMemo(
-    () => {
-      if (!currentOnlineRace || !onlineSessionId) return [];
-      return currentOnlineRace.participants
+    () =>
+      currentOnlineRace?.participants
         .filter((participant) => {
           if (participant.sessionId === onlineSessionId) return true;
-          if (!isMultiplayerBotSessionId(participant.sessionId)) return false;
-          return (
-            getOnlineRaceBotControllerSessionId(participant.sessionId, currentOnlineRace.participants) ===
-            onlineSessionId
-          );
+          return isCurrentOnlineLobbyHost && participant.sessionId.startsWith('bot-');
         })
-        .map((participant) => participant.participantId);
-    },
-    [currentOnlineRace, onlineSessionId],
+        .map((participant) => participant.participantId) ?? [],
+    [currentOnlineRace?.participants, isCurrentOnlineLobbyHost, onlineSessionId],
   );
 
   const grandPrixStandings = useMemo<GrandPrixStanding[]>(() => {
@@ -774,10 +764,8 @@ export function App() {
 
         for (const player of onlineRace.participants) {
           const isLocalPlayer = player.sessionId === onlineSessionId;
-          const isBotParticipant = isMultiplayerBotSessionId(player.sessionId);
-          const isBotAuthority =
-            isBotParticipant &&
-            getOnlineRaceBotControllerSessionId(player.sessionId, onlineRace.participants) === onlineSessionId;
+          const isBotParticipant = player.sessionId.startsWith('bot-');
+          const isBotAuthority = isBotParticipant && isCurrentOnlineLobbyHost;
           orderedOnlineParticipants.push(
             createResolvedParticipantConfig({
               id: player.participantId,
@@ -923,6 +911,7 @@ export function App() {
       grandPrixProgress?.courseResults,
       humanCount,
       humanLoadoutsBySlot,
+      isCurrentOnlineLobbyHost,
       mode,
       onlineSessionId,
       raceConfig,

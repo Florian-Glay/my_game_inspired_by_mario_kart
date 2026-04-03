@@ -7,7 +7,6 @@ import {
   MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS,
   MULTIPLAYER_RECONNECT_GRACE_MS,
-  getOnlineRaceBotControllerSessionId,
   isMultiplayerBotSessionId,
   MULTIPLAYER_START_COUNTDOWN_MS,
   MULTIPLAYER_START_WAIT_BEFORE_COUNTDOWN_MS,
@@ -617,15 +616,9 @@ function canSessionControlParticipant(
 ) {
   if (participant.sessionId === session.sessionId) return true;
   if (!isBotSessionId(participant.sessionId)) return false;
-  return (
-    getOnlineRaceBotControllerSessionId(
-      participant.sessionId,
-      Array.from(race.participants.values()).map((raceParticipant) => ({
-        sessionId: raceParticipant.sessionId,
-        connected: raceParticipant.connected,
-      })),
-    ) === session.sessionId
-  );
+
+  const lobby = lobbiesById.get(race.lobbyId);
+  return lobby?.hostSessionId === session.sessionId;
 }
 
 function resolveAuthorizedRaceParticipant(
