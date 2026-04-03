@@ -25,9 +25,9 @@ export default function CommandBubble({ isMultiplayerRace = false }: CommandBubb
     } else if (cmd === 'gamemode run') {
       gameMode.current = 'run';
       setMessage('Mode: run');
-    } else if (cmd === 'gamemode win') {
+    } else if (cmd === 'gamemode win' || cmd === 'gm_win') {
       gameMode.current = 'win';
-      setMessage('Mode: win');
+      setMessage(cmd === 'gm_win' ? 'Cheat active: victoire instantanee' : 'Mode: win');
     } else if (cmd === 'gamemode coor') {
       const yawRad = carRotationY.current;
       console.log(`{ position: [${Number(carPosition.x.toFixed(3))}, ${Number(carPosition.y.toFixed(3))}, ${Number(carPosition.z.toFixed(3))}], rotation: [0, ${Number(yawRad.toFixed(3))}, 0] },`);

@@ -213,6 +213,10 @@ export type MultiplayerClientMessage =
       raceId: string;
     }
   | {
+      type: 'race:ack-result';
+      raceId: string;
+    }
+  | {
       type: 'race:pose';
       raceId: string;
       participantId: string;
@@ -242,10 +246,45 @@ export type MultiplayerServerMessage =
       message: string;
     };
 
+export const MULTIPLAYER_BOT_SESSION_ID_PREFIX = 'bot-';
 export const MULTIPLAYER_MAX_PLAYERS = 12;
 export const MULTIPLAYER_LOBBY_AUTO_START_MS = 10_000;
 export const MULTIPLAYER_RECONNECT_GRACE_MS = 15_000;
+export const MULTIPLAYER_START_WAIT_BEFORE_COUNTDOWN_MS = 5_000;
 export const MULTIPLAYER_START_COUNTDOWN_MS = 3_000;
 export const MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS = 10_000;
 export const MULTIPLAYER_TRACK_COIN_RESPAWN_MS = 10_000;
 export const MULTIPLAYER_THROWABLE_MIN_TTL_MS = 250;
+
+export function isMultiplayerBotSessionId(sessionId: string) {
+  return sessionId.startsWith(MULTIPLAYER_BOT_SESSION_ID_PREFIX);
+}
+
+export function getMultiplayerBotOrdinal(sessionId: string) {
+  if (!isMultiplayerBotSessionId(sessionId)) return null;
+  const ordinal = Number.parseInt(sessionId.slice(MULTIPLAYER_BOT_SESSION_ID_PREFIX.length), 10);
+  if (!Number.isFinite(ordinal) || ordinal <= 0) return null;
+  return ordinal;
+}
+
+export function getOnlineRaceBotControllerSessionId(
+  botSessionId: string,
+  participants: Array<{
+    sessionId: string;
+    connected: boolean;
+  }>,
+) {
+  const botOrdinal = getMultiplayerBotOrdinal(botSessionId);
+  if (botOrdinal === null) return null;
+
+  const connectedHumans = participants
+    .filter((participant) => !isMultiplayerBotSessionId(participant.sessionId) && participant.connected)
+    .map((participant) => participant.sessionId);
+  const allHumans = participants
+    .filter((participant) => !isMultiplayerBotSessionId(participant.sessionId))
+    .map((participant) => participant.sessionId);
+  const controllerPool = connectedHumans.length > 0 ? connectedHumans : allHumans;
+  if (controllerPool.length === 0) return null;
+
+  return controllerPool[(botOrdinal - 1) % controllerPool.length] ?? null;
+}

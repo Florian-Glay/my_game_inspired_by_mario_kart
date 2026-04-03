@@ -3,11 +3,14 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { CHARACTERS, VEHICLES, WHEELS } from '../../src/config/garageCatalog.ts';
 import { CIRCUITS, GRAND_PRIXS } from '../../src/config/raceCatalog.ts';
 import {
-  MULTIPLAYER_LOBBY_AUTO_START_MS,
+  MULTIPLAYER_BOT_SESSION_ID_PREFIX,
   MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS,
   MULTIPLAYER_RECONNECT_GRACE_MS,
+  getOnlineRaceBotControllerSessionId,
+  isMultiplayerBotSessionId,
   MULTIPLAYER_START_COUNTDOWN_MS,
+  MULTIPLAYER_START_WAIT_BEFORE_COUNTDOWN_MS,
   MULTIPLAYER_THROWABLE_MIN_TTL_MS,
   MULTIPLAYER_TRACK_COIN_RESPAWN_MS,
   type MultiplayerClientMessage,
@@ -65,6 +68,7 @@ type RaceStateInternal = {
   throwableTimers: Map<string, NodeJS.Timeout>;
   objectCrateRespawnTimers: Map<string, NodeJS.Timeout>;
   trackCoinRespawnTimers: Map<string, NodeJS.Timeout>;
+  resultAckSessionIds: Set<string>;
 };
 
 const PORT = Number.parseInt(process.env.MULTIPLAYER_PORT ?? process.env.PORT ?? '8787', 10);
@@ -79,7 +83,13 @@ const ALLOWED_ORIGINS = (process.env.MULTIPLAYER_ALLOWED_ORIGINS ?? '')
   .split(',')
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0);
-const BOT_SESSION_ID_PREFIX = 'bot-';
+const MULTIPLAYER_ONLINE_BOT_TARGET = Math.max(
+  0,
+  Math.min(
+    MULTIPLAYER_MAX_PLAYERS,
+    Number.parseInt(process.env.MULTIPLAYER_ONLINE_BOT_TARGET ?? `${MULTIPLAYER_MAX_PLAYERS}`, 10) || 0,
+  ),
+);
 
 const sessionsById = new Map<string, SessionState>();
 const sessionIdByResumeToken = new Map<string, string>();
@@ -108,7 +118,7 @@ function sanitizeLoadout(loadout: MultiplayerPlayerLoadout): MultiplayerPlayerLo
 }
 
 function isBotSessionId(sessionId: string) {
-  return sessionId.startsWith(BOT_SESSION_ID_PREFIX);
+  return isMultiplayerBotSessionId(sessionId);
 }
 
 function createBotLoadout(botIndex: number): MultiplayerPlayerLoadout {
@@ -370,6 +380,144 @@ function removeRace(raceId: string | null) {
   racesById.delete(raceId);
 }
 
+function cloneRaceParticipantForNextCourse(
+  participant: MultiplayerRaceParticipantState,
+): MultiplayerRaceParticipantState {
+  return {
+    participantId: participant.participantId,
+    sessionId: participant.sessionId,
+    displayName: participant.displayName,
+    loadout: sanitizeLoadout(participant.loadout),
+    connected: participant.connected,
+    loaded: isBotSessionId(participant.sessionId) || !participant.connected,
+    pose: null,
+    lapProgress: createInitialLapProgress(),
+    itemState: createInitialItemState(),
+  };
+}
+
+function createRaceParticipantsForLobby(lobby: LobbyStateInternal) {
+  const participants = new Map<string, MultiplayerRaceParticipantState>();
+  getOrderedLobbyPlayers(lobby).forEach((player) => {
+    participants.set(player.sessionId, {
+      participantId: `player-${player.sessionId}`,
+      sessionId: player.sessionId,
+      displayName: player.displayName,
+      loadout: sanitizeLoadout(player.loadout),
+      connected: player.connected,
+      loaded: !player.connected,
+      pose: null,
+      lapProgress: createInitialLapProgress(),
+      itemState: createInitialItemState(),
+    });
+  });
+
+  const botCount = Math.max(0, MULTIPLAYER_ONLINE_BOT_TARGET - participants.size);
+  for (let botIndex = 0; botIndex < botCount; botIndex += 1) {
+    const botSessionId = `${MULTIPLAYER_BOT_SESSION_ID_PREFIX}${botIndex + 1}`;
+    participants.set(botSessionId, {
+      participantId: botSessionId,
+      sessionId: botSessionId,
+      displayName: `Bot ${botIndex + 1}`,
+      loadout: createBotLoadout(botIndex),
+      connected: true,
+      loaded: true,
+      pose: null,
+      lapProgress: createInitialLapProgress(),
+      itemState: createInitialItemState(),
+    });
+  }
+
+  return participants;
+}
+
+function createRaceForLobbyCourse(options: {
+  lobbyId: string;
+  grandPrixId: MultiplayerGrandPrixId;
+  cc: MultiplayerRaceState['cc'];
+  courseIndex: number;
+  totalCourses: number;
+  participants: Map<string, MultiplayerRaceParticipantState>;
+}) {
+  const selectedGrandPrix = GRAND_PRIXS[options.grandPrixId];
+  const selectedCourse = selectedGrandPrix?.courses[options.courseIndex];
+  if (!selectedGrandPrix || !selectedCourse) return null;
+
+  const circuitConfig = CIRCUITS[selectedCourse.circuitId];
+  if (!circuitConfig) return null;
+
+  return {
+    raceId: crypto.randomUUID(),
+    lobbyId: options.lobbyId,
+    status: 'loading',
+    grandPrixId: options.grandPrixId,
+    cc: options.cc,
+    courseId: selectedCourse.id,
+    courseLabel: selectedCourse.label,
+    circuitId: selectedCourse.circuitId,
+    courseIndex: options.courseIndex,
+    totalCourses: options.totalCourses,
+    countdownStartAt: null,
+    startedAt: null,
+    participants: options.participants,
+    sharedState: {
+      activeObjectCrateIds: circuitConfig.objectCrateSpawns.map((_, index) => `${selectedCourse.id}-crate-${index}`),
+      activeTrackCoinIds: circuitConfig.coinSpawns.map((_, index) => `${selectedCourse.id}-coin-${index}`),
+      throwableObjects: [],
+    },
+    countdownTimer: null,
+    snapshotTimer: null,
+    throwableTimers: new Map<string, NodeJS.Timeout>(),
+    objectCrateRespawnTimers: new Map<string, NodeJS.Timeout>(),
+    trackCoinRespawnTimers: new Map<string, NodeJS.Timeout>(),
+    resultAckSessionIds: new Set<string>(),
+  } satisfies RaceStateInternal;
+}
+
+function getResultAcknowledgementRequiredSessionIds(race: RaceStateInternal) {
+  return Array.from(race.participants.values())
+    .filter((participant) => !isBotSessionId(participant.sessionId) && participant.connected)
+    .map((participant) => participant.sessionId);
+}
+
+function maybeAdvanceRaceAfterResultAcknowledgements(race: RaceStateInternal) {
+  if (race.status !== 'finished') return false;
+  if (race.courseIndex + 1 >= race.totalCourses) return false;
+
+  const requiredSessionIds = getResultAcknowledgementRequiredSessionIds(race);
+  const everyoneAcknowledged = requiredSessionIds.every((sessionId) =>
+    race.resultAckSessionIds.has(sessionId),
+  );
+  if (!everyoneAcknowledged) return false;
+
+  const lobby = lobbiesById.get(race.lobbyId);
+  if (!lobby) return false;
+
+  const nextParticipants = new Map<string, MultiplayerRaceParticipantState>();
+  race.participants.forEach((participant, sessionId) => {
+    nextParticipants.set(sessionId, cloneRaceParticipantForNextCourse(participant));
+  });
+
+  const nextRace = createRaceForLobbyCourse({
+    lobbyId: lobby.id,
+    grandPrixId: race.grandPrixId,
+    cc: race.cc,
+    courseIndex: race.courseIndex + 1,
+    totalCourses: race.totalCourses,
+    participants: nextParticipants,
+  });
+  if (!nextRace) return false;
+
+  racesById.set(nextRace.raceId, nextRace);
+  lobby.raceId = nextRace.raceId;
+  lobby.status = 'loading';
+  lobby.autoStartAt = null;
+  lobby.updatedAt = Date.now();
+  removeRace(race.raceId);
+  broadcastSnapshotsForLobby(lobby.id);
+  return true;
+}
+
 function deleteLobby(lobbyId: string | null) {
   if (!lobbyId) return;
   const lobby = lobbiesById.get(lobbyId);
@@ -403,25 +551,9 @@ function syncLobbyState(lobby: LobbyStateInternal | null) {
     return;
   }
 
-  if (lobby.players.size >= lobby.maxPlayers) {
-    lobby.status = 'countdown';
-    if (!lobby.autoStartAt) {
-      lobby.autoStartAt = Date.now() + MULTIPLAYER_LOBBY_AUTO_START_MS;
-      clearLobbyAutoStartTimer(lobby.id);
-      lobbyAutoStartTimers.set(
-        lobby.id,
-        setTimeout(() => {
-          const refreshedLobby = lobbiesById.get(lobby.id);
-          if (!refreshedLobby || refreshedLobby.players.size === 0 || refreshedLobby.raceId) return;
-          startRaceForLobby(refreshedLobby, 'mushroom_cup', '150cc');
-        }, MULTIPLAYER_LOBBY_AUTO_START_MS),
-      );
-    }
-  } else {
-    lobby.status = 'waiting';
-    lobby.autoStartAt = null;
-    clearLobbyAutoStartTimer(lobby.id);
-  }
+  lobby.status = 'waiting';
+  lobby.autoStartAt = null;
+  clearLobbyAutoStartTimer(lobby.id);
 
   lobby.updatedAt = Date.now();
 }
@@ -454,6 +586,7 @@ function maybeMarkRaceFinished(race: RaceStateInternal) {
 
   race.status = 'finished';
   race.countdownStartAt = null;
+  race.resultAckSessionIds.clear();
 
   const lobby = lobbiesById.get(race.lobbyId);
   if (lobby) {
@@ -484,9 +617,15 @@ function canSessionControlParticipant(
 ) {
   if (participant.sessionId === session.sessionId) return true;
   if (!isBotSessionId(participant.sessionId)) return false;
-
-  const lobby = lobbiesById.get(race.lobbyId);
-  return lobby?.hostSessionId === session.sessionId;
+  return (
+    getOnlineRaceBotControllerSessionId(
+      participant.sessionId,
+      Array.from(race.participants.values()).map((raceParticipant) => ({
+        sessionId: raceParticipant.sessionId,
+        connected: raceParticipant.connected,
+      })),
+    ) === session.sessionId
+  );
 }
 
 function resolveAuthorizedRaceParticipant(
@@ -522,6 +661,8 @@ function leaveCurrentLobby(session: SessionState) {
       if (race.participants.size === 0) {
         removeRace(race.raceId);
         lobby.raceId = null;
+      } else if (race.status === 'finished') {
+        maybeAdvanceRaceAfterResultAcknowledgements(race);
       }
     }
   }
@@ -551,9 +692,11 @@ function scheduleDisconnectCleanup(session: SessionState) {
         const raceParticipant = race?.participants.get(session.sessionId);
         if (raceParticipant) {
           raceParticipant.connected = false;
+          raceParticipant.loaded = true;
           race?.participants.set(session.sessionId, raceParticipant);
           if (race) {
             maybeMarkRaceFinished(race);
+            maybeAdvanceRaceAfterResultAcknowledgements(race);
           }
         }
       }
@@ -636,73 +779,21 @@ function startRaceForLobby(
   if (lobby.raceId) return;
 
   const selectedGrandPrix = GRAND_PRIXS[grandPrixId];
-  const firstCourse = selectedGrandPrix?.courses[0];
-  if (!selectedGrandPrix || !firstCourse) return;
-
-  const circuitConfig = CIRCUITS[firstCourse.circuitId];
-  if (!circuitConfig) return;
+  if (!selectedGrandPrix) return;
 
   clearLobbyAutoStartTimer(lobby.id);
-  const raceId = crypto.randomUUID();
-  const participants = new Map<string, MultiplayerRaceParticipantState>();
-  getOrderedLobbyPlayers(lobby).forEach((player) => {
-    participants.set(player.sessionId, {
-      participantId: `player-${player.sessionId}`,
-      sessionId: player.sessionId,
-      displayName: player.displayName,
-      loadout: sanitizeLoadout(player.loadout),
-      connected: player.connected,
-      loaded: false,
-      pose: null,
-      lapProgress: createInitialLapProgress(),
-      itemState: createInitialItemState(),
-    });
-  });
-
-  const botCount = Math.max(0, MULTIPLAYER_MAX_PLAYERS - participants.size);
-  for (let botIndex = 0; botIndex < botCount; botIndex += 1) {
-    const botSessionId = `${BOT_SESSION_ID_PREFIX}${botIndex + 1}`;
-    participants.set(botSessionId, {
-      participantId: botSessionId,
-      sessionId: botSessionId,
-      displayName: `Bot ${botIndex + 1}`,
-      loadout: createBotLoadout(botIndex),
-      connected: true,
-      loaded: true,
-      pose: null,
-      lapProgress: createInitialLapProgress(),
-      itemState: createInitialItemState(),
-    });
-  }
-
-  const race: RaceStateInternal = {
-    raceId,
+  const race = createRaceForLobbyCourse({
     lobbyId: lobby.id,
-    status: 'loading',
     grandPrixId,
     cc,
-    courseId: firstCourse.id,
-    courseLabel: firstCourse.label,
-    circuitId: firstCourse.circuitId,
     courseIndex: 0,
-    totalCourses: 1,
-    countdownStartAt: null,
-    startedAt: null,
-    participants,
-    sharedState: {
-      activeObjectCrateIds: circuitConfig.objectCrateSpawns.map((_, index) => `${firstCourse.id}-crate-${index}`),
-      activeTrackCoinIds: circuitConfig.coinSpawns.map((_, index) => `${firstCourse.id}-coin-${index}`),
-      throwableObjects: [],
-    },
-    countdownTimer: null,
-    snapshotTimer: null,
-    throwableTimers: new Map(),
-    objectCrateRespawnTimers: new Map(),
-    trackCoinRespawnTimers: new Map(),
-  };
+    totalCourses: selectedGrandPrix.courses.length,
+    participants: createRaceParticipantsForLobby(lobby),
+  });
+  if (!race) return;
 
-  racesById.set(raceId, race);
-  lobby.raceId = raceId;
+  racesById.set(race.raceId, race);
+  lobby.raceId = race.raceId;
   lobby.status = 'loading';
   lobby.autoStartAt = null;
   lobby.updatedAt = Date.now();
@@ -721,7 +812,7 @@ function handleRaceLoaded(session: SessionState, raceId: string) {
   const everyoneLoaded = Array.from(race.participants.values()).every((entry) => entry.loaded);
   if (everyoneLoaded && race.status === 'loading') {
     race.status = 'countdown';
-    race.countdownStartAt = Date.now() + MULTIPLAYER_START_COUNTDOWN_MS;
+    race.countdownStartAt = Date.now() + MULTIPLAYER_START_WAIT_BEFORE_COUNTDOWN_MS;
     if (race.countdownTimer) {
       clearTimeout(race.countdownTimer);
     }
@@ -733,8 +824,22 @@ function handleRaceLoaded(session: SessionState, raceId: string) {
       refreshedRace.countdownStartAt = null;
       refreshedRace.countdownTimer = null;
       flushRaceSnapshotBroadcast(refreshedRace);
-    }, MULTIPLAYER_START_COUNTDOWN_MS);
+    }, MULTIPLAYER_START_WAIT_BEFORE_COUNTDOWN_MS + MULTIPLAYER_START_COUNTDOWN_MS);
   }
+
+  flushRaceSnapshotBroadcast(race);
+}
+
+function handleRaceResultAcknowledgement(session: SessionState, raceId: string) {
+  const race = racesById.get(raceId);
+  if (!race || race.status !== 'finished') return;
+  if (race.courseIndex + 1 >= race.totalCourses) return;
+
+  const participant = race.participants.get(session.sessionId);
+  if (!participant || isBotSessionId(participant.sessionId) || !participant.connected) return;
+
+  race.resultAckSessionIds.add(session.sessionId);
+  if (maybeAdvanceRaceAfterResultAcknowledgements(race)) return;
 
   flushRaceSnapshotBroadcast(race);
 }
@@ -1022,6 +1127,9 @@ function handleSocketMessage(socket: WebSocket, rawMessage: RawData) {
     }
     case 'race:loaded':
       handleRaceLoaded(session, parsedMessage.raceId);
+      return;
+    case 'race:ack-result':
+      handleRaceResultAcknowledgement(session, parsedMessage.raceId);
       return;
     case 'race:pose': {
       const race = racesById.get(parsedMessage.raceId);

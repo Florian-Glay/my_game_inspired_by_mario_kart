@@ -346,6 +346,14 @@ export function markServerRaceLoaded(raceId: string) {
   });
 }
 
+export function acknowledgeServerRaceResult(raceId: string) {
+  connectMultiplayerClient();
+  enqueueOrSend({
+    type: 'race:ack-result',
+    raceId,
+  });
+}
+
 export function publishServerRacePose(
   raceId: string,
   participantId: string,

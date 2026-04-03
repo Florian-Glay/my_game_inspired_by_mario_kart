@@ -23,6 +23,7 @@ import { PERF_PROFILE } from './config/performanceProfile';
 import { clearDragRegistry } from './state/dragRegistry';
 import { gameMode } from './state/gamemode';
 import {
+  acknowledgeServerRaceResult,
   connectMultiplayerClient,
   createServerLobby,
   getMultiplayerStateSnapshot,
@@ -49,6 +50,10 @@ import type {
   RaceMode,
   RaceParticipantConfig,
 } from './types/game';
+import {
+  getOnlineRaceBotControllerSessionId,
+  isMultiplayerBotSessionId,
+} from '../shared/multiplayerProtocol';
 import {
   clearGLTFAssetCacheEntries,
   getRaceAssetUrls,
@@ -212,7 +217,7 @@ export function App() {
   const [onlineLobbyCodeInput, setOnlineLobbyCodeInput] = useState('');
   const loadedRaceAssetUrlsRef = useRef<Set<string>>(new Set());
   const pendingCacheClearCancelRef = useRef<(() => void) | null>(null);
-  const handledOnlineRaceIdRef = useRef<string | null>(null);
+  const handledOnlineRaceTokenRef = useRef<string | null>(null);
   const reportedOnlineRaceLoadedIdRef = useRef<string | null>(null);
   const pendingOnlineLobbyEntryRef = useRef(false);
   const lastPublishedNetworkPoseAtRef = useRef<Map<string, number>>(new Map());
@@ -276,14 +281,20 @@ export function App() {
   const isCurrentOnlineLobbyHost =
     currentOnlineLobby?.hostSessionId === onlineSessionId;
   const currentOnlineOwnedParticipantIds = useMemo(
-    () =>
-      currentOnlineRace?.participants
+    () => {
+      if (!currentOnlineRace || !onlineSessionId) return [];
+      return currentOnlineRace.participants
         .filter((participant) => {
           if (participant.sessionId === onlineSessionId) return true;
-          return isCurrentOnlineLobbyHost && participant.sessionId.startsWith('bot-');
+          if (!isMultiplayerBotSessionId(participant.sessionId)) return false;
+          return (
+            getOnlineRaceBotControllerSessionId(participant.sessionId, currentOnlineRace.participants) ===
+            onlineSessionId
+          );
         })
-        .map((participant) => participant.participantId) ?? [],
-    [currentOnlineRace?.participants, isCurrentOnlineLobbyHost, onlineSessionId],
+        .map((participant) => participant.participantId);
+    },
+    [currentOnlineRace, onlineSessionId],
   );
 
   const grandPrixStandings = useMemo<GrandPrixStanding[]>(() => {
@@ -331,7 +342,7 @@ export function App() {
   const resetOnlineFlowState = useCallback(() => {
     setSelectedOnlineLobbyId(null);
     setOnlineLobbyCodeInput('');
-    handledOnlineRaceIdRef.current = null;
+    handledOnlineRaceTokenRef.current = null;
     reportedOnlineRaceLoadedIdRef.current = null;
     pendingOnlineLobbyEntryRef.current = false;
     lastPublishedNetworkPoseAtRef.current.clear();
@@ -354,7 +365,7 @@ export function App() {
     clearSurfaceTriggerRegistry();
     clearOnlineLobbyMembership();
 
-    if (completedGrandPrix) {
+    if (completedGrandPrix && mode !== 'online') {
       window.setTimeout(() => {
         window.location.reload();
       }, 40);
@@ -449,6 +460,10 @@ export function App() {
 
     if (screen === 'circuit') {
       setGrandPrixProgress(null);
+      if (mode === 'online') {
+        setScreen('online-lobby');
+        return;
+      }
       setScreen('characters');
       if (humanCount) {
         const slots = getHumanSlots(humanCount);
@@ -680,18 +695,26 @@ export function App() {
     setScreen('online-lobby-menu');
   };
 
-  const handleLaunchOnlineGrandPrix = useCallback(async () => {
-    if (!currentOnlineLobby || !selectedGrandPrixId) {
+  const handleLaunchOnlineGrandPrix = useCallback(() => {
+    if (!currentOnlineLobby) {
       setErrorMessage('Aucun lobby actif a lancer.');
       return;
     }
+    if (!isCurrentOnlineLobbyHost) {
+      setErrorMessage('Seul le host peut choisir et lancer le Grand Prix.');
+      return;
+    }
 
-    startServerRace(selectedGrandPrixId, '150cc');
+    setSelectedGrandPrixId((current) => current ?? GRAND_PRIX_ORDER[0] ?? null);
+    setGrandPrixProgress(null);
     setErrorMessage(null);
-  }, [currentOnlineLobby, selectedGrandPrixId]);
+    setScreen('circuit');
+  }, [currentOnlineLobby, isCurrentOnlineLobbyHost]);
 
   useEffect(() => {
-    if (screen !== 'online-lobby') return;
+    const isOnlineLobbyFlowScreen =
+      screen === 'online-lobby' || (screen === 'circuit' && mode === 'online');
+    if (!isOnlineLobbyFlowScreen) return;
     if (!onlineSessionId) return;
     if (currentOnlineLobby?.players.some((player) => player.sessionId === onlineSessionId)) {
       return;
@@ -701,7 +724,7 @@ export function App() {
     setSelectedOnlineLobbyId(null);
     setScreen('online-lobby-menu');
     setErrorMessage('Le lobby a ete ferme ou tu en as ete retire.');
-  }, [currentOnlineLobby, multiplayerSnapshot.currentLobbyId, onlineSessionId, screen]);
+  }, [currentOnlineLobby, mode, multiplayerSnapshot.currentLobbyId, onlineSessionId, screen]);
 
   useEffect(() => {
     if (!selectedOnlineLobbyId) return;
@@ -725,10 +748,11 @@ export function App() {
   }, [currentOnlineLobby, onlinePlayerPresence]);
 
   const buildRaceConfigForCourseIndex = useCallback(
-    (courseIndex: number): RaceConfig | null => {
-      if (!mode || !cc || !selectedGrandPrixId || !humanCount) return null;
+    (courseIndex: number, forcedGrandPrixId?: GrandPrixId): RaceConfig | null => {
+      const effectiveGrandPrixId = forcedGrandPrixId ?? selectedGrandPrixId;
+      if (!mode || !cc || !effectiveGrandPrixId || !humanCount) return null;
 
-      const currentGrandPrix = GRAND_PRIXS[selectedGrandPrixId];
+      const currentGrandPrix = GRAND_PRIXS[effectiveGrandPrixId];
       const selectedCourse = currentGrandPrix?.courses[courseIndex];
       const selectedCircuit = selectedCourse?.circuitId;
       if (!selectedCourse || !selectedCircuit || !(selectedCircuit in CIRCUITS)) {
@@ -750,8 +774,10 @@ export function App() {
 
         for (const player of onlineRace.participants) {
           const isLocalPlayer = player.sessionId === onlineSessionId;
-          const isBotParticipant = player.sessionId.startsWith('bot-');
-          const isBotAuthority = isBotParticipant && isCurrentOnlineLobbyHost;
+          const isBotParticipant = isMultiplayerBotSessionId(player.sessionId);
+          const isBotAuthority =
+            isBotParticipant &&
+            getOnlineRaceBotControllerSessionId(player.sessionId, onlineRace.participants) === onlineSessionId;
           orderedOnlineParticipants.push(
             createResolvedParticipantConfig({
               id: player.participantId,
@@ -827,7 +853,7 @@ export function App() {
         if (
           courseIndex > 0 &&
           raceConfig &&
-          raceConfig.grandPrixId === selectedGrandPrixId &&
+          raceConfig.grandPrixId === effectiveGrandPrixId &&
           raceConfig.participants.length === desiredParticipantCount
         ) {
           const previousPositionByParticipant = new Map(
@@ -883,7 +909,7 @@ export function App() {
           humanCount: isOnlineMode ? 1 : humanCount,
           cc,
           circuit: selectedCircuit,
-          grandPrixId: selectedGrandPrixId,
+          grandPrixId: effectiveGrandPrixId,
           courseId: selectedCourse.id,
           courseLabel: selectedCourse.label,
           courseIndex,
@@ -897,7 +923,6 @@ export function App() {
       grandPrixProgress?.courseResults,
       humanCount,
       humanLoadoutsBySlot,
-      isCurrentOnlineLobbyHost,
       mode,
       onlineSessionId,
       raceConfig,
@@ -906,8 +931,8 @@ export function App() {
   );
 
   const launchCourseAtIndex = useCallback(
-    async (courseIndex: number) => {
-      const nextRaceConfig = buildRaceConfigForCourseIndex(courseIndex);
+    async (courseIndex: number, forcedGrandPrixId?: GrandPrixId) => {
+      const nextRaceConfig = buildRaceConfigForCourseIndex(courseIndex, forcedGrandPrixId);
       if (!nextRaceConfig) {
         setErrorMessage('Impossible de preparer la course choisie.');
         return false;
@@ -962,7 +987,8 @@ export function App() {
 
   const handleObservedOnlineRace = useCallback(
     async (onlineRace: NonNullable<typeof currentOnlineRace>) => {
-      if (handledOnlineRaceIdRef.current === onlineRace.raceId) return;
+      const raceToken = `${onlineRace.raceId}:${onlineRace.courseIndex}`;
+      if (handledOnlineRaceTokenRef.current === raceToken) return;
 
       const localPlayer =
         onlineSessionId ?
@@ -973,7 +999,7 @@ export function App() {
         return;
       }
 
-      handledOnlineRaceIdRef.current = onlineRace.raceId;
+      handledOnlineRaceTokenRef.current = raceToken;
       setMode('online');
       setCc(onlineRace.cc);
       setHumanCount(1);
@@ -984,25 +1010,38 @@ export function App() {
       });
       setErrorMessage(null);
 
-      const launched = await launchCourseAtIndex(0);
+      const launched = await launchCourseAtIndex(onlineRace.courseIndex, onlineRace.grandPrixId);
       if (!launched) {
-        handledOnlineRaceIdRef.current = null;
+        handledOnlineRaceTokenRef.current = null;
         return;
       }
 
-      setGrandPrixProgress({
-        grandPrixId: onlineRace.grandPrixId,
-        currentCourseIndex: 0,
-        courseResults: [],
+      setGrandPrixProgress((current) => {
+        if (!current || current.grandPrixId !== onlineRace.grandPrixId) {
+          return {
+            grandPrixId: onlineRace.grandPrixId,
+            currentCourseIndex: onlineRace.courseIndex,
+            courseResults: [],
+          };
+        }
+
+        return {
+          ...current,
+          currentCourseIndex: onlineRace.courseIndex,
+        };
       });
     },
-    [currentOnlineRace, launchCourseAtIndex, onlineSessionId],
+    [launchCourseAtIndex, onlineSessionId],
   );
 
   useEffect(() => {
     if (!currentOnlineRace) return;
+    const modeIsOnline = mode === 'online';
+    const shouldObserveOnlineRace =
+      modeIsOnline || screen === 'online-lobby' || (screen === 'circuit' && modeIsOnline) || screen === 'race';
+    if (!shouldObserveOnlineRace) return;
     void handleObservedOnlineRace(currentOnlineRace);
-  }, [currentOnlineRace, handleObservedOnlineRace]);
+  }, [currentOnlineRace, handleObservedOnlineRace, mode, screen]);
 
   const handleNetworkSceneReady = useCallback((raceId: string) => {
     if (reportedOnlineRaceLoadedIdRef.current === raceId) return;
@@ -1024,7 +1063,8 @@ export function App() {
         participantId.startsWith('bot-') ?
           BOT_NETWORK_POSE_PUBLISH_INTERVAL_MS
         : HUMAN_NETWORK_POSE_PUBLISH_INTERVAL_MS;
-      if (now - lastPublishedAt < minIntervalMs) return;
+      const bypassThrottle = options?.lapProgress?.finished === true;
+      if (!bypassThrottle && now - lastPublishedAt < minIntervalMs) return;
       lastPublishedNetworkPoseAtRef.current.set(participantId, now);
       publishServerRacePose(raceId, participantId, pose, options);
     },
@@ -1035,9 +1075,27 @@ export function App() {
     sendServerRaceEvent(raceId, event);
   }, []);
 
+  const handleNetworkCourseResultValidated = useCallback((raceId: string) => {
+    acknowledgeServerRaceResult(raceId);
+  }, []);
+
   const handleConfirmGrandPrix = async () => {
     if (!mode || !cc || !selectedGrandPrixId || !humanCount) {
       setErrorMessage('Selection incomplete avant lancement.');
+      return;
+    }
+
+    if (mode === 'online') {
+      if (!currentOnlineLobby) {
+        setErrorMessage('Aucun lobby actif a lancer.');
+        return;
+      }
+      if (!isCurrentOnlineLobbyHost) {
+        setErrorMessage('Seul le host peut choisir et lancer le Grand Prix.');
+        return;
+      }
+      startServerRace(selectedGrandPrixId, '150cc');
+      setErrorMessage(null);
       return;
     }
 
@@ -1156,6 +1214,7 @@ export function App() {
               onNetworkSceneReady={handleNetworkSceneReady}
               onNetworkLocalPose={handleNetworkLocalPose}
               onNetworkRaceEvent={handleNetworkRaceEvent}
+              onNetworkCourseResultValidated={handleNetworkCourseResultValidated}
             />
           ) : (
             <GameMenu
@@ -1174,6 +1233,7 @@ export function App() {
               waitingOnlineLobbies={waitingOnlineLobbies}
               selectedOnlineLobby={selectedOnlineLobby}
               currentOnlineLobby={currentOnlineLobby}
+              isCurrentOnlineLobbyHost={isCurrentOnlineLobbyHost}
               errorMessage={effectiveMenuErrorMessage}
               isCheckingAssets={isCheckingAssets}
               onBack={handleBack}

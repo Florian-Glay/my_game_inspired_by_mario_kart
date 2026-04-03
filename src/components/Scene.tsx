@@ -37,6 +37,7 @@ import type {
 } from '../../shared/multiplayerProtocol';
 import {
   MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS,
+  MULTIPLAYER_START_COUNTDOWN_MS,
   MULTIPLAYER_TRACK_COIN_RESPAWN_MS,
 } from '../../shared/multiplayerProtocol';
 import { CameraController } from './CameraController';
@@ -87,6 +88,7 @@ type SceneProps = {
     },
   ) => void;
   onNetworkRaceEvent?: (raceId: string, event: MultiplayerRaceEvent) => void;
+  onNetworkCourseResultValidated?: (raceId: string) => void;
 };
 
 type SceneAssetGateProps = {
@@ -413,6 +415,7 @@ const START_COUNTDOWN_INITIAL = 3;
 const START_COUNTDOWN_CHARGE_HINT_FROM = 2;
 const START_COUNTDOWN_TICK_MS = 1000;
 const START_COUNTDOWN_ZERO_HOLD_MS = 450;
+const NETWORK_START_GO_HOLD_MS = 2_000;
 const LOADING_OVERLAY_FADE_MS = 500;
 const START_COUNTDOWN_DELAY_AFTER_LOADING_MS = 1500;
 const LIVE_SCOREBOARD_REFRESH_MS = 280;
@@ -816,6 +819,7 @@ export function Scene({
   onNetworkSceneReady,
   onNetworkLocalPose,
   onNetworkRaceEvent,
+  onNetworkCourseResultValidated,
 }: SceneProps) {
   const circuit = CIRCUITS[raceConfig.circuit];
   const speedProfile = CC_SPEEDS[raceConfig.cc];
@@ -2105,7 +2109,7 @@ export function Scene({
 
       setCourseRanking(ranking);
       setControlsLocked(true);
-      setOverlayStep('course-ranking');
+      setOverlayStep(isNetworkRace && !hasNextCourse ? 'grand-prix-result' : 'course-ranking');
       onCourseFinished({
         grandPrixId: raceConfig.grandPrixId,
         courseId: raceConfig.courseId,
@@ -2121,15 +2125,75 @@ export function Scene({
       raceConfig.courseLabel,
       raceConfig.grandPrixId,
       computeLiveScoreboard,
+      hasNextCourse,
+      isNetworkRace,
     ],
   );
 
   const validateAllLapsFromWinMode = useCallback(() => {
-    if (isNetworkRace || overlayStep !== 'none') return false;
+    if (overlayStep !== 'none') return false;
 
-    finalizeCourse(lapProgressRef.current);
+    const localHumanParticipant =
+      raceConfig.participants.find(
+        (participant) => participant.kind === 'human' && participant.controlMode === 'human' && participant.humanSlotId === 'p1',
+      ) ?? humanParticipants[0];
+    if (!localHumanParticipant) return false;
+
+    const participantId = localHumanParticipant.id;
+    const currentProgress = lapProgressRef.current[participantId];
+    if (!currentProgress) return false;
+
+    const nextProgress = {
+      ...lapProgressRef.current,
+      [participantId]: {
+        ...currentProgress,
+        lap: 4,
+        checkpoint: false,
+        finished: true,
+        finishTimestamp: currentProgress.finishTimestamp ?? performance.now(),
+      },
+    };
+
+    lapProgressRef.current = nextProgress;
+    setLapProgressByPlayer(nextProgress);
+    ownedParticipantDirtyStateRef.current.add(participantId);
+
+    if (isNetworkRace && networkRaceState && networkOwnedParticipantIdSet.has(participantId)) {
+      const pose = poseRefsByParticipant[participantId]?.current;
+      if (pose) {
+        onNetworkLocalPose?.(networkRaceState.raceId, participantId, pose, {
+          lapProgress: nextProgress[participantId],
+          itemState: buildParticipantItemStateSnapshot(participantId, {
+            objects: myObjectByParticipantRef.current,
+            objectCharges: myObjectChargesByParticipantRef.current,
+            coins: coinsByParticipantRef.current,
+            thunderDebuffUntil: thunderDebuffUntilByParticipantRef.current,
+            bulletBillUntil: bulletBillUntilByParticipantRef.current,
+            stunUntil: stunUntilByParticipantRef.current,
+          }),
+        });
+      }
+      return true;
+    }
+
+    const allHumansFinished = raceConfig.participants
+      .filter((participant) => participant.kind === 'human')
+      .every((participant) => nextProgress[participant.id]?.finished);
+    if (allHumansFinished) {
+      finalizeCourse(nextProgress);
+    }
     return true;
-  }, [finalizeCourse, isNetworkRace, overlayStep]);
+  }, [
+    finalizeCourse,
+    humanParticipants,
+    isNetworkRace,
+    networkOwnedParticipantIdSet,
+    networkRaceState,
+    onNetworkLocalPose,
+    overlayStep,
+    poseRefsByParticipant,
+    raceConfig.participants,
+  ]);
 
   useEffect(() => {
     const timerId = window.setInterval(() => {
@@ -2225,13 +2289,28 @@ export function Scene({
       return;
     }
 
+    if (isNetworkRace && networkRaceState) {
+      if (!onNetworkCourseResultValidated || menuBusy) return;
+      setMenuBusy(true);
+      onNetworkCourseResultValidated(networkRaceState.raceId);
+      return;
+    }
+
     setMenuBusy(true);
     try {
       await onNextCourse();
     } finally {
       setMenuBusy(false);
     }
-  }, [hasNextCourse, onNextCourse, overlayStep]);
+  }, [
+    hasNextCourse,
+    isNetworkRace,
+    menuBusy,
+    networkRaceState,
+    onNetworkCourseResultValidated,
+    onNextCourse,
+    overlayStep,
+  ]);
 
   const handleRoadModelReady = useCallback((group: Group) => {
     roadGroupRef.current = group;
@@ -2514,6 +2593,24 @@ export function Scene({
     displayName: participant.displayName,
     coins: Math.min(PLAYER_COIN_MAX, Math.max(0, coinsByParticipant[participant.id] ?? 0)),
   }));
+  const courseResultDescription =
+    isNetworkRace && hasNextCourse ?
+      menuBusy ?
+        'Resultats valides. En attente de la validation des autres joueurs.'
+      : 'Attends que tous les joueurs aient termine, puis valide pour lancer la course suivante.'
+    : hasNextCourse ?
+      'Passage automatique a la course suivante dans 10 secondes.'
+    : 'Affichage du resultat final du Grand Prix dans 10 secondes.';
+  const courseResultActionLabel =
+    hasNextCourse ?
+      isNetworkRace ?
+        menuBusy ?
+          'En attente des joueurs...'
+        : 'Course suivante'
+      : menuBusy || isAdvancingCourse ?
+        'Chargement...'
+      : 'Course suivante'
+    : 'Resultat final';
 
   useEffect(() => {
     if (isNetworkRace) return;
@@ -2549,17 +2646,31 @@ export function Scene({
 
     if (networkRaceState.status === 'countdown') {
       const syncCountdown = () => {
-        const remainingMs = Math.max(0, (networkRaceState.countdownStartAt ?? Date.now()) - Date.now());
-        setStartCountdownValue(Math.max(0, Math.ceil(remainingMs / 1000)));
+        const countdownStartAt = networkRaceState.countdownStartAt ?? Date.now();
+        const countdownEndAt = countdownStartAt + MULTIPLAYER_START_COUNTDOWN_MS;
+        const now = Date.now();
+        if (now < countdownStartAt) {
+          setStartCountdownValue(null);
+          return;
+        }
+        const remainingMs = Math.max(0, countdownEndAt - now);
+        const nextValue = Math.min(START_COUNTDOWN_INITIAL, Math.max(1, Math.ceil(remainingMs / 1000)));
+        setStartCountdownValue(nextValue);
       };
       syncCountdown();
-      const countdownSyncTimer = window.setInterval(syncCountdown, 120);
+      const countdownSyncTimer = window.setInterval(syncCountdown, 80);
       return () => window.clearInterval(countdownSyncTimer);
     }
 
     if (networkRaceState.status === 'running') {
       setControlsLocked(false);
-      setStartCountdownValue(null);
+      const elapsedSinceRaceStartMs =
+        networkRaceState.startedAt ? Math.max(0, Date.now() - networkRaceState.startedAt) : Number.POSITIVE_INFINITY;
+      if (elapsedSinceRaceStartMs <= NETWORK_START_GO_HOLD_MS) {
+        setStartCountdownValue(0);
+      } else {
+        setStartCountdownValue(null);
+      }
       return;
     }
 
@@ -2576,6 +2687,7 @@ export function Scene({
   }, [finalizeCourse, isNetworkRace, networkRaceState]);
 
   useEffect(() => {
+    if (isNetworkRace) return;
     if (startCountdownValue === null) return;
 
     if (startCountdownValue === 0) {
@@ -2593,15 +2705,15 @@ export function Scene({
       });
     }, START_COUNTDOWN_TICK_MS);
     return () => window.clearTimeout(tickTimer);
-  }, [startCountdownValue]);
+  }, [isNetworkRace, startCountdownValue]);
 
   useEffect(() => {
-    if (overlayStep !== 'course-ranking') return;
+    if (overlayStep !== 'course-ranking' || isNetworkRace) return;
     const autoAdvanceTimer = window.setTimeout(() => {
       void handleAdvanceAfterCourse();
     }, COURSE_RESULT_OVERLAY_MS);
     return () => window.clearTimeout(autoAdvanceTimer);
-  }, [handleAdvanceAfterCourse, overlayStep]);
+  }, [handleAdvanceAfterCourse, isNetworkRace, overlayStep]);
 
   return (
     <div className="relative h-full w-full">
@@ -2759,9 +2871,7 @@ export function Scene({
               })}
             </div>
             <p className="mt-4 text-sm font-semibold text-white/80">
-              {hasNextCourse
-                ? 'Passage automatique a la course suivante dans 10 secondes.'
-                : 'Affichage du resultat final du Grand Prix dans 10 secondes.'}
+              {courseResultDescription}
             </p>
             <button
               type="button"
@@ -2769,7 +2879,7 @@ export function Scene({
               onClick={handleAdvanceAfterCourse}
               disabled={menuBusy || isAdvancingCourse}
             >
-              {hasNextCourse ? (menuBusy || isAdvancingCourse ? 'Chargement...' : 'Course suivante') : 'Resultat final'}
+              {courseResultActionLabel}
             </button>
           </div>
         </div>
@@ -2812,7 +2922,7 @@ export function Scene({
               className="mt-5 w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-[#1c376f]"
               onClick={onRaceBack}
             >
-              Retour au Menu
+              {isNetworkRace ? 'Quitter le lobby' : 'Retour au Menu'}
             </button>
           </div>
         </div>

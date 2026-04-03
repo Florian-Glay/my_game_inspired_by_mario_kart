@@ -51,6 +51,7 @@ type GameMenuProps = {
   waitingOnlineLobbies: MultiplayerLobbyState[];
   selectedOnlineLobby: MultiplayerLobbyState | null;
   currentOnlineLobby: MultiplayerLobbyState | null;
+  isCurrentOnlineLobbyHost: boolean;
   errorMessage: string | null;
   isCheckingAssets: boolean;
   onBack: () => void;
@@ -289,6 +290,7 @@ export function GameMenu({
   waitingOnlineLobbies,
   selectedOnlineLobby,
   currentOnlineLobby,
+  isCurrentOnlineLobbyHost,
   errorMessage,
   isCheckingAssets,
   onBack,
@@ -589,7 +591,7 @@ export function GameMenu({
                 </h2>
                 <p>
                   {mode === 'online' ?
-                    'Choisis ton personnage, ton vehicule et tes roues. Le mode online verrouille 150cc et Grand Prix 1.'
+                    'Choisis ton personnage, ton vehicule et tes roues. Le host choisira ensuite le Grand Prix avant le lancement.'
                   : 'Choisis un personnage, un vehicule et un type de roues.'}
                 </p>
 
@@ -810,14 +812,14 @@ export function GameMenu({
           {displayedScreen === 'online-lobby' && (
             <div className="mk-card mk-card--animated mk-online-lobby-card">
               <h2>{getLobbyTitle(currentOnlineLobby)}</h2>
-              <p>150cc et Grand Prix 1 sont deja preselectionnes pour ce mode.</p>
+              <p>Le host choisit la coupe, puis lance le Grand Prix en 150cc.</p>
 
               <div className="mk-online-summary-grid">
                 <div className="mk-online-summary-pill">
                   Joueurs: {currentOnlineLobby?.players.length ?? 0}/{MULTIPLAYER_MAX_PLAYERS}
                 </div>
                 <div className="mk-online-summary-pill">Code: {currentOnlineLobby?.code ?? '------'}</div>
-                <div className="mk-online-summary-pill">Grand Prix 1</div>
+                <div className="mk-online-summary-pill">Grand Prix: selection host</div>
                 <div className="mk-online-summary-pill">150cc</div>
               </div>
 
@@ -830,8 +832,13 @@ export function GameMenu({
               <OnlineLobbyMemberList lobby={currentOnlineLobby} />
 
               <div className="mk-online-actions">
-                <button type="button" className="mk-confirm-btn" onClick={onLaunchOnlineGrandPrix}>
-                  Lancer le Grand Prix
+                <button
+                  type="button"
+                  className="mk-confirm-btn"
+                  onClick={onLaunchOnlineGrandPrix}
+                  disabled={!isCurrentOnlineLobbyHost}
+                >
+                  {isCurrentOnlineLobbyHost ? 'Choisir et lancer le Grand Prix' : 'En attente du host'}
                 </button>
                 <button type="button" className="mk-confirm-btn mk-confirm-btn--ghost" onClick={onLeaveOnlineLobby}>
                   Quitter le lobby
@@ -844,8 +851,14 @@ export function GameMenu({
 
           {displayedScreen === 'circuit' && (
             <div className="mk-card mk-card--animated mk-grand-prix-card">
-              <h2>Selection du Grand Prix</h2>
-              <p>Choisis une coupe puis confirme pour lancer la premiere course.</p>
+              <h2>{mode === 'online' ? 'Selection du Grand Prix Online' : 'Selection du Grand Prix'}</h2>
+              <p>
+                {mode === 'online' ?
+                  isCurrentOnlineLobbyHost ?
+                    'Choisis une coupe puis lance le Grand Prix pour tout le lobby.'
+                  : 'Seul le host peut choisir la coupe. En attente de sa selection.'
+                : 'Choisis une coupe puis confirme pour lancer la premiere course.'}
+              </p>
 
               <div className="mk-gp-cups-section">
                 <div className="mk-gp-cups-scroll">
@@ -863,6 +876,7 @@ export function GameMenu({
                           aria-pressed={selectedGrandPrixId === grandPrixId}
                           aria-label={cup.label}
                           title={cup.label}
+                          disabled={mode === 'online' && !isCurrentOnlineLobbyHost}
                         >
                           <img
                             src={cup.badgeImage}
@@ -910,9 +924,15 @@ export function GameMenu({
                 type="button"
                 className="mk-confirm-btn mk-gp-confirm-btn"
                 onClick={onConfirmGrandPrix}
-                disabled={!selectedGrandPrixId || isCheckingAssets}
+                disabled={!selectedGrandPrixId || isCheckingAssets || (mode === 'online' && !isCurrentOnlineLobbyHost)}
               >
-                {isCheckingAssets ? 'Verification des assets...' : 'Confirmer le Grand Prix'}
+                {mode === 'online' ?
+                  isCurrentOnlineLobbyHost ?
+                    'Lancer le Grand Prix'
+                  : 'En attente du host'
+                : isCheckingAssets ?
+                  'Verification des assets...'
+                : 'Confirmer le Grand Prix'}
               </button>
 
               {errorMessage ? <div className="mk-error">{errorMessage}</div> : null}
