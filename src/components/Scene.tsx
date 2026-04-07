@@ -1,4 +1,4 @@
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
 import {
@@ -10,7 +10,7 @@ import {
   useState,
   type MutableRefObject,
 } from 'react';
-import { Color, Euler, Matrix4, PCFSoftShadowMap, Quaternion, Vector3, type Group } from 'three';
+import { PCFSoftShadowMap, type Group } from 'three';
 import type { BotWaypoint } from '../ai/botAutopilot';
 import { CHARACTERS, getCatalogItemById } from '../config/garageCatalog';
 import { CC_SPEEDS, CIRCUITS } from '../config/raceCatalog';
@@ -19,22 +19,13 @@ import { gameMode } from '../state/gamemode';
 import type {
   BotDrivingTacticalState,
   BotItemTacticalState,
-  CircuitId,
   CarPose,
-  CourseRaceResult,
   CourseRankingEntry,
-  GrandPrixStanding,
-  HumanPlayerSlotId,
-  RaceConfig,
   RaceParticipantId,
   Vec3,
 } from '../types/game';
 import { getRaceAssetUrls, RACE_ATTACHABLE_MODEL_URLS } from '../utils/raceAssetMemory';
-import type {
-  MultiplayerRaceEvent,
-  MultiplayerRaceState,
-  MultiplayerThrowableRemovalReason,
-} from '../../shared/multiplayerProtocol';
+import type { MultiplayerThrowableRemovalReason } from '../../shared/multiplayerProtocol';
 import {
   MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS,
   MULTIPLAYER_START_COUNTDOWN_MS,
@@ -46,766 +37,132 @@ import DrivableModel from './DrivableModel';
 import { LocalMultiviewCameraController } from './LocalMultiviewCameraController';
 import Model from './Model';
 import { ObjectCrate, type ObjectCrateTouch } from './ObjectCrate';
+import {
+  AdaptiveViewportPerformance,
+  CircuitWaypointLoader,
+  LoadingFallback,
+  MovingClouds,
+  PhysicsWarmupGate,
+  RaceEnvironmentEnforcer,
+  SceneAssetGate,
+} from './scene/sceneEnvironment';
+import {
+  BOT_OVERTAKE_DIRECTION_LOOKAHEAD,
+  BOT_OVERTAKE_LANE_OFFSET_MAX,
+  BOT_OVERTAKE_LANE_OFFSET_MIN,
+  BOT_OVERTAKE_LATERAL_DEADZONE,
+  BOT_OVERTAKE_MAX_DISTANCE,
+  BOT_OVERTAKE_MAX_WAYPOINT_STEPS,
+  BOT_OVERTAKE_TURN_BIAS_THRESHOLD,
+  COIN_HUD_ICON_PATH,
+  COURSE_RESULT_OVERLAY_MS,
+  DAY_CLEAR_COLOR,
+  DEFAULT_CHARACTER_PORTRAIT_PATH,
+  FALLBACK_PROGRESS,
+  HUMAN_SLOT_ORDER,
+  LIVE_SCOREBOARD_FINISH_WAYPOINT_BY_CIRCUIT,
+  LIVE_SCOREBOARD_REFRESH_MS,
+  LOADING_OVERLAY_FADE_MS,
+  NETWORK_START_GO_HOLD_MS,
+  OBJECT_AVAILABLE_ITEM_VALUES,
+  OBJECT_BANANA_FORWARD_SPEED,
+  OBJECT_BANANA_MODEL_PATH,
+  OBJECT_BANANA_SPAWN_FORWARD_OFFSET,
+  OBJECT_BANANA_SPAWN_UP_OFFSET,
+  OBJECT_BANANA_UPWARD_SPEED,
+  OBJECT_BANANA_VALUE,
+  OBJECT_BLUE_SHELL_ELIGIBLE_MIN_POSITION,
+  OBJECT_BLUE_SHELL_MIN_SPEED,
+  OBJECT_BLUE_SHELL_MODEL_PATH,
+  OBJECT_BLUE_SHELL_SPAWN_FORWARD_OFFSET,
+  OBJECT_BLUE_SHELL_SPAWN_UP_OFFSET,
+  OBJECT_BLUE_SHELL_SPEED_MULTIPLIER,
+  OBJECT_BLUE_SHELL_VALUE,
+  OBJECT_BOMB_GRAVITY,
+  OBJECT_BOMB_MIN_FORWARD_SPEED,
+  OBJECT_BOMB_MODEL_PATH,
+  OBJECT_BOMB_SPAWN_FORWARD_OFFSET,
+  OBJECT_BOMB_SPAWN_UP_OFFSET,
+  OBJECT_BOMB_SPEED_MULTIPLIER,
+  OBJECT_BOMB_TARGET_DISTANCE,
+  OBJECT_BOMB_VALUE,
+  OBJECT_BULLET_BILL_DURATION_SECONDS,
+  OBJECT_BULLET_BILL_ELIGIBLE_MIN_POSITION,
+  OBJECT_BULLET_BILL_VALUE,
+  OBJECT_COIN_VALUE,
+  OBJECT_CRATE_MODEL_PATH,
+  OBJECT_DEFAULT_INITIAL_CHARGES,
+  OBJECT_GREEN_SHELL_MIN_SPEED,
+  OBJECT_GREEN_SHELL_MODEL_PATH,
+  OBJECT_GREEN_SHELL_SPAWN_FORWARD_OFFSET,
+  OBJECT_GREEN_SHELL_SPAWN_UP_OFFSET,
+  OBJECT_GREEN_SHELL_SPEED_MULTIPLIER,
+  OBJECT_GREEN_SHELL_VALUE,
+  OBJECT_ITEM_MAX_VALUE,
+  OBJECT_ITEM_MIN_VALUE,
+  OBJECT_MUSHROOM_INITIAL_CHARGES,
+  OBJECT_MUSHROOM_VALUE,
+  OBJECT_RED_SHELL_MIN_SPEED,
+  OBJECT_RED_SHELL_MODEL_PATH,
+  OBJECT_RED_SHELL_SPAWN_FORWARD_OFFSET,
+  OBJECT_RED_SHELL_SPAWN_UP_OFFSET,
+  OBJECT_RED_SHELL_SPEED_MULTIPLIER,
+  OBJECT_RED_SHELL_TARGET_RADIUS,
+  OBJECT_RED_SHELL_VALUE,
+  OBJECT_THROWABLE_HIT_STUN_DURATION_MS,
+  OBJECT_THROWABLE_LIFETIME_MS,
+  OBJECT_THROWABLE_VALUE_SET,
+  OBJECT_TRIPLE_BANANA_INITIAL_CHARGES,
+  OBJECT_TRIPLE_BANANA_VALUE,
+  OBJECT_TRIPLE_GREEN_SHELL_INITIAL_CHARGES,
+  OBJECT_TRIPLE_GREEN_SHELL_VALUE,
+  OBJECT_TRIPLE_RED_SHELL_INITIAL_CHARGES,
+  OBJECT_TRIPLE_RED_SHELL_VALUE,
+  PLAYER_COIN_MAX,
+  START_COUNTDOWN_CHARGE_HINT_FROM,
+  START_COUNTDOWN_DELAY_AFTER_LOADING_MS,
+  START_COUNTDOWN_INITIAL,
+  START_COUNTDOWN_TICK_MS,
+  START_COUNTDOWN_ZERO_HOLD_MS,
+  SUN_POSITION,
+  TRACK_COIN_COLLIDER_HALF_EXTENTS,
+  TRACK_COIN_MODEL_PATH,
+} from './scene/sceneConstants';
+import {
+  buildLiveScoreboardEntries,
+  buildParticipantItemStateSnapshot,
+  createInitialLapProgress,
+  createInitialParticipantBulletBillUntil,
+  createInitialParticipantCoins,
+  createInitialParticipantObjectCharges,
+  createInitialParticipantObjects,
+  createInitialParticipantStunUntil,
+  createInitialParticipantThunderDebuffUntil,
+  createObjectCrateActivationMap,
+  createTrackCoinActivationMap,
+  findNearestWaypointIndex,
+  findNearestWaypointArrayIndex,
+  getCoursePointsForPosition,
+  getWaypointDirectionXZ,
+  getUpcomingTurnBias,
+  resolvePoseForwardVector,
+  resolveUiAssetSrc,
+} from './scene/sceneHelpers';
+import type {
+  LapTriggerType,
+  LiveScoreboardEntry,
+  ObjectCrateSpawnEntry,
+  PlayerLapProgress,
+  RaceOverlayStep,
+  SceneProps,
+  ThrowableObjectEntry,
+  TrackCoinSpawnEntry,
+} from './scene/sceneTypes';
 import { SurfaceWithDrag } from './SurfaceWithDrag';
 import { ThrowableObject } from './ThrowableObject';
 import TextureDebug from './TextureDebug';
 
 useGLTF.preload('models/exemple.glb');
-const DAY_CLEAR_COLOR = '#7ec3ff';
-const SUN_POSITION: [number, number, number] = [220, 180, -360];
-const CLOUD_WRAP_X = 620;
-const CLOUD_FAR_Z = -420;
-const CLOUD_NEAR_Z = 160;
-const TINY_VIEWPORT_AREA = 420_000;
-const MEDIUM_VIEWPORT_AREA = 820_000;
-const BOT_OVERTAKE_MAX_DISTANCE = 26;
-const BOT_OVERTAKE_MAX_WAYPOINT_STEPS = 5;
-const BOT_OVERTAKE_DIRECTION_LOOKAHEAD = 3;
-const BOT_OVERTAKE_FUTURE_TURN_LOOKAHEAD = 6;
-const BOT_OVERTAKE_LATERAL_DEADZONE = 0.9;
-const BOT_OVERTAKE_LANE_OFFSET_MIN = 1.8;
-const BOT_OVERTAKE_LANE_OFFSET_MAX = 3.2;
-const BOT_OVERTAKE_TURN_BIAS_THRESHOLD = 0.14;
-
-type SceneProps = {
-  raceConfig: RaceConfig;
-  onRaceBack: () => void;
-  onCourseFinished: (result: CourseRaceResult) => void;
-  onNextCourse: () => Promise<void> | void;
-  hasNextCourse: boolean;
-  isAdvancingCourse: boolean;
-  grandPrixStandings: GrandPrixStanding[];
-  networkRaceState?: MultiplayerRaceState | null;
-  networkOwnedParticipantIds?: string[];
-  onNetworkSceneReady?: (raceId: string) => void;
-  onNetworkLocalPose?: (
-    raceId: string,
-    participantId: string,
-    pose: CarPose,
-    options?: {
-      lapProgress?: MultiplayerRaceState['participants'][number]['lapProgress'];
-      itemState?: MultiplayerRaceState['participants'][number]['itemState'];
-    },
-  ) => void;
-  onNetworkRaceEvent?: (raceId: string, event: MultiplayerRaceEvent) => void;
-  onNetworkCourseResultValidated?: (raceId: string) => void;
-};
-
-type SceneAssetGateProps = {
-  urls: string[];
-  onReady: () => void;
-};
-
-type PhysicsWarmupGateProps = {
-  enabled: boolean;
-  framesToWait: number;
-  onReady: () => void;
-};
-
-type WaypointTransform = {
-  position: [number, number, number];
-  rotation: [number, number, number];
-  scale: [number, number, number];
-};
-
-type CircuitWaypointLoaderProps = {
-  model: string;
-  transform: WaypointTransform;
-  onReady: (waypoints: BotWaypoint[]) => void;
-};
-
-const WAYPOINT_NODE_NAME_RE = /^WP_(\d+)$/i;
-
-function SceneAssetGate({ urls, onReady }: SceneAssetGateProps) {
-  useGLTF(urls);
-
-  useEffect(() => {
-    onReady();
-  }, [onReady, urls]);
-
-  return null;
-}
-
-function extractWaypointsFromScene(
-  root: Group,
-  transform: WaypointTransform,
-): BotWaypoint[] {
-  const transformedWaypoints: BotWaypoint[] = [];
-  const circuitTransformMatrix = new Matrix4().compose(
-    new Vector3(transform.position[0], transform.position[1], transform.position[2]),
-    new Quaternion().setFromEuler(
-      new Euler(transform.rotation[0], transform.rotation[1], transform.rotation[2]),
-    ),
-    new Vector3(transform.scale[0], transform.scale[1], transform.scale[2]),
-  );
-  const sourcePosition = new Vector3();
-  const worldPosition = new Vector3();
-  const seenIndices = new Set<number>();
-
-  root.updateMatrixWorld(true);
-  root.traverse((child) => {
-    const name = typeof child.name === 'string' ? child.name.trim() : '';
-    const match = WAYPOINT_NODE_NAME_RE.exec(name);
-    if (!match) return;
-
-    const index = Number.parseInt(match[1], 10);
-    if (!Number.isFinite(index) || seenIndices.has(index)) return;
-
-    child.getWorldPosition(sourcePosition);
-    worldPosition.copy(sourcePosition).applyMatrix4(circuitTransformMatrix);
-    seenIndices.add(index);
-    transformedWaypoints.push({
-      index,
-      position: [worldPosition.x, worldPosition.y, worldPosition.z],
-    });
-  });
-
-  transformedWaypoints.sort((left, right) => left.index - right.index);
-  return transformedWaypoints;
-}
-
-function CircuitWaypointLoader({ model, transform, onReady }: CircuitWaypointLoaderProps) {
-  const { scene } = useGLTF(model) as unknown as { scene: Group };
-
-  useEffect(() => {
-    onReady(extractWaypointsFromScene(scene, transform));
-  }, [
-    model,
-    onReady,
-    scene,
-    transform.position[0],
-    transform.position[1],
-    transform.position[2],
-    transform.rotation[0],
-    transform.rotation[1],
-    transform.rotation[2],
-    transform.scale[0],
-    transform.scale[1],
-    transform.scale[2],
-  ]);
-
-  return null;
-}
-
-function LoadingFallback() {
-  return null;
-}
-
-function PhysicsWarmupGate({ enabled, framesToWait, onReady }: PhysicsWarmupGateProps) {
-  const frameCountRef = useRef(0);
-  const doneRef = useRef(false);
-
-  useEffect(() => {
-    frameCountRef.current = 0;
-    doneRef.current = false;
-  }, [enabled, framesToWait, onReady]);
-
-  useFrame(() => {
-    if (!enabled || doneRef.current) return;
-
-    frameCountRef.current += 1;
-    if (frameCountRef.current < Math.max(1, Math.floor(framesToWait))) return;
-
-    doneRef.current = true;
-    onReady();
-  });
-
-  return null;
-}
-
-function RaceEnvironmentEnforcer() {
-  const { gl, scene } = useThree();
-
-  useEffect(() => {
-    const clearColor = new Color(DAY_CLEAR_COLOR);
-    scene.fog = null;
-    scene.background = clearColor;
-    gl.setClearColor(clearColor, 1);
-    gl.toneMappingExposure = 1.15;
-  }, [gl, scene]);
-
-  return null;
-}
-
-function AdaptiveViewportPerformance() {
-  const { size, setDpr } = useThree();
-  const lastDprRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const width = Math.max(1, size.width);
-    const height = Math.max(1, size.height);
-    const viewportArea = width * height;
-    const minDpr = PERF_PROFILE.dpr[0];
-    const maxDpr = PERF_PROFILE.dpr[1];
-
-    const targetDpr =
-      viewportArea <= TINY_VIEWPORT_AREA ?
-        minDpr
-      : viewportArea <= MEDIUM_VIEWPORT_AREA ?
-        Math.max(minDpr, Math.min(maxDpr, 0.65))
-      : maxDpr;
-
-    if (lastDprRef.current !== targetDpr) {
-      lastDprRef.current = targetDpr;
-      setDpr(targetDpr);
-    }
-  }, [setDpr, size.height, size.width]);
-
-  return null;
-}
-
-type CloudSeed = {
-  x: number;
-  y: number;
-  z: number;
-  scale: number;
-  speed: number;
-  alpha: number;
-};
-
-type LapTriggerType = 'lap-start' | 'lap-checkpoint';
-
-type PlayerLapProgress = {
-  lap: number;
-  checkpoint: boolean;
-  finished: boolean;
-  finishTimestamp: number | null;
-};
-
-type RaceOverlayStep = 'none' | 'course-ranking' | 'grand-prix-result';
-
-type LiveScoreboardEntry = {
-  participantId: RaceParticipantId;
-  displayName: string;
-  position: number;
-  completedLaps: number;
-  checkpoint: boolean;
-  finished: boolean;
-};
-
-type LiveScoreboardSortEntry = {
-  participantId: RaceParticipantId;
-  displayName: string;
-  completedLaps: number;
-  checkpoint: boolean;
-  finished: boolean;
-  finishTimestamp: number;
-  waypointsRemainingToFinish: number;
-};
-
-type ObjectCrateSpawnEntry = {
-  crateId: string;
-  position: [number, number, number];
-  rotation: [number, number, number];
-};
-
-type TrackCoinSpawnEntry = {
-  coinId: string;
-  position: [number, number, number];
-  rotation: [number, number, number];
-};
-
-type ThrowableObjectEntry = {
-  throwableId: string;
-  sourceObjectValue: number;
-  ownerParticipantId: RaceParticipantId;
-  behavior: 'banana' | 'green-shell' | 'red-shell' | 'blue-shell' | 'bomb';
-  modelPath: string;
-  spawnPosition: [number, number, number];
-  launchVelocity: [number, number, number];
-  ttlMs: number;
-};
-
-function MovingClouds() {
-  const rootRef = useRef<Group | null>(null);
-  const cloudSeeds = useMemo<CloudSeed[]>(
-    () =>
-      Array.from({ length: 10 }, (_, index) => {
-        const lane = index % 4;
-        const band = Math.floor(index / 4);
-        return {
-          x: -CLOUD_WRAP_X + index * 72,
-          y: 110 + lane * 18 + band * 8,
-          z: CLOUD_FAR_Z + ((index * 93) % (CLOUD_NEAR_Z - CLOUD_FAR_Z)),
-          scale: 1 + ((index * 17) % 5) * 0.15,
-          speed: 12 + (index % 5) * 3.4,
-          alpha: 0.62 + (index % 4) * 0.07,
-        };
-      }),
-    [],
-  );
-
-  useFrame((state, delta) => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const elapsed = state.clock.getElapsedTime();
-    for (let i = 0; i < root.children.length; i += 1) {
-      const cloud = root.children[i];
-      const seed = cloudSeeds[i];
-      if (!seed) continue;
-
-      cloud.position.x += seed.speed * delta;
-      if (cloud.position.x > CLOUD_WRAP_X) {
-        cloud.position.x = -CLOUD_WRAP_X;
-      }
-      cloud.position.y = seed.y + Math.sin(elapsed * 0.28 + i) * 1.4;
-    }
-  });
-
-  return (
-    <group ref={rootRef}>
-      {cloudSeeds.map((seed) => (
-        <group key={`${seed.x}-${seed.z}`} position={[seed.x, seed.y, seed.z]} scale={seed.scale}>
-          <mesh position={[0, 0, 0]} rotation={[0, 0, 0.08]}>
-            <sphereGeometry args={[10, 20, 20]} />
-            <meshStandardMaterial
-              color="#ffffff"
-              roughness={0.96}
-              metalness={0}
-              transparent
-              opacity={seed.alpha}
-              depthWrite={false}
-            />
-          </mesh>
-          <mesh position={[12, -1, 2]}>
-            <sphereGeometry args={[8.5, 20, 20]} />
-            <meshStandardMaterial
-              color="#f5f9ff"
-              roughness={0.96}
-              metalness={0}
-              transparent
-              opacity={Math.max(0.35, seed.alpha - 0.14)}
-              depthWrite={false}
-            />
-          </mesh>
-          <mesh position={[-11, -1.8, -1.6]}>
-            <sphereGeometry args={[8.8, 20, 20]} />
-            <meshStandardMaterial
-              color="#f7fbff"
-              roughness={0.96}
-              metalness={0}
-              transparent
-              opacity={Math.max(0.35, seed.alpha - 0.16)}
-              depthWrite={false}
-            />
-          </mesh>
-          <mesh position={[0, -4.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-            <circleGeometry args={[14.5, 24]} />
-            <meshStandardMaterial
-              color="#ffffff"
-              transparent
-              opacity={Math.max(0.18, seed.alpha - 0.38)}
-              depthWrite={false}
-            />
-          </mesh>
-        </group>
-      ))}
-    </group>
-  );
-}
-
-const FALLBACK_PROGRESS: PlayerLapProgress = {
-  lap: 1,
-  checkpoint: false,
-  finished: false,
-  finishTimestamp: null,
-};
-const START_COUNTDOWN_INITIAL = 3;
-const START_COUNTDOWN_CHARGE_HINT_FROM = 2;
-const START_COUNTDOWN_TICK_MS = 1000;
-const START_COUNTDOWN_ZERO_HOLD_MS = 450;
-const NETWORK_START_GO_HOLD_MS = 2_000;
-const LOADING_OVERLAY_FADE_MS = 500;
-const START_COUNTDOWN_DELAY_AFTER_LOADING_MS = 1500;
-const LIVE_SCOREBOARD_REFRESH_MS = 280;
-const COURSE_RESULT_OVERLAY_MS = 10_000;
-const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
-const OBJECT_CRATE_MODEL_PATH = 'models/item_box.glb';
-const TRACK_COIN_MODEL_PATH = 'models/miniObject/itemCoin.glb';
-const TRACK_COIN_COLLIDER_HALF_EXTENTS: [number, number, number] = [0.75, 0.75, 0.75];
-const OBJECT_ITEM_MIN_VALUE = 1;
-const OBJECT_ITEM_MAX_VALUE = 13;
-const OBJECT_MUSHROOM_VALUE = 2;
-const OBJECT_BANANA_VALUE = 3;
-const OBJECT_TRIPLE_BANANA_VALUE = 4;
-const OBJECT_GREEN_SHELL_VALUE = 5;
-const OBJECT_TRIPLE_GREEN_SHELL_VALUE = 6;
-const OBJECT_RED_SHELL_VALUE = 7;
-const OBJECT_TRIPLE_RED_SHELL_VALUE = 8;
-const OBJECT_BLUE_SHELL_VALUE = 9;
-const OBJECT_BLUE_SHELL_ELIGIBLE_MIN_POSITION = 7;
-const OBJECT_BOMB_VALUE = 10;
-const OBJECT_THROWABLE_VALUES = [3, 4, 5, 6, 7, 8, 9, 10, 12] as const;
-const OBJECT_BULLET_BILL_VALUE = 11;
-const OBJECT_BULLET_BILL_ELIGIBLE_MIN_POSITION = 11;
-const OBJECT_BULLET_BILL_DURATION_SECONDS = 15;
-const OBJECT_COIN_VALUE = 13;
-const PLAYER_COIN_MAX = 10;
-const OBJECT_MUSHROOM_INITIAL_CHARGES = 3;
-const OBJECT_TRIPLE_BANANA_INITIAL_CHARGES = 3;
-const OBJECT_TRIPLE_GREEN_SHELL_INITIAL_CHARGES = 3;
-const OBJECT_TRIPLE_RED_SHELL_INITIAL_CHARGES = 3;
-const OBJECT_DEFAULT_INITIAL_CHARGES = 1;
-const OBJECT_AVAILABLE_ITEM_VALUES = [
-  1,
-  OBJECT_MUSHROOM_VALUE,
-  OBJECT_BANANA_VALUE,
-  OBJECT_TRIPLE_BANANA_VALUE,
-  OBJECT_GREEN_SHELL_VALUE,
-  OBJECT_TRIPLE_GREEN_SHELL_VALUE,
-  OBJECT_RED_SHELL_VALUE,
-  OBJECT_TRIPLE_RED_SHELL_VALUE,
-  OBJECT_BLUE_SHELL_VALUE,
-  OBJECT_BOMB_VALUE,
-  OBJECT_BULLET_BILL_VALUE,
-  OBJECT_COIN_VALUE,
-] as const;
-const COIN_HUD_ICON_PATH = 'ui/object/objet-13.png';
-const OBJECT_BANANA_MODEL_PATH = 'models/miniObject/itemBanana.glb';
-const OBJECT_GREEN_SHELL_MODEL_PATH = 'models/miniObject/itemGreenShell.glb';
-const OBJECT_RED_SHELL_MODEL_PATH = 'models/miniObject/itemRedShell.glb';
-const OBJECT_BLUE_SHELL_MODEL_PATH = 'models/miniObject/itemBlueShell.glb';
-const OBJECT_BOMB_MODEL_PATH = 'models/miniObject/itemBomb.glb';
-const OBJECT_THROWABLE_LIFETIME_MS = 30_000;
-const OBJECT_THROWABLE_HIT_STUN_DURATION_MS = 1000;
-const OBJECT_BANANA_FORWARD_SPEED = 100;
-const OBJECT_BANANA_UPWARD_SPEED = 12.5;
-const OBJECT_BANANA_SPAWN_FORWARD_OFFSET = 2.2;
-const OBJECT_BANANA_SPAWN_UP_OFFSET = 1.6;
-const OBJECT_GREEN_SHELL_SPEED_MULTIPLIER = 2;
-const OBJECT_GREEN_SHELL_MIN_SPEED = 0;
-const OBJECT_GREEN_SHELL_SPAWN_FORWARD_OFFSET = 5.2;
-const OBJECT_GREEN_SHELL_SPAWN_UP_OFFSET = 0.9;
-const OBJECT_RED_SHELL_SPEED_MULTIPLIER = 2;
-const OBJECT_RED_SHELL_MIN_SPEED = 0;
-const OBJECT_RED_SHELL_SPAWN_FORWARD_OFFSET = 5.2;
-const OBJECT_RED_SHELL_SPAWN_UP_OFFSET = 0.9;
-const OBJECT_RED_SHELL_TARGET_RADIUS = 30;
-const OBJECT_BLUE_SHELL_SPEED_MULTIPLIER = 2;
-const OBJECT_BLUE_SHELL_MIN_SPEED = 0;
-const OBJECT_BLUE_SHELL_SPAWN_FORWARD_OFFSET = 5.2;
-const OBJECT_BLUE_SHELL_SPAWN_UP_OFFSET = 0.9;
-const OBJECT_BOMB_SPEED_MULTIPLIER = 2;
-const OBJECT_BOMB_MIN_FORWARD_SPEED = 30;
-const OBJECT_BOMB_TARGET_DISTANCE = 100;
-const OBJECT_BOMB_SPAWN_FORWARD_OFFSET = 3.2;
-const OBJECT_BOMB_SPAWN_UP_OFFSET = 2.4;
-const OBJECT_BOMB_GRAVITY = 9.81;
-const DEFAULT_CHARACTER_PORTRAIT_PATH = 'ui/select/character/mario.png';
-const COURSE_POINTS_BY_POSITION = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0] as const;
-const LIVE_SCOREBOARD_FINISH_WAYPOINT_BY_CIRCUIT: Record<CircuitId, number> = {
-  kalimari_desert: 12,
-  super_bell_subway: 5,
-  stadium: 239,
-  ds_mario_circuit: 75,
-};
-const OBJECT_THROWABLE_VALUE_SET = new Set<number>(OBJECT_THROWABLE_VALUES);
-
-const resolveUiAssetSrc = (assetPath: string) => {
-  if (
-    assetPath.startsWith('http://') ||
-    assetPath.startsWith('https://') ||
-    assetPath.startsWith('data:') ||
-    assetPath.startsWith('blob:')
-  ) {
-    return assetPath;
-  }
-  if (assetPath.startsWith('/')) return assetPath;
-  return `${import.meta.env.BASE_URL}${assetPath}`;
-};
-
-const getCoursePointsForPosition = (position: number) => {
-  if (!Number.isFinite(position) || position <= 0) return 0;
-  return COURSE_POINTS_BY_POSITION[position - 1] ?? 0;
-};
-
-const resolvePoseForwardVector = (pose: CarPose) => {
-  const fallbackForwardX = Number.isFinite(pose.yaw) ? Math.sin(pose.yaw) : 0;
-  const fallbackForwardZ = Number.isFinite(pose.yaw) ? Math.cos(pose.yaw) : 1;
-  const rawForwardXCandidate = pose.forwardX ?? fallbackForwardX;
-  const rawForwardZCandidate = pose.forwardZ ?? fallbackForwardZ;
-  const rawForwardX = Number.isFinite(rawForwardXCandidate) ? rawForwardXCandidate : fallbackForwardX;
-  const rawForwardZ = Number.isFinite(rawForwardZCandidate) ? rawForwardZCandidate : fallbackForwardZ;
-  const rawLength = Math.hypot(rawForwardX, rawForwardZ);
-  return {
-    forwardX: rawLength > 0.0001 ? rawForwardX / rawLength : fallbackForwardX,
-    forwardZ: rawLength > 0.0001 ? rawForwardZ / rawLength : fallbackForwardZ,
-  };
-};
-
-const findNearestWaypointIndex = (
-  pose: CarPose | null | undefined,
-  waypoints: readonly BotWaypoint[],
-) => {
-  if (!pose || waypoints.length === 0) return null;
-
-  let nearestWaypointIndex: number | null = null;
-  let nearestDistanceSq = Number.POSITIVE_INFINITY;
-  for (const waypoint of waypoints) {
-    const dx = waypoint.position[0] - pose.x;
-    const dy = waypoint.position[1] - pose.y;
-    const dz = waypoint.position[2] - pose.z;
-    const distanceSq = dx * dx + dy * dy + dz * dz;
-    if (distanceSq >= nearestDistanceSq) continue;
-    nearestDistanceSq = distanceSq;
-    nearestWaypointIndex = waypoint.index;
-  }
-
-  return nearestWaypointIndex;
-};
-
-const findNearestWaypointArrayIndex = (
-  position: Vec3,
-  waypoints: readonly BotWaypoint[],
-) => {
-  if (waypoints.length === 0) return null;
-
-  let nearestWaypointArrayIndex: number | null = null;
-  let nearestDistanceSq = Number.POSITIVE_INFINITY;
-  for (let index = 0; index < waypoints.length; index += 1) {
-    const waypoint = waypoints[index];
-    const dx = waypoint.position[0] - position[0];
-    const dy = waypoint.position[1] - position[1];
-    const dz = waypoint.position[2] - position[2];
-    const distanceSq = dx * dx + dy * dy + dz * dz;
-    if (distanceSq >= nearestDistanceSq) continue;
-    nearestDistanceSq = distanceSq;
-    nearestWaypointArrayIndex = index;
-  }
-
-  return nearestWaypointArrayIndex;
-};
-
-const getWaypointStepsToFinish = (
-  currentWaypointOrder: number | null,
-  finishWaypointOrder: number | null,
-  waypointCount: number,
-) => {
-  if (currentWaypointOrder === null || finishWaypointOrder === null || waypointCount <= 0) {
-    return Number.POSITIVE_INFINITY;
-  }
-  return (finishWaypointOrder - currentWaypointOrder + waypointCount) % waypointCount;
-};
-
-const getWaypointAtOffset = (
-  waypoints: readonly BotWaypoint[],
-  currentWaypointOrder: number | null,
-  offset: number,
-) => {
-  if (currentWaypointOrder === null || waypoints.length === 0) return null;
-  const normalizedIndex =
-    ((currentWaypointOrder + offset) % waypoints.length + waypoints.length) % waypoints.length;
-  return waypoints[normalizedIndex] ?? null;
-};
-
-const getWaypointDirectionXZ = (
-  waypoints: readonly BotWaypoint[],
-  currentWaypointOrder: number | null,
-  lookaheadOffset: number,
-) => {
-  const originWaypoint = getWaypointAtOffset(waypoints, currentWaypointOrder, 0);
-  if (!originWaypoint) return null;
-
-  const normalizedLookahead = Math.max(1, Math.floor(lookaheadOffset));
-  for (let offset = 1; offset <= normalizedLookahead; offset += 1) {
-    const nextWaypoint = getWaypointAtOffset(waypoints, currentWaypointOrder, offset);
-    if (!nextWaypoint) continue;
-
-    const dx = nextWaypoint.position[0] - originWaypoint.position[0];
-    const dz = nextWaypoint.position[2] - originWaypoint.position[2];
-    const length = Math.hypot(dx, dz);
-    if (length <= 0.0001) continue;
-
-    return {
-      x: dx / length,
-      z: dz / length,
-    };
-  }
-
-  return null;
-};
-
-const getUpcomingTurnBias = (
-  waypoints: readonly BotWaypoint[],
-  currentWaypointOrder: number | null,
-) => {
-  const nearDirection = getWaypointDirectionXZ(waypoints, currentWaypointOrder, BOT_OVERTAKE_DIRECTION_LOOKAHEAD);
-  const futureDirection = getWaypointDirectionXZ(
-    waypoints,
-    currentWaypointOrder,
-    BOT_OVERTAKE_FUTURE_TURN_LOOKAHEAD,
-  );
-  if (!nearDirection || !futureDirection) return 0;
-  return nearDirection.x * futureDirection.z - nearDirection.z * futureDirection.x;
-};
-
-const buildLiveScoreboardEntries = ({
-  participants,
-  progressByPlayer,
-  poseRefsByParticipant,
-  participantOrder,
-  circuitWaypoints,
-  waypointOrderByIndex,
-  finishWaypointOrder,
-  waypointCount,
-}: {
-  participants: RaceConfig['participants'];
-  progressByPlayer: Record<RaceParticipantId, PlayerLapProgress>;
-  poseRefsByParticipant: Record<RaceParticipantId, MutableRefObject<CarPose>>;
-  participantOrder: Map<RaceParticipantId, number>;
-  circuitWaypoints: readonly BotWaypoint[];
-  waypointOrderByIndex: Map<number, number>;
-  finishWaypointOrder: number | null;
-  waypointCount: number;
-}): LiveScoreboardEntry[] => {
-  const ranking: LiveScoreboardSortEntry[] = participants.map((participant) => {
-    const progress = progressByPlayer[participant.id] ?? FALLBACK_PROGRESS;
-    const completedLaps = Math.min(Math.max(progress.lap - 1, 0), 3);
-    const pose = poseRefsByParticipant[participant.id]?.current;
-    const currentWaypointIndex = findNearestWaypointIndex(pose, circuitWaypoints);
-    const currentWaypointOrder =
-      currentWaypointIndex === null ? null : (waypointOrderByIndex.get(currentWaypointIndex) ?? null);
-    const waypointsRemainingToFinish = getWaypointStepsToFinish(
-      currentWaypointOrder,
-      finishWaypointOrder,
-      waypointCount,
-    );
-
-    return {
-      participantId: participant.id,
-      displayName: participant.displayName,
-      completedLaps,
-      checkpoint: progress.checkpoint,
-      finished: progress.finished,
-      finishTimestamp: progress.finishTimestamp ?? Number.POSITIVE_INFINITY,
-      waypointsRemainingToFinish,
-    };
-  });
-
-  ranking.sort((left, right) => {
-    if (left.finished !== right.finished) return left.finished ? -1 : 1;
-    if (left.finished && right.finished && left.finishTimestamp !== right.finishTimestamp) {
-      return left.finishTimestamp - right.finishTimestamp;
-    }
-    if (left.completedLaps !== right.completedLaps) {
-      return right.completedLaps - left.completedLaps;
-    }
-    if (left.waypointsRemainingToFinish !== right.waypointsRemainingToFinish) {
-      return left.waypointsRemainingToFinish - right.waypointsRemainingToFinish;
-    }
-    return (
-      (participantOrder.get(left.participantId) ?? 0) -
-      (participantOrder.get(right.participantId) ?? 0)
-    );
-  });
-
-  return ranking.map(
-    ({ finishTimestamp: _ignoredTime, waypointsRemainingToFinish: _ignoredWaypoints, ...entry }, index) => ({
-      ...entry,
-      position: index + 1,
-    }),
-  );
-};
-
-function createInitialLapProgress(
-  participants: RaceConfig['participants'],
-) {
-  return participants.reduce<Record<RaceParticipantId, PlayerLapProgress>>((acc, participant) => {
-    acc[participant.id] = { ...FALLBACK_PROGRESS };
-    return acc;
-  }, {});
-}
-
-function createInitialParticipantObjects(
-  participants: RaceConfig['participants'],
-) {
-  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
-    acc[participant.id] = 0;
-    return acc;
-  }, {});
-}
-
-function createInitialParticipantObjectCharges(
-  participants: RaceConfig['participants'],
-) {
-  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
-    acc[participant.id] = 0;
-    return acc;
-  }, {});
-}
-
-function createInitialParticipantThunderDebuffUntil(
-  participants: RaceConfig['participants'],
-) {
-  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
-    acc[participant.id] = 0;
-    return acc;
-  }, {});
-}
-
-function createInitialParticipantBulletBillUntil(
-  participants: RaceConfig['participants'],
-) {
-  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
-    acc[participant.id] = 0;
-    return acc;
-  }, {});
-}
-
-function createInitialParticipantCoins(
-  participants: RaceConfig['participants'],
-) {
-  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
-    acc[participant.id] = 0;
-    return acc;
-  }, {});
-}
-
-function createObjectCrateActivationMap(spawns: ObjectCrateSpawnEntry[]) {
-  return spawns.reduce<Record<string, boolean>>((acc, spawn) => {
-    acc[spawn.crateId] = true;
-    return acc;
-  }, {});
-}
-
-function createInitialParticipantStunUntil(
-  participants: RaceConfig['participants'],
-) {
-  return participants.reduce<Record<RaceParticipantId, number>>((acc, participant) => {
-    acc[participant.id] = 0;
-    return acc;
-  }, {});
-}
-
-function buildParticipantItemStateSnapshot(
-  participantId: RaceParticipantId,
-  state: {
-    objects: Record<RaceParticipantId, number>;
-    objectCharges: Record<RaceParticipantId, number>;
-    coins: Record<RaceParticipantId, number>;
-    thunderDebuffUntil: Record<RaceParticipantId, number>;
-    bulletBillUntil: Record<RaceParticipantId, number>;
-    stunUntil: Record<RaceParticipantId, number>;
-  },
-) {
-  return {
-    heldObject: state.objects[participantId] ?? 0,
-    objectCharges: state.objectCharges[participantId] ?? 0,
-    coins: state.coins[participantId] ?? 0,
-    thunderDebuffUntilTimestampMs: state.thunderDebuffUntil[participantId] ?? 0,
-    bulletBillUntilTimestampMs: state.bulletBillUntil[participantId] ?? 0,
-    stunUntilTimestampMs: state.stunUntil[participantId] ?? 0,
-  };
-}
-
-function createTrackCoinActivationMap(spawns: TrackCoinSpawnEntry[]) {
-  return spawns.reduce<Record<string, boolean>>((acc, spawn) => {
-    acc[spawn.coinId] = true;
-    return acc;
-  }, {});
-}
-
 export function Scene({
   raceConfig,
   onRaceBack,
@@ -2595,18 +1952,14 @@ export function Scene({
   }));
   const courseResultDescription =
     isNetworkRace && hasNextCourse ?
-      menuBusy ?
-        'Resultats valides. En attente de la validation des autres joueurs.'
-      : 'Attends que tous les joueurs aient termine, puis valide pour lancer la course suivante.'
+      'La course suivante se lancera automatiquement apres quelques secondes.'
     : hasNextCourse ?
       'Passage automatique a la course suivante dans 10 secondes.'
     : 'Affichage du resultat final du Grand Prix dans 10 secondes.';
   const courseResultActionLabel =
     hasNextCourse ?
       isNetworkRace ?
-        menuBusy ?
-          'En attente des joueurs...'
-        : 'Course suivante'
+        'Passage automatique...'
       : menuBusy || isAdvancingCourse ?
         'Chargement...'
       : 'Course suivante'
@@ -2877,7 +2230,7 @@ export function Scene({
               type="button"
               className="mt-5 w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={handleAdvanceAfterCourse}
-              disabled={menuBusy || isAdvancingCourse}
+              disabled={menuBusy || isAdvancingCourse || (isNetworkRace && hasNextCourse)}
             >
               {courseResultActionLabel}
             </button>
@@ -3270,3 +2623,4 @@ export function Scene({
     </div>
   );
 }
+

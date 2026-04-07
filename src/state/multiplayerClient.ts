@@ -354,6 +354,15 @@ export function acknowledgeServerRaceResult(raceId: string) {
   });
 }
 
+export function sendServerRaceHostCommand(raceId: string, command: 'gmp') {
+  connectMultiplayerClient();
+  enqueueOrSend({
+    type: 'race:host-command',
+    raceId,
+    command,
+  });
+}
+
 export function publishServerRacePose(
   raceId: string,
   participantId: string,

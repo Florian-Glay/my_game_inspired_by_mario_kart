@@ -1,4 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  BOT_NETWORK_POSE_PUBLISH_INTERVAL_MS,
+  HUMAN_NETWORK_POSE_PUBLISH_INTERVAL_MS,
+  ONLINE_PLAYER_NAME_STORAGE_KEY,
+} from './app/appConstants';
+import {
+  createRandomLoadoutSelection,
+  createResolvedParticipantConfig,
+  getHumanDisplayName,
+  getHumanSlots,
+  getMissingAssetUrls,
+  getStoredOnlinePlayerName,
+  shuffleParticipants,
+} from './app/appHelpers';
+import { computeGrandPrixStandings } from './app/grandPrixStandings';
+import type { GrandPrixProgressState } from './app/appTypes';
 import CommandBubble from './components/CommandBubble';
 import { GameMenu } from './components/GameMenu';
 import { Scene } from './components/Scene';
@@ -6,9 +22,7 @@ import {
   CHARACTERS,
   VEHICLES,
   WHEELS,
-  WHEEL_SIZE_HEIGHT_PROFILES,
   cycleIndex,
-  getCatalogItemById,
   getDefaultLoadoutSelection,
 } from './config/garageCatalog';
 import {
@@ -57,133 +71,6 @@ import {
   scheduleAllKnownModelCacheClear,
   scheduleGLTFAssetCacheClear,
 } from './utils/raceAssetMemory';
-
-type GrandPrixProgressState = {
-  grandPrixId: GrandPrixId;
-  currentCourseIndex: number;
-  courseResults: CourseRaceResult[];
-};
-
-const HUMAN_NETWORK_POSE_PUBLISH_INTERVAL_MS = 33;
-const BOT_NETWORK_POSE_PUBLISH_INTERVAL_MS = 100;
-
-const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
-const GRAND_PRIX_POINTS_BY_POSITION = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2, 1, 0] as const;
-const ONLINE_PLAYER_NAME_STORAGE_KEY = 'mk-online-player-name';
-
-function getGrandPrixPointsForPosition(position: number) {
-  if (!Number.isFinite(position) || position <= 0) return 0;
-  return GRAND_PRIX_POINTS_BY_POSITION[position - 1] ?? 0;
-}
-
-async function checkAssetAvailability(url: string) {
-  try {
-    const head = await fetch(url, { method: 'HEAD' });
-    if (head.ok) return true;
-  } catch {
-    // fallback GET handled below
-  }
-
-  try {
-    const get = await fetch(url, { method: 'GET' });
-    return get.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function getMissingAssetUrls(urls: string[]) {
-  const deduplicated = Array.from(new Set(urls));
-  const checks = await Promise.all(
-    deduplicated.map(async (modelPath) => ({
-      modelPath,
-      exists: await checkAssetAvailability(modelPath),
-    })),
-  );
-
-  return checks.filter((entry) => !entry.exists).map((entry) => entry.modelPath);
-}
-
-function getHumanSlots(humanCount: number) {
-  return HUMAN_SLOT_ORDER.slice(0, Math.min(Math.max(humanCount, 1), MAX_LOCAL_HUMANS));
-}
-
-function getHumanDisplayName(slot: HumanPlayerSlotId) {
-  return `Joueur ${HUMAN_SLOT_ORDER.indexOf(slot) + 1}`;
-}
-
-function createRandomLoadoutSelection(): PlayerLoadoutSelection {
-  const character = CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)] ?? CHARACTERS[0];
-  const vehicle = VEHICLES[Math.floor(Math.random() * VEHICLES.length)] ?? VEHICLES[0];
-  const wheel = WHEELS[Math.floor(Math.random() * WHEELS.length)] ?? WHEELS[0];
-
-  return {
-    characterId: character?.id ?? '',
-    vehicleId: vehicle?.id ?? '',
-    wheelId: wheel?.id ?? '',
-  };
-}
-
-function getStoredOnlinePlayerName() {
-  if (typeof window === 'undefined') return '';
-  return window.localStorage.getItem(ONLINE_PLAYER_NAME_STORAGE_KEY) ?? '';
-}
-
-function createResolvedParticipantConfig({
-  id,
-  displayName,
-  kind,
-  controlMode,
-  loadout,
-  humanSlotId,
-  keyBindings,
-}: {
-  id: string;
-  displayName: string;
-  kind: RaceParticipantConfig['kind'];
-  controlMode: RaceParticipantConfig['controlMode'];
-  loadout: PlayerLoadoutSelection;
-  humanSlotId?: HumanPlayerSlotId;
-  keyBindings?: RaceParticipantConfig['keyBindings'];
-}): RaceParticipantConfig {
-  const character = getCatalogItemById(CHARACTERS, loadout.characterId);
-  const vehicle = getCatalogItemById(VEHICLES, loadout.vehicleId);
-  const wheel = getCatalogItemById(WHEELS, loadout.wheelId);
-  const wheelProfile = WHEEL_SIZE_HEIGHT_PROFILES[wheel.size];
-
-  return {
-    id,
-    displayName,
-    kind,
-    humanSlotId,
-    controlMode,
-    loadout,
-    vehicleModel: vehicle.model,
-    vehicleScale: vehicle.scale,
-    characterModel: character.model,
-    characterScale: character.scale,
-    wheelModel: wheel.model,
-    wheelScale: wheel.scale,
-    characterMount: vehicle.characterMount,
-    wheelMounts: vehicle.wheelMounts,
-    chassisLift: wheelProfile.chassisLift,
-    driverLift: wheelProfile.driverLift,
-    spawn: [0, 0, 0],
-    spawnRotation: [0, 0, 0],
-    keyBindings,
-  };
-}
-
-function shuffleParticipants(participants: RaceParticipantConfig[]) {
-  const shuffled = [...participants];
-  for (let i = shuffled.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = shuffled[i];
-    shuffled[i] = shuffled[j];
-    shuffled[j] = tmp;
-  }
-  return shuffled;
-}
 
 export function App() {
   const multiplayerSnapshot = useSyncExternalStore(
@@ -271,6 +158,10 @@ export function App() {
     () => screen === 'race' && (mode === 'online' || (raceConfig?.humanCount ?? 1) > 1),
     [mode, raceConfig?.humanCount, screen],
   );
+  const isOnlineRace = useMemo(
+    () => screen === 'race' && mode === 'online',
+    [mode, screen],
+  );
 
   const selectedGrandPrix =
     selectedGrandPrixId ? GRAND_PRIXS[selectedGrandPrixId] : null;
@@ -288,40 +179,7 @@ export function App() {
   );
 
   const grandPrixStandings = useMemo<GrandPrixStanding[]>(() => {
-    if (!grandPrixProgress || !raceConfig) return [];
-
-    const orderedResults = [...grandPrixProgress.courseResults].sort(
-      (a, b) => a.courseIndex - b.courseIndex,
-    );
-
-    const standings = raceConfig.participants.map((participant) => {
-      const courseScores = orderedResults.map((result) => {
-        const participantEntry = result.ranking.find(
-          (entry) => entry.participantId === participant.id,
-        );
-        const position = participantEntry?.position ?? raceConfig.participants.length;
-        return getGrandPrixPointsForPosition(position);
-      });
-      const totalScore = courseScores.reduce<number>((sum, value) => sum + value, 0);
-      return {
-        participantId: participant.id,
-        displayName: participant.displayName,
-        totalScore,
-        courseScores,
-      };
-    });
-
-    standings.sort((left, right) => {
-      if (left.totalScore !== right.totalScore) {
-        return right.totalScore - left.totalScore;
-      }
-      const leftLast = left.courseScores[left.courseScores.length - 1] ?? Number.MIN_SAFE_INTEGER;
-      const rightLast = right.courseScores[right.courseScores.length - 1] ?? Number.MIN_SAFE_INTEGER;
-      if (leftLast !== rightLast) return rightLast - leftLast;
-      return left.participantId.localeCompare(right.participantId);
-    });
-
-    return standings;
+    return computeGrandPrixStandings({ grandPrixProgress, raceConfig });
   }, [grandPrixProgress, raceConfig]);
 
   const clearOnlineLobbyMembership = useCallback(() => {
@@ -1249,7 +1107,14 @@ export function App() {
             />
           )}
 
-          {screen === 'race' ? <CommandBubble isMultiplayerRace={isMultiplayerRace} /> : null}
+          {screen === 'race' ?
+            <CommandBubble
+              isMultiplayerRace={isMultiplayerRace}
+              isOnlineRace={isOnlineRace}
+              isOnlineRaceHost={Boolean(isCurrentOnlineLobbyHost)}
+              onlineRaceId={currentOnlineRace?.raceId ?? null}
+            />
+          : null}
         </div>
       </div>
     </div>

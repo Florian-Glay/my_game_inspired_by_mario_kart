@@ -1,0 +1,322 @@
+@container mk-game (max-width: 1080px) {
+  .mk-menu-overlay {
+    --mk-panel-shift-submenu: clamp(24px, 4cqw, 44px);
+    /*gap: clamp(8px, 1.4cqw, 14px);
+    padding-inline: clamp(8px, 1.6cqw, 18px);*/
+  }
+
+  .mk-menu-overlay--garage {
+    gap: clamp(8px, 1.2cqw, 12px);
+    padding-inline: clamp(8px, 1.4cqw, 16px);
+  }
+
+  .mk-garage-sections {
+    grid-template-rows: repeat(3, minmax(0, auto));
+  }
+
+  .mk-garage-section {
+    --mk-garage-scroll-size: clamp(42px, 8cqw, 58px);
+    --mk-garage-side-preview-size: clamp(38px, 7cqw, 56px);
+    min-height: clamp(112px, 18cqh, 166px);
+  }
+
+  .mk-garage-section--vehicle {
+    --mk-garage-side-preview-size: clamp(48px, 8cqw, 68px);
+    min-height: clamp(140px, 23cqh, 206px);
+  }
+
+  .mk-garage-preview-wrap,
+  .mk-garage-preview-fallback {
+    height: min(58cqh, 500px);
+    border-radius: 16px;
+  }
+
+  .mk-gp-cups-grid {
+    --mk-gp-cup-size: clamp(68px, max(7.2cqw, 10cqh), 128px);
+    gap: clamp(8px, min(1.8cqw, 1.1cqh), 12px);
+  }
+
+  .mk-gp-courses-row {
+    min-width: 0;
+  }
+
+  .mk-gp-course-image {
+    height: 100%;
+  }
+
+  .mk-gp-course-label {
+    font-size: clamp(24px, 5.4cqw, 38px);
+  }
+
+  .mk-circuit-grid,
+  .mk-character-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mk-main-btn-label {
+    font-size: clamp(20px, 6cqw, 34px);
+  }
+
+  .mk-back-btn {
+    left: 16px;
+    bottom: 14px;
+    min-width: 124px;
+    font-size: 12px;
+  }
+}
+
+@container mk-game (max-width: 900px) {
+  .mk-online-browser-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mk-online-actions {
+    flex-direction: column;
+  }
+}
+
+@container mk-game (max-aspect-ratio: 4 / 3) {
+  .mk-menu-overlay {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mk-menu-panel {
+    width: 100%;
+    max-width: 100%;
+    order: 2;
+  }
+
+  .mk-hero-panel {
+    min-height: 28cqh;
+    order: 1;
+  }
+
+  .mk-menu-overlay--garage .mk-menu-panel {
+    width: 100%;
+    max-width: 100%;
+    order: 1;
+    padding-bottom: clamp(72px, 10cqh, 100px);
+  }
+
+  .mk-menu-overlay--garage .mk-hero-panel {
+    flex: 1 1 auto;
+    order: 2;
+    min-height: 38cqh;
+    padding: 0;
+  }
+}
+
+@container mk-game (max-height: 820px) {
+
+  .mk-menu-panel {
+    gap: 10px;
+    padding-bottom: clamp(58px, 8cqh, 82px);
+  }
+
+  .mk-menu-list {
+    gap: clamp(10px, 1.4cqh, 18px);
+    width: min(100%, 560px);
+  }
+
+  .mk-main-btn {
+    min-height: clamp(58px, 8.6cqh, 94px);
+    padding: 8px 16px;
+  }
+
+  .mk-main-btn-icon {
+    width: clamp(34px, min(3.8cqw, 6.6cqh), 46px);
+    height: clamp(34px, min(3.8cqw, 6.6cqh), 46px);
+  }
+
+  .mk-main-btn-label {
+    font-size: clamp(18px, min(3cqw, 5.2cqh), 36px);
+  }
+
+  .mk-menu-overlay--home .mk-menu-panel,
+  .mk-menu-overlay--home-exit .mk-menu-panel {
+    flex-basis: min(48cqw, 600px);
+    width: min(48cqw, 600px);
+    max-width: min(100%, 600px);
+  }
+
+  .mk-hero-image {
+    width: min(68cqw, 920px);
+    max-height: min(116cqh, 760px);
+    right: clamp(-180px, -8cqw, -18px);
+  }
+
+  .mk-online-form {
+    gap: 10px;
+  }
+
+  .mk-online-input {
+    padding: 12px 14px;
+    font-size: 15px;
+  }
+
+  .mk-online-browser-grid {
+    min-height: 0;
+    gap: 12px;
+  }
+}
+
+@container mk-game (max-height: 680px) {
+  .mk-menu-overlay--home .mk-menu-panel,
+  .mk-menu-overlay--home-exit .mk-menu-panel {
+    flex-basis: min(50cqw, 540px);
+    width: min(50cqw, 540px);
+    max-width: min(100%, 540px);
+  }
+
+  .mk-menu-list {
+    width: min(100%, 500px);
+  }
+
+  .mk-main-btn {
+    min-height: clamp(50px, 7.8cqh, 76px);
+    padding: 7px 14px;
+  }
+
+  .mk-main-btn-icon {
+    width: clamp(30px, min(3.4cqw, 6.2cqh), 40px);
+    height: clamp(30px, min(3.4cqw, 6.2cqh), 40px);
+  }
+
+  .mk-main-btn-label {
+    font-size: clamp(16px, min(2.7cqw, 4.8cqh), 30px);
+  }
+
+  .mk-hero-image {
+    width: min(66cqw, 760px);
+    max-height: min(112cqh, 640px);
+    right: clamp(-140px, -7cqw, -12px);
+  }
+
+  .mk-back-btn {
+    min-width: 110px;
+    padding: 7px 14px;
+    font-size: 11px;
+  }
+}
+
+@container mk-game (max-height: 940px) {
+  .mk-menu-overlay--garage .mk-menu-panel {
+    padding-bottom: clamp(10px, 1.8cqh, 22px);
+  }
+
+  .mk-garage-selector {
+    height: 100%;
+    gap: clamp(6px, 0.9cqh, 10px);
+  }
+
+  .mk-garage-sections {
+    gap: clamp(4px, 0.7cqh, 8px);
+  }
+
+  .mk-garage-section {
+    --mk-garage-scroll-size: clamp(40px, 4.8cqw, 56px);
+    --mk-garage-side-preview-size: clamp(34px, 4.2cqw, 52px);
+    min-height: 0;
+    padding: clamp(2px, 0.4cqh, 6px) 0;
+  }
+
+  .mk-garage-section--vehicle {
+    --mk-garage-side-preview-size: clamp(42px, 4.8cqw, 62px);
+    min-height: 0;
+  }
+
+  .mk-garage-item-card {
+    min-height: 0;
+    padding: clamp(4px, 0.6cqh, 7px);
+  }
+
+  .mk-garage-section--vehicle .mk-garage-item-card {
+    min-height: 0;
+  }
+
+  .mk-garage-item-image {
+    max-height: clamp(46px, 8.2cqh, 70px);
+  }
+
+  .mk-garage-section--vehicle .mk-garage-item-image {
+    max-height: clamp(56px, 9.8cqh, 92px);
+  }
+
+  .mk-gp-cups-grid {
+    --mk-gp-cup-size: clamp(64px, max(7.2cqw, 9.8cqh), 124px);
+  }
+
+  .mk-gp-courses-row {
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .mk-gp-selected-name {
+    font-size: clamp(15px, 2.4cqh, 22px);
+    padding: 4px 10px;
+  }
+}
+
+@container mk-game (max-height: 680px) and (min-aspect-ratio: 4 / 3) {
+  .mk-menu-overlay--garage {
+    gap: clamp(6px, 1cqw, 10px);
+    padding: clamp(6px, 1.1cqh, 10px) clamp(8px, 1.2cqw, 14px);
+  }
+
+  .mk-menu-overlay--garage .mk-menu-panel {
+    padding-bottom: clamp(8px, 1.4cqh, 14px);
+  }
+
+  .mk-hero-panel--garage {
+    padding: clamp(2px, 0.6cqw, 6px);
+  }
+
+  .mk-garage-selector {
+    gap: 6px;
+  }
+
+  .mk-garage-selector h2 {
+    font-size: clamp(20px, 2.2cqw, 36px);
+  }
+
+  .mk-garage-selector p {
+    font-size: clamp(12px, 1.2cqw, 16px);
+  }
+
+  .mk-garage-sections {
+    gap: 4px;
+  }
+
+  .mk-garage-section {
+    padding-block: 4px;
+  }
+
+  .mk-garage-footer {
+    margin-top: auto;
+    padding-top: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-menu-panel,
+  .mk-hero-panel {
+    transition: none;
+  }
+
+  .mk-main-btn,
+  .mk-character-slot,
+  .mk-circuit-btn,
+  .mk-gp-cup-btn,
+  .mk-gp-course-card,
+  .mk-gp-courses-row,
+  .mk-gp-selected-name,
+  .mk-confirm-btn,
+  .mk-garage-section,
+  .mk-garage-confirm-btn,
+  .mk-garage-item-content,
+  .mk-garage-item-track {
+    animation: none !important;
+  }
+}
+

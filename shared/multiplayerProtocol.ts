@@ -228,6 +228,11 @@ export type MultiplayerClientMessage =
       type: 'race:event';
       raceId: string;
       event: MultiplayerRaceEvent;
+    }
+  | {
+      type: 'race:host-command';
+      raceId: string;
+      command: 'gmp';
     };
 
 export type MultiplayerServerMessage =
@@ -255,6 +260,7 @@ export const MULTIPLAYER_START_COUNTDOWN_MS = 3_000;
 export const MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS = 10_000;
 export const MULTIPLAYER_TRACK_COIN_RESPAWN_MS = 10_000;
 export const MULTIPLAYER_THROWABLE_MIN_TTL_MS = 250;
+export const MULTIPLAYER_HOST_COMMAND_GMP_ADVANCE_DELAY_MS = 3_000;
 
 export function isMultiplayerBotSessionId(sessionId: string) {
   return sessionId.startsWith(MULTIPLAYER_BOT_SESSION_ID_PREFIX);

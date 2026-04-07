@@ -1,16 +1,50 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { gameMode } from '../state/gamemode';
 import { carPosition, carRotationY } from '../state/car';
 import { commandInputActive } from '../state/commandInput';
+import { MULTIPLAYER_HOST_COMMAND_GMP_ADVANCE_DELAY_MS } from '../../shared/multiplayerProtocol';
+import { sendServerRaceHostCommand } from '../state/multiplayerClient';
 
 type CommandBubbleProps = {
   isMultiplayerRace?: boolean;
+  isOnlineRace?: boolean;
+  isOnlineRaceHost?: boolean;
+  onlineRaceId?: string | null;
 };
 
-export default function CommandBubble({ isMultiplayerRace = false }: CommandBubbleProps) {
+export default function CommandBubble({
+  isMultiplayerRace = false,
+  isOnlineRace = false,
+  isOnlineRaceHost = false,
+  onlineRaceId = null,
+}: CommandBubbleProps) {
   const [input, setInput] = useState('');
   const [message, setMessage] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const pendingGmpRaceIdRef = useRef<string | null>(null);
+  const pendingGmpTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pendingGmpTimeoutRef.current !== null) {
+        window.clearTimeout(pendingGmpTimeoutRef.current);
+        pendingGmpTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const pendingRaceId = pendingGmpRaceIdRef.current;
+    if (!pendingRaceId || !onlineRaceId) return;
+    if (onlineRaceId === pendingRaceId) return;
+
+    pendingGmpRaceIdRef.current = null;
+    if (pendingGmpTimeoutRef.current !== null) {
+      window.clearTimeout(pendingGmpTimeoutRef.current);
+      pendingGmpTimeoutRef.current = null;
+    }
+    setMessage('Course suivante lancee');
+  }, [onlineRaceId]);
 
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -32,6 +66,28 @@ export default function CommandBubble({ isMultiplayerRace = false }: CommandBubb
       const yawRad = carRotationY.current;
       console.log(`{ position: [${Number(carPosition.x.toFixed(3))}, ${Number(carPosition.y.toFixed(3))}, ${Number(carPosition.z.toFixed(3))}], rotation: [0, ${Number(yawRad.toFixed(3))}, 0] },`);
       setMessage('Coordonnees affichees en console');
+    } else if (cmd === 'gmp') {
+      if (!isOnlineRace) {
+        setMessage('Commande gmp disponible uniquement en course online');
+      } else if (!isOnlineRaceHost) {
+        setMessage('Seul le host peut utiliser gmp');
+      } else if (!onlineRaceId) {
+        setMessage('Course reseau introuvable');
+      } else {
+        pendingGmpRaceIdRef.current = onlineRaceId;
+        if (pendingGmpTimeoutRef.current !== null) {
+          window.clearTimeout(pendingGmpTimeoutRef.current);
+        }
+        pendingGmpTimeoutRef.current = window.setTimeout(() => {
+          if (!pendingGmpRaceIdRef.current) return;
+          pendingGmpRaceIdRef.current = null;
+          pendingGmpTimeoutRef.current = null;
+          setMessage('Aucun changement detecte. Redemarre/deploie le serveur multiplayer avec le support gmp.');
+        }, MULTIPLAYER_HOST_COMMAND_GMP_ADVANCE_DELAY_MS + 2500);
+
+        sendServerRaceHostCommand(onlineRaceId, 'gmp');
+        setMessage(`Commande gmp envoyee. Passage a la suivante dans ${Math.floor(MULTIPLAYER_HOST_COMMAND_GMP_ADVANCE_DELAY_MS / 1000)}s...`);
+      }
     } else if (cmd.length > 0) {
       setMessage('Commande inconnue');
     }

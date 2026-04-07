@@ -1,2 +1,12 @@
 set VITE_MULTIPLAYER_WS_URL=wss://my-game-inspired-by-mario-kart.onrender.com/ws
 npm run dev
+
+
+# terminal 1
+npm run server:start
+
+# terminal 2
+Remove-Item Env:VITE_MULTIPLAYER_WS_URL -ErrorAction SilentlyContinue
+npm run dev
+$env:VITE_MULTIPLAYER_WS_URL="wss://my-game-inspired-by-mario-kart.onrender.com/ws"
+npm run dev

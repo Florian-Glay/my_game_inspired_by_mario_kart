@@ -1,13 +1,30 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { CHARACTERS, VEHICLES, WHEELS } from '../../src/config/garageCatalog.ts';
 import { CIRCUITS, GRAND_PRIXS } from '../../src/config/raceCatalog.ts';
 import {
+  HOST,
+  MAX_WS_PAYLOAD_BYTES,
+  MULTIPLAYER_ONLINE_BOT_TARGET,
+  PORT,
+  RACE_SNAPSHOT_INTERVAL_MS,
+  WS_PATH,
+} from './multiplayer/config.ts';
+import type { LobbyStateInternal, RaceStateInternal, SessionState } from './multiplayer/types.ts';
+import {
+  createBotLoadout,
+  createInitialItemState,
+  createInitialLapProgress,
+  isBotSessionId,
+  isOriginAllowed,
+  sanitizeDisplayName,
+  sanitizeLoadout,
+} from './multiplayer/helpers.ts';
+import {
   MULTIPLAYER_BOT_SESSION_ID_PREFIX,
+  MULTIPLAYER_HOST_COMMAND_GMP_ADVANCE_DELAY_MS,
   MULTIPLAYER_MAX_PLAYERS,
   MULTIPLAYER_OBJECT_CRATE_RESPAWN_MS,
   MULTIPLAYER_RECONNECT_GRACE_MS,
-  isMultiplayerBotSessionId,
   MULTIPLAYER_START_COUNTDOWN_MS,
   MULTIPLAYER_START_WAIT_BEFORE_COUNTDOWN_MS,
   MULTIPLAYER_THROWABLE_MIN_TTL_MS,
@@ -16,7 +33,6 @@ import {
   type MultiplayerGrandPrixId,
   type MultiplayerLobbyPlayerState,
   type MultiplayerLobbyState,
-  type MultiplayerParticipantItemState,
   type MultiplayerPlayerLoadout,
   type MultiplayerRaceEvent,
   type MultiplayerRaceParticipantState,
@@ -26,131 +42,12 @@ import {
   type MultiplayerThrowableObjectState,
 } from '../../shared/multiplayerProtocol.ts';
 
-type SessionState = {
-  sessionId: string;
-  resumeToken: string;
-  socket: WebSocket | null;
-  currentLobbyId: string | null;
-  disconnectTimer: NodeJS.Timeout | null;
-};
-
-type LobbyStateInternal = {
-  id: string;
-  code: string;
-  hostSessionId: string;
-  createdAt: number;
-  updatedAt: number;
-  status: MultiplayerLobbyState['status'];
-  autoStartAt: number | null;
-  maxPlayers: number;
-  players: Map<string, MultiplayerLobbyPlayerState>;
-  raceId: string | null;
-};
-
-type RaceStateInternal = {
-  raceId: string;
-  lobbyId: string;
-  status: MultiplayerRaceState['status'];
-  grandPrixId: MultiplayerGrandPrixId;
-  cc: MultiplayerRaceState['cc'];
-  courseId: string;
-  courseLabel: string;
-  circuitId: string;
-  courseIndex: number;
-  totalCourses: number;
-  countdownStartAt: number | null;
-  startedAt: number | null;
-  participants: Map<string, MultiplayerRaceParticipantState>;
-  sharedState: MultiplayerRaceState['sharedState'];
-  countdownTimer: NodeJS.Timeout | null;
-  snapshotTimer: NodeJS.Timeout | null;
-  throwableTimers: Map<string, NodeJS.Timeout>;
-  objectCrateRespawnTimers: Map<string, NodeJS.Timeout>;
-  trackCoinRespawnTimers: Map<string, NodeJS.Timeout>;
-  resultAckSessionIds: Set<string>;
-};
-
-const PORT = Number.parseInt(process.env.MULTIPLAYER_PORT ?? process.env.PORT ?? '8787', 10);
-const HOST = process.env.MULTIPLAYER_HOST ?? '0.0.0.0';
-const WS_PATH = process.env.MULTIPLAYER_WS_PATH ?? '/ws';
-const MAX_WS_PAYLOAD_BYTES = Number.parseInt(process.env.MULTIPLAYER_MAX_WS_PAYLOAD_BYTES ?? '65536', 10);
-const RACE_SNAPSHOT_INTERVAL_MS = Number.parseInt(
-  process.env.MULTIPLAYER_RACE_SNAPSHOT_INTERVAL_MS ?? '33',
-  10,
-);
-const ALLOWED_ORIGINS = (process.env.MULTIPLAYER_ALLOWED_ORIGINS ?? '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter((origin) => origin.length > 0);
-const MULTIPLAYER_ONLINE_BOT_TARGET = Math.max(
-  0,
-  Math.min(
-    MULTIPLAYER_MAX_PLAYERS,
-    Number.parseInt(process.env.MULTIPLAYER_ONLINE_BOT_TARGET ?? `${MULTIPLAYER_MAX_PLAYERS}`, 10) || 0,
-  ),
-);
-
 const sessionsById = new Map<string, SessionState>();
 const sessionIdByResumeToken = new Map<string, string>();
 const sessionIdBySocket = new Map<WebSocket, string>();
 const lobbiesById = new Map<string, LobbyStateInternal>();
 const racesById = new Map<string, RaceStateInternal>();
 const lobbyAutoStartTimers = new Map<string, NodeJS.Timeout>();
-
-function isOriginAllowed(originHeader: string | undefined) {
-  if (ALLOWED_ORIGINS.length === 0) return true;
-  if (!originHeader) return false;
-  return ALLOWED_ORIGINS.includes(originHeader);
-}
-
-function sanitizeDisplayName(value: string) {
-  const trimmed = value.trim().slice(0, 24);
-  return trimmed.length > 0 ? trimmed : 'Pilote';
-}
-
-function sanitizeLoadout(loadout: MultiplayerPlayerLoadout): MultiplayerPlayerLoadout {
-  return {
-    characterId: loadout.characterId,
-    vehicleId: loadout.vehicleId,
-    wheelId: loadout.wheelId,
-  };
-}
-
-function isBotSessionId(sessionId: string) {
-  return isMultiplayerBotSessionId(sessionId);
-}
-
-function createBotLoadout(botIndex: number): MultiplayerPlayerLoadout {
-  const character = CHARACTERS[botIndex % CHARACTERS.length] ?? CHARACTERS[0];
-  const vehicle = VEHICLES[(botIndex * 3) % VEHICLES.length] ?? VEHICLES[0];
-  const wheel = WHEELS[(botIndex * 5) % WHEELS.length] ?? WHEELS[0];
-
-  return sanitizeLoadout({
-    characterId: character?.id ?? '',
-    vehicleId: vehicle?.id ?? '',
-    wheelId: wheel?.id ?? '',
-  });
-}
-
-function createInitialLapProgress(): MultiplayerRaceParticipantState['lapProgress'] {
-  return {
-    lap: 1,
-    checkpoint: false,
-    finished: false,
-    finishTimestamp: null,
-  };
-}
-
-function createInitialItemState(): MultiplayerParticipantItemState {
-  return {
-    heldObject: 0,
-    objectCharges: 0,
-    coins: 0,
-    thunderDebuffUntilTimestampMs: 0,
-    bulletBillUntilTimestampMs: 0,
-    stunUntilTimestampMs: 0,
-  };
-}
 
 function cloneLobbyPlayer(player: MultiplayerLobbyPlayerState): MultiplayerLobbyPlayerState {
   return {
@@ -376,6 +273,11 @@ function removeRace(raceId: string | null) {
   race.objectCrateRespawnTimers.clear();
   race.trackCoinRespawnTimers.forEach((timer) => clearTimeout(timer));
   race.trackCoinRespawnTimers.clear();
+  if (race.hostCommandAdvanceTimer) {
+    clearTimeout(race.hostCommandAdvanceTimer);
+    race.hostCommandAdvanceTimer = null;
+  }
+  race.hostCommandAdvancePending = false;
   racesById.delete(raceId);
 }
 
@@ -470,6 +372,8 @@ function createRaceForLobbyCourse(options: {
     objectCrateRespawnTimers: new Map<string, NodeJS.Timeout>(),
     trackCoinRespawnTimers: new Map<string, NodeJS.Timeout>(),
     resultAckSessionIds: new Set<string>(),
+    hostCommandAdvanceTimer: null,
+    hostCommandAdvancePending: false,
   } satisfies RaceStateInternal;
 }
 
@@ -479,15 +383,8 @@ function getResultAcknowledgementRequiredSessionIds(race: RaceStateInternal) {
     .map((participant) => participant.sessionId);
 }
 
-function maybeAdvanceRaceAfterResultAcknowledgements(race: RaceStateInternal) {
-  if (race.status !== 'finished') return false;
+function advanceRaceToNextCourse(race: RaceStateInternal) {
   if (race.courseIndex + 1 >= race.totalCourses) return false;
-
-  const requiredSessionIds = getResultAcknowledgementRequiredSessionIds(race);
-  const everyoneAcknowledged = requiredSessionIds.every((sessionId) =>
-    race.resultAckSessionIds.has(sessionId),
-  );
-  if (!everyoneAcknowledged) return false;
 
   const lobby = lobbiesById.get(race.lobbyId);
   if (!lobby) return false;
@@ -514,6 +411,43 @@ function maybeAdvanceRaceAfterResultAcknowledgements(race: RaceStateInternal) {
   lobby.updatedAt = Date.now();
   removeRace(race.raceId);
   broadcastSnapshotsForLobby(lobby.id);
+  return true;
+}
+
+function maybeAdvanceRaceAfterResultAcknowledgements(race: RaceStateInternal) {
+  if (race.status !== 'finished') return false;
+  if (race.hostCommandAdvancePending) return false;
+  if (race.courseIndex + 1 >= race.totalCourses) return false;
+
+  const requiredSessionIds = getResultAcknowledgementRequiredSessionIds(race);
+  const everyoneAcknowledged = requiredSessionIds.every((sessionId) =>
+    race.resultAckSessionIds.has(sessionId),
+  );
+  if (!everyoneAcknowledged) return false;
+
+  return advanceRaceToNextCourse(race);
+}
+
+function scheduleRaceAdvanceAfterDelay(race: RaceStateInternal, delayMs: number) {
+  if (race.status !== 'finished') return false;
+  if (race.courseIndex + 1 >= race.totalCourses) return false;
+
+  if (race.hostCommandAdvancePending) return true;
+  race.hostCommandAdvancePending = true;
+
+  if (race.hostCommandAdvanceTimer) {
+    clearTimeout(race.hostCommandAdvanceTimer);
+  }
+  race.hostCommandAdvanceTimer = setTimeout(() => {
+    const refreshedRace = racesById.get(race.raceId);
+    if (!refreshedRace) return;
+    refreshedRace.hostCommandAdvanceTimer = null;
+    refreshedRace.hostCommandAdvancePending = false;
+
+    if (advanceRaceToNextCourse(refreshedRace)) return;
+    flushRaceSnapshotBroadcast(refreshedRace);
+  }, Math.max(0, delayMs));
+
   return true;
 }
 
@@ -578,7 +512,12 @@ function upsertLobbyPlayer(
 function maybeMarkRaceFinished(race: RaceStateInternal) {
   if (race.status !== 'running') return false;
 
-  const everyoneFinishedOrDisconnected = Array.from(race.participants.values()).every(
+  const nonBotParticipants = Array.from(race.participants.values()).filter(
+    (participant) => !isBotSessionId(participant.sessionId),
+  );
+  const participantsToTrack =
+    nonBotParticipants.length > 0 ? nonBotParticipants : Array.from(race.participants.values());
+  const everyoneFinishedOrDisconnected = participantsToTrack.every(
     (participant) => participant.lapProgress.finished || !participant.connected,
   );
   if (!everyoneFinishedOrDisconnected) return false;
@@ -593,6 +532,8 @@ function maybeMarkRaceFinished(race: RaceStateInternal) {
     lobby.autoStartAt = null;
     lobby.updatedAt = Date.now();
   }
+
+  scheduleRaceAdvanceAfterDelay(race, MULTIPLAYER_HOST_COMMAND_GMP_ADVANCE_DELAY_MS);
 
   return true;
 }
@@ -833,6 +774,52 @@ function handleRaceResultAcknowledgement(session: SessionState, raceId: string) 
 
   race.resultAckSessionIds.add(session.sessionId);
   if (maybeAdvanceRaceAfterResultAcknowledgements(race)) return;
+
+  flushRaceSnapshotBroadcast(race);
+}
+
+function handleRaceHostCommand(
+  socket: WebSocket,
+  session: SessionState,
+  raceId: string,
+  command: 'gmp',
+) {
+  const race = racesById.get(raceId);
+  if (!race) return;
+
+  const lobby = lobbiesById.get(race.lobbyId);
+  if (!lobby) return;
+  if (lobby.hostSessionId !== session.sessionId) {
+    sendError(socket, 'Seul le host peut utiliser cette commande.');
+    return;
+  }
+
+  if (command !== 'gmp') return;
+  if (race.courseIndex + 1 >= race.totalCourses) {
+    sendError(socket, 'Aucune course suivante disponible pour ce Grand Prix.');
+    return;
+  }
+
+  if (race.status !== 'running' && race.status !== 'countdown' && race.status !== 'finished') {
+    sendError(socket, 'La commande gmp est disponible uniquement pendant la course.');
+    return;
+  }
+
+  if (race.countdownTimer) {
+    clearTimeout(race.countdownTimer);
+    race.countdownTimer = null;
+  }
+
+  race.status = 'finished';
+  race.countdownStartAt = null;
+  race.startedAt ??= Date.now();
+  race.resultAckSessionIds.clear();
+
+  lobby.status = 'racing';
+  lobby.autoStartAt = null;
+  lobby.updatedAt = Date.now();
+
+  scheduleRaceAdvanceAfterDelay(race, MULTIPLAYER_HOST_COMMAND_GMP_ADVANCE_DELAY_MS);
 
   flushRaceSnapshotBroadcast(race);
 }
@@ -1148,6 +1135,9 @@ function handleSocketMessage(socket: WebSocket, rawMessage: RawData) {
     }
     case 'race:event':
       handleRaceEvent(session, parsedMessage.raceId, parsedMessage.event);
+      return;
+    case 'race:host-command':
+      handleRaceHostCommand(socket, session, parsedMessage.raceId, parsedMessage.command);
       return;
     default:
       return;
