@@ -80,6 +80,9 @@ type RendererPerformanceSample = {
   triangles: number;
   lines: number;
   points: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  pixelRatio: number;
 };
 
 type PerformanceOverlayStats = {
@@ -96,6 +99,9 @@ type PerformanceOverlayStats = {
   gpuTriangles: number | null;
   gpuLines: number | null;
   gpuPoints: number | null;
+  canvasWidth: number | null;
+  canvasHeight: number | null;
+  canvasPixelRatio: number | null;
 };
 
 type BrowserPerformanceMemory = {
@@ -164,6 +170,9 @@ export function App() {
     gpuTriangles: null,
     gpuLines: null,
     gpuPoints: null,
+    canvasWidth: null,
+    canvasHeight: null,
+    canvasPixelRatio: null,
   });
   const loadedRaceAssetUrlsRef = useRef<Set<string>>(new Set());
   const pendingCacheClearCancelRef = useRef<(() => void) | null>(null);
@@ -252,6 +261,9 @@ export function App() {
       gpuTriangles: sample.triangles,
       gpuLines: sample.lines,
       gpuPoints: sample.points,
+      canvasWidth: sample.canvasWidth,
+      canvasHeight: sample.canvasHeight,
+      canvasPixelRatio: sample.pixelRatio,
     }));
   }, []);
 
@@ -1270,6 +1282,9 @@ export function App() {
                 </div>
                 <div>
                   Mem. graphique: tex {formatStatInteger(performanceOverlayStats.gpuTextures)} / geo {formatStatInteger(performanceOverlayStats.gpuGeometries)} / prog {formatStatInteger(performanceOverlayStats.gpuPrograms)}
+                </div>
+                <div>
+                  Canvas: {formatStatInteger(performanceOverlayStats.canvasWidth)}x{formatStatInteger(performanceOverlayStats.canvasHeight)} @ DPR {formatStatNumber(performanceOverlayStats.canvasPixelRatio, 2)}
                 </div>
                 <div>
                   Draw calls: {formatStatInteger(performanceOverlayStats.gpuDrawCalls)}

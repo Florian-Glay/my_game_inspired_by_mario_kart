@@ -15,7 +15,7 @@ export type RacePerformanceProfile = {
 };
 
 export const PERF_PROFILE: RacePerformanceProfile = {
-  dpr: [1, 1.25],
+  dpr: [0.75, 1],
   cameraNear: 0.1,
   cameraFar: 2000,
   clipPlaneOffset: 0.25,

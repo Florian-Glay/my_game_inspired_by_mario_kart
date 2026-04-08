@@ -45,6 +45,10 @@ type RendererStatsProbeProps = {
   onSample: (sample: RendererPerformanceSample) => void;
 };
 
+type DprTier = 'tiny' | 'medium' | 'large';
+
+const DPR_AREA_HYSTERESIS = 90_000;
+
 export function SceneAssetGate({ urls, onReady }: SceneAssetGateProps) {
   useGLTF(urls);
 
@@ -156,6 +160,25 @@ export function RaceEnvironmentEnforcer() {
 export function AdaptiveViewportPerformance() {
   const { size, setDpr } = useThree();
   const lastDprRef = useRef<number | null>(null);
+  const lastTierRef = useRef<DprTier | null>(null);
+
+  const resolveTier = (viewportArea: number): DprTier => {
+    const lastTier = lastTierRef.current;
+    if (lastTier === 'tiny') {
+      return viewportArea > TINY_VIEWPORT_AREA + DPR_AREA_HYSTERESIS ? 'medium' : 'tiny';
+    }
+    if (lastTier === 'medium') {
+      if (viewportArea <= TINY_VIEWPORT_AREA - DPR_AREA_HYSTERESIS) return 'tiny';
+      if (viewportArea > MEDIUM_VIEWPORT_AREA + DPR_AREA_HYSTERESIS) return 'large';
+      return 'medium';
+    }
+    if (lastTier === 'large') {
+      return viewportArea <= MEDIUM_VIEWPORT_AREA - DPR_AREA_HYSTERESIS ? 'medium' : 'large';
+    }
+    if (viewportArea <= TINY_VIEWPORT_AREA) return 'tiny';
+    if (viewportArea <= MEDIUM_VIEWPORT_AREA) return 'medium';
+    return 'large';
+  };
 
   useEffect(() => {
     const width = Math.max(1, size.width);
@@ -163,12 +186,15 @@ export function AdaptiveViewportPerformance() {
     const viewportArea = width * height;
     const minDpr = PERF_PROFILE.dpr[0];
     const maxDpr = PERF_PROFILE.dpr[1];
+    const mediumDpr = Math.max(minDpr, Math.min(maxDpr, minDpr + (maxDpr - minDpr) * 0.55));
+    const tier = resolveTier(viewportArea);
+    lastTierRef.current = tier;
 
     const targetDpr =
-      viewportArea <= TINY_VIEWPORT_AREA ?
+      tier === 'tiny' ?
         minDpr
-      : viewportArea <= MEDIUM_VIEWPORT_AREA ?
-        Math.max(minDpr, Math.min(maxDpr, 0.65))
+      : tier === 'medium' ?
+        mediumDpr
       : maxDpr;
 
     if (lastDprRef.current !== targetDpr) {
@@ -201,6 +227,7 @@ export function RendererStatsProbe({
     lastSampleAtMsRef.current = nowMs;
 
     const programCount = Array.isArray(gl.info.programs) ? gl.info.programs.length : 0;
+    const glContext = gl.getContext();
     onSample({
       geometries: gl.info.memory.geometries,
       textures: gl.info.memory.textures,
@@ -209,6 +236,9 @@ export function RendererStatsProbe({
       triangles: gl.info.render.triangles,
       lines: gl.info.render.lines,
       points: gl.info.render.points,
+      canvasWidth: glContext.drawingBufferWidth,
+      canvasHeight: glContext.drawingBufferHeight,
+      pixelRatio: gl.getPixelRatio(),
     });
   });
 

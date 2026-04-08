@@ -41,6 +41,9 @@ export type RendererPerformanceSample = {
   triangles: number;
   lines: number;
   points: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  pixelRatio: number;
 };
 
 export type WaypointTransform = {
