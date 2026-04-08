@@ -72,6 +72,57 @@ import {
   scheduleGLTFAssetCacheClear,
 } from './utils/raceAssetMemory';
 
+type RendererPerformanceSample = {
+  geometries: number;
+  textures: number;
+  programs: number;
+  calls: number;
+  triangles: number;
+  lines: number;
+  points: number;
+};
+
+type PerformanceOverlayStats = {
+  fps: number | null;
+  jsHeapUsedMb: number | null;
+  jsHeapTotalMb: number | null;
+  jsHeapLimitMb: number | null;
+  jsHeapUsagePercent: number | null;
+  deviceRamGb: number | null;
+  gpuGeometries: number | null;
+  gpuTextures: number | null;
+  gpuPrograms: number | null;
+  gpuDrawCalls: number | null;
+  gpuTriangles: number | null;
+  gpuLines: number | null;
+  gpuPoints: number | null;
+};
+
+type BrowserPerformanceMemory = {
+  usedJSHeapSize: number;
+  totalJSHeapSize: number;
+  jsHeapSizeLimit: number;
+};
+
+const MB_IN_BYTES = 1024 * 1024;
+const PERFORMANCE_OVERLAY_SAMPLE_INTERVAL_MS = 500;
+
+function readDeviceRamGb(): number | null {
+  if (typeof navigator === 'undefined') return null;
+  const value = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function formatStatNumber(value: number | null, digits = 1): string {
+  if (value === null || !Number.isFinite(value)) return '--';
+  return value.toFixed(digits);
+}
+
+function formatStatInteger(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '--';
+  return `${Math.round(value)}`;
+}
+
 export function App() {
   const multiplayerSnapshot = useSyncExternalStore(
     subscribeToMultiplayerState,
@@ -98,6 +149,22 @@ export function App() {
   });
   const [selectedOnlineLobbyId, setSelectedOnlineLobbyId] = useState<string | null>(null);
   const [onlineLobbyCodeInput, setOnlineLobbyCodeInput] = useState('');
+  const [isPerformanceOverlayEnabled, setIsPerformanceOverlayEnabled] = useState(false);
+  const [performanceOverlayStats, setPerformanceOverlayStats] = useState<PerformanceOverlayStats>({
+    fps: null,
+    jsHeapUsedMb: null,
+    jsHeapTotalMb: null,
+    jsHeapLimitMb: null,
+    jsHeapUsagePercent: null,
+    deviceRamGb: readDeviceRamGb(),
+    gpuGeometries: null,
+    gpuTextures: null,
+    gpuPrograms: null,
+    gpuDrawCalls: null,
+    gpuTriangles: null,
+    gpuLines: null,
+    gpuPoints: null,
+  });
   const loadedRaceAssetUrlsRef = useRef<Set<string>>(new Set());
   const pendingCacheClearCancelRef = useRef<(() => void) | null>(null);
   const handledOnlineRaceTokenRef = useRef<string | null>(null);
@@ -125,6 +192,67 @@ export function App() {
 
   useEffect(() => {
     connectMultiplayerClient();
+  }, []);
+
+  useEffect(() => {
+    if (screen !== 'race' || !isPerformanceOverlayEnabled) return;
+
+    let animationFrameId = 0;
+    let frameCount = 0;
+    let lastSampleAt = performance.now();
+
+    const tick = () => {
+      frameCount += 1;
+      const now = performance.now();
+      const elapsedMs = now - lastSampleAt;
+
+      if (elapsedMs >= PERFORMANCE_OVERLAY_SAMPLE_INTERVAL_MS) {
+        const nextFps = (frameCount * 1000) / elapsedMs;
+        frameCount = 0;
+        lastSampleAt = now;
+
+        const memory = (performance as Performance & { memory?: BrowserPerformanceMemory }).memory;
+        const usedJsHeapMb =
+          memory && Number.isFinite(memory.usedJSHeapSize) ? memory.usedJSHeapSize / MB_IN_BYTES : null;
+        const totalJsHeapMb =
+          memory && Number.isFinite(memory.totalJSHeapSize) ? memory.totalJSHeapSize / MB_IN_BYTES : null;
+        const jsHeapLimitMb =
+          memory && Number.isFinite(memory.jsHeapSizeLimit) ? memory.jsHeapSizeLimit / MB_IN_BYTES : null;
+        const jsHeapUsagePercent =
+          usedJsHeapMb !== null && jsHeapLimitMb && jsHeapLimitMb > 0 ?
+            (usedJsHeapMb / jsHeapLimitMb) * 100
+          : null;
+
+        setPerformanceOverlayStats((current) => ({
+          ...current,
+          fps: nextFps,
+          jsHeapUsedMb: usedJsHeapMb,
+          jsHeapTotalMb: totalJsHeapMb,
+          jsHeapLimitMb,
+          jsHeapUsagePercent,
+        }));
+      }
+
+      animationFrameId = window.requestAnimationFrame(tick);
+    };
+
+    animationFrameId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+    };
+  }, [isPerformanceOverlayEnabled, screen]);
+
+  const handleRendererPerformanceSample = useCallback((sample: RendererPerformanceSample) => {
+    setPerformanceOverlayStats((current) => ({
+      ...current,
+      gpuGeometries: sample.geometries,
+      gpuTextures: sample.textures,
+      gpuPrograms: sample.programs,
+      gpuDrawCalls: sample.calls,
+      gpuTriangles: sample.triangles,
+      gpuLines: sample.lines,
+      gpuPoints: sample.points,
+    }));
   }, []);
 
   const activeLoadout = humanLoadoutsBySlot[activeHumanSlot] ?? null;
@@ -1041,6 +1169,7 @@ export function App() {
         raceConfig.circuit,
       ].join('|')
     : 'no-race';
+  const showPerformanceOverlay = screen === 'race' && isPerformanceOverlayEnabled;
 
   return (
     <div className="mk-aspect-shell">
@@ -1062,6 +1191,9 @@ export function App() {
               onNetworkLocalPose={handleNetworkLocalPose}
               onNetworkRaceEvent={handleNetworkRaceEvent}
               onNetworkCourseResultValidated={handleNetworkCourseResultValidated}
+              onRendererPerformanceSample={
+                showPerformanceOverlay ? handleRendererPerformanceSample : undefined
+              }
             />
           ) : (
             <GameMenu
@@ -1113,8 +1245,41 @@ export function App() {
               isOnlineRace={isOnlineRace}
               isOnlineRaceHost={Boolean(isCurrentOnlineLobbyHost)}
               onlineRaceId={currentOnlineRace?.raceId ?? null}
+              onInfoOverlayChange={setIsPerformanceOverlayEnabled}
             />
           : null}
+
+          {showPerformanceOverlay ? (
+            <div className="pointer-events-none absolute left-1/2 top-[clamp(0.5rem,1.2cqh,0.9rem)] z-70 w-[min(94cqw,720px)] -translate-x-1/2 rounded-lg border border-white/35 bg-[#061937]/76 px-[clamp(0.6rem,1.4cqw,1rem)] py-[clamp(0.45rem,1cqh,0.7rem)] text-white backdrop-blur-sm">
+              <div className="text-center text-[clamp(0.62rem,1.05cqh,0.74rem)] font-black uppercase tracking-[0.12em] text-white/85">
+                Info performance
+              </div>
+              <div className="mt-[clamp(0.25rem,0.7cqh,0.4rem)] grid grid-cols-2 gap-x-[clamp(0.5rem,1.2cqw,0.9rem)] gap-y-[clamp(0.15rem,0.55cqh,0.3rem)] text-[clamp(0.62rem,1.05cqh,0.8rem)] font-semibold">
+                <div>FPS: {formatStatInteger(performanceOverlayStats.fps)}</div>
+                <div>
+                  RAM appareil: {performanceOverlayStats.deviceRamGb !== null ? `${formatStatInteger(performanceOverlayStats.deviceRamGb)} Go` : '--'}
+                </div>
+                <div>
+                  RAM jeu (heap): {formatStatNumber(performanceOverlayStats.jsHeapUsedMb)} / {formatStatNumber(performanceOverlayStats.jsHeapTotalMb)} Mo
+                </div>
+                <div>
+                  Charge RAM jeu: {formatStatNumber(performanceOverlayStats.jsHeapUsagePercent)}%
+                </div>
+                <div>
+                  Limite heap: {formatStatNumber(performanceOverlayStats.jsHeapLimitMb)} Mo
+                </div>
+                <div>
+                  Mem. graphique: tex {formatStatInteger(performanceOverlayStats.gpuTextures)} / geo {formatStatInteger(performanceOverlayStats.gpuGeometries)} / prog {formatStatInteger(performanceOverlayStats.gpuPrograms)}
+                </div>
+                <div>
+                  Draw calls: {formatStatInteger(performanceOverlayStats.gpuDrawCalls)}
+                </div>
+                <div>
+                  Triangles/frame: {formatStatInteger(performanceOverlayStats.gpuTriangles)}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

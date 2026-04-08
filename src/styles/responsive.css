@@ -170,7 +170,7 @@
   }
 
   .mk-menu-list {
-    width: min(100%, 500px);
+    width: min(75%, 500px);
   }
 
   .mk-main-btn {

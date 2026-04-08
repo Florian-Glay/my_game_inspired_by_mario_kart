@@ -30,6 +30,17 @@ export type SceneProps = {
   ) => void;
   onNetworkRaceEvent?: (raceId: string, event: MultiplayerRaceEvent) => void;
   onNetworkCourseResultValidated?: (raceId: string) => void;
+  onRendererPerformanceSample?: (sample: RendererPerformanceSample) => void;
+};
+
+export type RendererPerformanceSample = {
+  geometries: number;
+  textures: number;
+  programs: number;
+  calls: number;
+  triangles: number;
+  lines: number;
+  points: number;
 };
 
 export type WaypointTransform = {

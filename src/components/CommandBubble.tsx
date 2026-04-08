@@ -10,6 +10,7 @@ type CommandBubbleProps = {
   isOnlineRace?: boolean;
   isOnlineRaceHost?: boolean;
   onlineRaceId?: string | null;
+  onInfoOverlayChange?: (enabled: boolean) => void;
 };
 
 export default function CommandBubble({
@@ -17,6 +18,7 @@ export default function CommandBubble({
   isOnlineRace = false,
   isOnlineRaceHost = false,
   onlineRaceId = null,
+  onInfoOverlayChange,
 }: CommandBubbleProps) {
   const [input, setInput] = useState('');
   const [message, setMessage] = useState('');
@@ -88,6 +90,12 @@ export default function CommandBubble({
         sendServerRaceHostCommand(onlineRaceId, 'gmp');
         setMessage(`Commande gmp envoyee. Passage a la suivante dans ${Math.floor(MULTIPLAYER_HOST_COMMAND_GMP_ADVANCE_DELAY_MS / 1000)}s...`);
       }
+    } else if (cmd === 'info on') {
+      onInfoOverlayChange?.(true);
+      setMessage('Overlay info active');
+    } else if (cmd === 'info off') {
+      onInfoOverlayChange?.(false);
+      setMessage('Overlay info desactive');
     } else if (cmd.length > 0) {
       setMessage('Commande inconnue');
     }

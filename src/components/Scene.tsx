@@ -44,6 +44,7 @@ import {
   MovingClouds,
   PhysicsWarmupGate,
   RaceEnvironmentEnforcer,
+  RendererStatsProbe,
   SceneAssetGate,
 } from './scene/sceneEnvironment';
 import {
@@ -177,6 +178,7 @@ export function Scene({
   onNetworkLocalPose,
   onNetworkRaceEvent,
   onNetworkCourseResultValidated,
+  onRendererPerformanceSample,
 }: SceneProps) {
   const circuit = CIRCUITS[raceConfig.circuit];
   const speedProfile = CC_SPEEDS[raceConfig.cc];
@@ -2296,6 +2298,9 @@ export function Scene({
         >
           <RaceEnvironmentEnforcer />
           <AdaptiveViewportPerformance />
+          {onRendererPerformanceSample ?
+            <RendererStatsProbe enabled onSample={onRendererPerformanceSample} />
+          : null}
           <Suspense fallback={<LoadingFallback />}>
             <SceneAssetGate key={assetGateKey} urls={requiredAssetUrls} onReady={handleAssetsReady} />
             {circuit.waypoints?.model ? (

@@ -127,6 +127,7 @@ body {
   gap: clamp(10px, 1.5cqh, 16px);
   min-height: 0;
   height: 100%;
+  max-height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -136,6 +137,7 @@ body {
   transform: translateX(0);
   transition: transform var(--mk-panel-transition);
   will-change: transform;
+  padding: 15px;
 }
 
 .mk-menu-panel::-webkit-scrollbar {
@@ -186,6 +188,7 @@ body {
   gap: clamp(12px, 1.8cqh, 26px);
   padding-top: 0;
   width: min(100%, clamp(420px, 38cqw, 660px));
+  height: auto;
   margin-inline: auto;
 }
 

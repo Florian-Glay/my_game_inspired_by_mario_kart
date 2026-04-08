@@ -13,7 +13,11 @@ import {
   TINY_VIEWPORT_AREA,
   WAYPOINT_NODE_NAME_RE,
 } from './sceneConstants';
-import type { CircuitWaypointLoaderProps, WaypointTransform } from './sceneTypes';
+import type {
+  CircuitWaypointLoaderProps,
+  RendererPerformanceSample,
+  WaypointTransform,
+} from './sceneTypes';
 
 type SceneAssetGateProps = {
   urls: string[];
@@ -33,6 +37,12 @@ type CloudSeed = {
   scale: number;
   speed: number;
   alpha: number;
+};
+
+type RendererStatsProbeProps = {
+  enabled: boolean;
+  sampleIntervalMs?: number;
+  onSample: (sample: RendererPerformanceSample) => void;
 };
 
 export function SceneAssetGate({ urls, onReady }: SceneAssetGateProps) {
@@ -166,6 +176,41 @@ export function AdaptiveViewportPerformance() {
       setDpr(targetDpr);
     }
   }, [setDpr, size.height, size.width]);
+
+  return null;
+}
+
+export function RendererStatsProbe({
+  enabled,
+  sampleIntervalMs = 500,
+  onSample,
+}: RendererStatsProbeProps) {
+  const { gl } = useThree();
+  const lastSampleAtMsRef = useRef(0);
+
+  useEffect(() => {
+    lastSampleAtMsRef.current = 0;
+  }, [enabled, sampleIntervalMs]);
+
+  useFrame((state) => {
+    if (!enabled) return;
+
+    const nowMs = state.clock.elapsedTime * 1000;
+    const minIntervalMs = Math.max(120, Math.floor(sampleIntervalMs));
+    if (nowMs - lastSampleAtMsRef.current < minIntervalMs) return;
+    lastSampleAtMsRef.current = nowMs;
+
+    const programCount = Array.isArray(gl.info.programs) ? gl.info.programs.length : 0;
+    onSample({
+      geometries: gl.info.memory.geometries,
+      textures: gl.info.memory.textures,
+      programs: programCount,
+      calls: gl.info.render.calls,
+      triangles: gl.info.render.triangles,
+      lines: gl.info.render.lines,
+      points: gl.info.render.points,
+    });
+  });
 
   return null;
 }

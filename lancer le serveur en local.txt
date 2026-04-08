@@ -10,3 +10,10 @@ Remove-Item Env:VITE_MULTIPLAYER_WS_URL -ErrorAction SilentlyContinue
 npm run dev
 $env:VITE_MULTIPLAYER_WS_URL="wss://my-game-inspired-by-mario-kart.onrender.com/ws"
 npm run dev
+
+# BUILD :
+set "VITE_MULTIPLAYER_WS_URL="
+set "MARIOKART_BASE=./"
+set "VITE_MULTIPLAYER_WS_URL=wss://my-game-inspired-by-mario-kart.onrender.com/ws"
+npm run build
+
