@@ -66,6 +66,7 @@ export type CircuitConfig = {
   antiGravIn?: SurfaceTriggerConfig;
   antiGravOut?: SurfaceTriggerConfig;
   booster?: BoosterTriggerConfig;
+  gliderOn?: SurfaceTriggerConfig;
   lapStart?: SurfaceTriggerConfig;
   lapCheckpoint?: SurfaceTriggerConfig;
   waypoints?: WaypointPathConfig;
@@ -245,6 +246,12 @@ const stadiumTransformGravOut: TransformConfig = {
 };
 
 const stadiumTransformBooster: TransformConfig = {
+  position: [0, 0, 200],
+  rotation: [0, 0, 0],
+  scale: [3, 3, 3],
+};
+
+const stadiumTransformGliderOn: TransformConfig = {
   position: [0, 0, 200],
   rotation: [0, 0, 0],
   scale: [3, 3, 3],
@@ -491,6 +498,13 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       duration: 1,
       strength: 1.5,
       transform: stadiumTransformBooster,
+    },
+    gliderOn: {
+      model: 'models/stadium_gliderOn.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: stadiumTransformGliderOn,
     },
     lapStart: {
       model: 'models/stadium_start.glb',

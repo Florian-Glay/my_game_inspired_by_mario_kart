@@ -2,6 +2,7 @@ export type SurfaceTriggerType =
   | 'anti-grav-in'
   | 'anti-grav-out'
   | 'booster'
+  | 'glider-on'
   | 'lap-start'
   | 'lap-checkpoint';
 

@@ -4,6 +4,7 @@ import { CIRCUITS } from '../config/raceCatalog';
 import type { RaceConfig } from '../types/game';
 
 const LAKITU_MODEL_URL = 'models/lakitu.glb';
+const GLIDER_WING_MODEL_URL = 'models/planeur.glb';
 const OBJECT_CRATE_MODEL_URL = 'models/item_box.glb';
 const TRACK_COIN_MODEL_URL = 'models/miniObject/itemCoin.glb';
 const OBJECT_ATTACHABLE_VOID_MODEL_URL = 'models/void.glb';
@@ -103,6 +104,7 @@ function getCircuitModelUrls() {
     circuit.antiGravIn?.model,
     circuit.antiGravOut?.model,
     circuit.booster?.model,
+    circuit.gliderOn?.model,
     circuit.lapStart?.model,
     circuit.lapCheckpoint?.model,
     circuit.waypoints?.model,
@@ -118,6 +120,7 @@ export function getAllKnownModelUrls() {
       ...VEHICLES.map((entry) => entry.model),
       ...WHEELS.map((entry) => entry.model),
       LAKITU_MODEL_URL,
+      GLIDER_WING_MODEL_URL,
     ].filter((url): url is string => Boolean(url)),
   );
 }
@@ -130,10 +133,12 @@ export function getRaceAssetUrls(raceConfig: RaceConfig) {
     circuit.antiGravIn?.model,
     circuit.antiGravOut?.model,
     circuit.booster?.model,
+    circuit.gliderOn?.model,
     circuit.lapStart?.model,
     circuit.lapCheckpoint?.model,
     circuit.waypoints?.model,
     LAKITU_MODEL_URL,
+    GLIDER_WING_MODEL_URL,
     ...getRaceObjectModelUrls(),
     ...raceConfig.participants.flatMap((participant) => [
       participant.characterModel,

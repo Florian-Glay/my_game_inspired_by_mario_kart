@@ -27,6 +27,7 @@ export type MultiplayerPose = {
   yaw: number;
   speed?: number;
   boostActive?: boolean;
+  gliderActive?: boolean;
   forwardX?: number;
   forwardY?: number;
   forwardZ?: number;

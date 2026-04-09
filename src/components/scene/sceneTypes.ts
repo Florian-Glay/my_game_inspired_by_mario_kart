@@ -30,6 +30,7 @@ export type SceneProps = {
   ) => void;
   onNetworkRaceEvent?: (raceId: string, event: MultiplayerRaceEvent) => void;
   onNetworkCourseResultValidated?: (raceId: string) => void;
+  showWaypointOverlay?: boolean;
   onRendererPerformanceSample?: (sample: RendererPerformanceSample) => void;
 };
 

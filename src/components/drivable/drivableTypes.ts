@@ -88,6 +88,7 @@ export type Props = {
   surfaceAttachment?: SurfaceAttachmentConfig;
   antiGravSwitchesEnabled?: boolean;
   booster?: BoosterConfig;
+  gliderSwitchEnabled?: boolean;
   botWaypoints?: readonly import('../../ai/botAutopilot').BotWaypoint[];
   autopilotCourseKey?: string;
 };

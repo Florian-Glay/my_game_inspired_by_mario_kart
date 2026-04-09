@@ -37,6 +37,7 @@ export const GROUND_NORMAL_DEADZONE_DOT = Math.cos((2.5 * Math.PI) / 180);
 // exponential smoothing function to compute an interpolation alpha per-step.
 export const ROTATION_SMOOTHING = 20;
 export const GRAVITY_ACCEL = 19.81;
+export const GLIDER_GRAVITY_ACCEL = GRAVITY_ACCEL * 2;
 export const GROUND_RAY_EXTRA_DISTANCE = 4.0;
 export const GROUND_RAY_START_MARGIN = 0.3;
 // Global visual Y offset relative to the collider.
@@ -177,6 +178,7 @@ export const EXT_SURFACE_RE = /(?:^|[-_])ext(?:[-_]|$)/i;
 export const ANTI_GRAV_IN_SURFACE_RE = /anti[-_ ]?grav[-_ ]?in/i;
 export const ANTI_GRAV_OUT_SURFACE_RE = /anti[-_ ]?grav[-_ ]?out/i;
 export const BOOSTER_SURFACE_RE = /booster/i;
+export const GLIDER_ON_SURFACE_RE = /glider[-_ ]?on/i;
 export const LAP_START_SURFACE_RE = /(?:^|[-_ ])start(?:[-_ ]|$)/i;
 export const LAP_CHECKPOINT_SURFACE_RE = /checkpoint/i;
 export const LAP_TRIGGER_RETRIGGER_COOLDOWN_MS = 220;

@@ -178,6 +178,7 @@ export function Scene({
   onNetworkLocalPose,
   onNetworkRaceEvent,
   onNetworkCourseResultValidated,
+  showWaypointOverlay = false,
   onRendererPerformanceSample,
 }: SceneProps) {
   const circuit = CIRCUITS[raceConfig.circuit];
@@ -277,6 +278,7 @@ export function Scene({
     circuit.antiGravIn?.model ?? 'no-anti-grav-in',
     circuit.antiGravOut?.model ?? 'no-anti-grav-out',
     circuit.booster?.model ?? 'no-booster',
+    circuit.gliderOn?.model ?? 'no-glider-on',
     circuit.lapStart?.model ?? 'no-lap-start',
     circuit.lapCheckpoint?.model ?? 'no-lap-checkpoint',
   ].join('-');
@@ -359,6 +361,16 @@ export function Scene({
     () => circuitWaypoints.map((waypoint) => waypoint.index),
     [circuitWaypoints],
   );
+  const waypointPointPositions = useMemo(() => {
+    const positions = new Float32Array(circuitWaypoints.length * 3);
+    circuitWaypoints.forEach((waypoint, index) => {
+      const offset = index * 3;
+      positions[offset] = waypoint.position[0];
+      positions[offset + 1] = waypoint.position[1];
+      positions[offset + 2] = waypoint.position[2];
+    });
+    return positions;
+  }, [circuitWaypoints]);
   const waypointOrderByIndex = useMemo(() => {
     const order = new Map<number, number>();
     orderedWaypointIndices.forEach((waypointIndex, index) => {
@@ -1680,6 +1692,23 @@ export function Scene({
     extGroupRef.current = group;
     setExtModelReady(true);
   }, []);
+  const handleInvisibleGliderTriggerReady = useCallback((group: Group) => {
+    group.traverse((child: any) => {
+      if (!child?.isMesh) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((material: any) => {
+        if (!material) return;
+        material.transparent = true;
+        material.opacity = 0;
+        material.depthWrite = false;
+        material.colorWrite = false;
+        material.needsUpdate = true;
+      });
+    });
+  }, []);
   const handleAssetsReady = useCallback(() => {
     setAssetsReady((prev) => (prev ? prev : true));
   }, []);
@@ -2458,6 +2487,30 @@ export function Scene({
               </SurfaceWithDrag>
             : null}
 
+            {circuit.gliderOn ?
+              <SurfaceWithDrag
+                key={`glider-on-${circuitPhysicsKey}`}
+                name={`${circuit.id}-gliderOn-surface`}
+                type="fixed"
+                colliders="trimesh"
+                sensor
+                surfaceTriggerType="glider-on"
+                friction={0}
+                restitution={0}
+                position={circuit.gliderOn.transform.position}
+                rotation={circuit.gliderOn.transform.rotation}
+                drag={0}
+              >
+                <Model
+                  src={circuit.gliderOn.model}
+                  scale={circuit.gliderOn.transform.scale}
+                  optimizeStatic={PERF_PROFILE.disableShadowsOnStatic}
+                  forceFrontSideOpaque={PERF_PROFILE.forceFrontSideOpaque}
+                  onReady={handleInvisibleGliderTriggerReady}
+                />
+              </SurfaceWithDrag>
+            : null}
+
             {circuit.lapStart ?
               <SurfaceWithDrag
                 key={`lap-start-${circuitPhysicsKey}`}
@@ -2584,6 +2637,7 @@ export function Scene({
                 surfaceAttachment={circuit.vehicleAttachment}
                 antiGravSwitchesEnabled={Boolean(circuit.antiGravIn || circuit.antiGravOut)}
                 booster={circuit.booster}
+                gliderSwitchEnabled={Boolean(circuit.gliderOn)}
                 myObject={myObjectByParticipant[participant.id] ?? 0}
                 myObjectCharges={myObjectChargesByParticipant[participant.id] ?? 0}
                 coinCount={coinsByParticipant[participant.id] ?? 0}
@@ -2598,6 +2652,22 @@ export function Scene({
                 onObjectConsumed={handleParticipantObjectConsumed}
               />
             ))}
+
+            {showWaypointOverlay && waypointPointPositions.length > 0 ? (
+              <points frustumCulled={false} renderOrder={1000}>
+                <bufferGeometry>
+                  <bufferAttribute attach="attributes-position" args={[waypointPointPositions, 3]} />
+                </bufferGeometry>
+                <pointsMaterial
+                  color="#ff0000"
+                  size={15}
+                  sizeAttenuation={false}
+                  depthTest={false}
+                  depthWrite={false}
+                  toneMapped={false}
+                />
+              </points>
+            ) : null}
 
             <CircuitMeshCullingController
               roadGroupRef={roadGroupRef}

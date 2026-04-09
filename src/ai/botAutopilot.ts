@@ -66,6 +66,11 @@ type WaypointAimProfile = Pick<
   'aimSeed' | 'aimOffsetRadius' | 'aimBiasX' | 'aimBiasZ'
 >;
 
+type FutureTrajectoryTurn = {
+  direction: BotSteerDirection | null;
+  absAngleRad: number;
+};
+
 const IDLE_INPUT: BotAutopilotInput = {
   forward: false,
   back: false,
@@ -77,8 +82,8 @@ const IDLE_INPUT: BotAutopilotInput = {
 // Kept from the current tuning in the project.
 const WAYPOINT_REACHED_DISTANCE = 10;
 const WAYPOINT_REACHED_DISTANCE_SEQUENTIAL = 18;
-const WAYPOINT_ADVANCE_STEP = 6;
-const RETARGET_DISTANCE_HYSTERESIS = 3;
+const WAYPOINT_ADVANCE_STEP = 4;
+const RETARGET_DISTANCE_HYSTERESIS = 1;
 const STEER_DEADZONE_RAD = 0.1;
 
 const BOT_DRIFT_TRIGGER_MS = 500;
@@ -91,6 +96,10 @@ const WAYPOINT_AIM_BIAS_MAX = 0.75;
 const OVERTAKE_ACTIVATION_DISTANCE = 26;
 const OVERTAKE_COMMIT_DISTANCE = 8;
 const OVERTAKE_DIRECTION_LOOKAHEAD = 2;
+const FUTURE_TURN_MIN_DIRECTION_RAD = 0.06;
+const FUTURE_TURN_FORCE_STEER_RAD = 0.34;
+const FUTURE_TURN_DRIFT_TRIGGER_RAD = 0.52;
+const FUTURE_TURN_OPPOSITE_OVERRIDE_YAW_RAD = 0.22;
 
 const botWaypointStateByParticipant = new Map<string, BotWaypointRuntimeState>();
 const waypointLookupCache = new WeakMap<readonly BotWaypoint[], WaypointLookup>();
@@ -247,6 +256,51 @@ function getNextWaypointIndex(
   return waypoints[nextArrayIndex]?.index ?? waypoints[0]?.index ?? null;
 }
 
+function getFutureTrajectoryTurn(
+  pose: CarPose,
+  waypoints: readonly BotWaypoint[],
+  stepWaypointIndex: number | null,
+  advanceStep: number,
+): FutureTrajectoryTurn | null {
+  if (stepWaypointIndex === null || waypoints.length === 0) return null;
+
+  const stepWaypoint = getWaypointByIndex(waypoints, stepWaypointIndex);
+  if (!stepWaypoint) return null;
+
+  const normalizedAdvanceStep = Math.max(1, Math.floor(advanceStep));
+  const step2WaypointIndex = getNextWaypointIndex(stepWaypoint.index, waypoints, normalizedAdvanceStep);
+  const step2Waypoint = getWaypointByIndex(waypoints, step2WaypointIndex);
+  if (!step2Waypoint) return null;
+
+  const aX = stepWaypoint.position[0] - pose.x;
+  const aZ = stepWaypoint.position[2] - pose.z;
+  const bX = step2Waypoint.position[0] - stepWaypoint.position[0];
+  const bZ = step2Waypoint.position[2] - stepWaypoint.position[2];
+
+  const lenA = Math.hypot(aX, aZ);
+  const lenB = Math.hypot(bX, bZ);
+  if (lenA <= 0.0001 || lenB <= 0.0001) return null;
+
+  const normAX = aX / lenA;
+  const normAZ = aZ / lenA;
+  const normBX = bX / lenB;
+  const normBZ = bZ / lenB;
+  const signedAngleRad = Math.atan2(
+    normAX * normBZ - normAZ * normBX,
+    normAX * normBX + normAZ * normBZ,
+  );
+
+  const direction: BotSteerDirection | null =
+    signedAngleRad > FUTURE_TURN_MIN_DIRECTION_RAD ? 'left'
+    : signedAngleRad < -FUTURE_TURN_MIN_DIRECTION_RAD ? 'right'
+    : null;
+
+  return {
+    direction,
+    absAngleRad: Math.abs(signedAngleRad),
+  };
+}
+
 function getWaypointDirectionXZ(
   waypoints: readonly BotWaypoint[],
   waypointIndex: number | null,
@@ -326,6 +380,30 @@ function applyLaneOffsetToAimPoint(
     y: targetPoint.y,
     z: targetPoint.z + rightZ * laneOffset,
   };
+}
+
+function resolveSteeringTurnDirection(
+  immediateTurnDirection: BotSteerDirection | null,
+  yawDelta: number,
+  futureTrajectoryTurn: FutureTrajectoryTurn | null,
+) {
+  if (
+    !futureTrajectoryTurn ||
+    futureTrajectoryTurn.direction === null ||
+    futureTrajectoryTurn.absAngleRad < FUTURE_TURN_FORCE_STEER_RAD
+  ) {
+    return immediateTurnDirection;
+  }
+
+  if (
+    immediateTurnDirection === null ||
+    immediateTurnDirection === futureTrajectoryTurn.direction ||
+    Math.abs(yawDelta) <= FUTURE_TURN_OPPOSITE_OVERRIDE_YAW_RAD
+  ) {
+    return futureTrajectoryTurn.direction;
+  }
+
+  return immediateTurnDirection;
 }
 
 function createBotWaypointState(): BotWaypointRuntimeState {
@@ -503,27 +581,47 @@ export function computeBotAutopilotInput(
   const desiredYaw = Math.atan2(dx, dz);
   const yawDelta = normalizeAngleRad(desiredYaw - pose.yaw);
 
-  const turnDirection: BotSteerDirection | null =
+  const immediateTurnDirection: BotSteerDirection | null =
     yawDelta > steerDeadzoneRad ? 'left'
     : yawDelta < -steerDeadzoneRad ? 'right'
     : null;
+  const futureTrajectoryTurn = getFutureTrajectoryTurn(
+    pose,
+    waypoints,
+    targetWaypoint.index,
+    waypointAdvanceStep,
+  );
+  const turnDirection = resolveSteeringTurnDirection(
+    immediateTurnDirection,
+    yawDelta,
+    futureTrajectoryTurn,
+  );
 
   if (sequentialWaypoints) {
     state.turnDirection = turnDirection;
     state.turnStartMs = null;
     state.driftChargeTriggeredForTurn = false;
   } else {
+    const shouldTriggerDriftFromFutureTurn =
+      turnDirection !== null &&
+      futureTrajectoryTurn?.direction === turnDirection &&
+      (futureTrajectoryTurn?.absAngleRad ?? 0) >= FUTURE_TURN_DRIFT_TRIGGER_RAD;
+
     if (turnDirection !== state.turnDirection) {
       state.turnDirection = turnDirection;
       state.turnStartMs = turnDirection ? nowMs : null;
       state.driftChargeTriggeredForTurn = false;
-    } else if (
-      turnDirection !== null &&
-      state.turnStartMs !== null &&
-      !state.driftChargeTriggeredForTurn &&
-      nowMs - state.turnStartMs >= BOT_DRIFT_TRIGGER_MS
-    ) {
-      state.driftChargeTriggeredForTurn = true;
+    }
+
+    if (turnDirection !== null && !state.driftChargeTriggeredForTurn) {
+      if (shouldTriggerDriftFromFutureTurn) {
+        state.driftChargeTriggeredForTurn = true;
+      } else if (
+        state.turnStartMs !== null &&
+        nowMs - state.turnStartMs >= BOT_DRIFT_TRIGGER_MS
+      ) {
+        state.driftChargeTriggeredForTurn = true;
+      }
     }
   }
 

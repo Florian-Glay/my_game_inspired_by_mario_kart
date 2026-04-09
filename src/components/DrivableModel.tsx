@@ -94,6 +94,8 @@ import {
   FLAME_TRAIL_SPAWN_RATE_PER_EMITTER,
   FLAME_TRAIL_UPWARD_SPEED,
   getWheelRotationForMount,
+  GLIDER_GRAVITY_ACCEL,
+  GLIDER_ON_SURFACE_RE,
   GROUND_NORMAL_DEADZONE_DOT,
   GROUND_NORMAL_SMOOTHING,
   GROUND_RAY_EXTRA_DISTANCE,
@@ -182,6 +184,12 @@ import type {
   Vec3,
 } from './drivable/drivableTypes';
 
+type SurfaceTriggerRayHit = {
+  collider: RapierCollider;
+  triggerType: SurfaceTriggerType;
+  distance: number;
+};
+
 export default function DrivableModel({
   vehicleModel,
   characterModel,
@@ -223,6 +231,7 @@ export default function DrivableModel({
   surfaceAttachment,
   antiGravSwitchesEnabled = false,
   booster,
+  gliderSwitchEnabled = false,
   botWaypoints = [],
   autopilotCourseKey,
 }: Props) {
@@ -236,6 +245,7 @@ export default function DrivableModel({
   const { scene: bulletBillScene } = useGLTF('models/BulletBill.glb') as unknown as {
     scene: Group;
   };
+  const { scene: gliderScene } = useGLTF('models/planeur.glb') as unknown as { scene: Group };
   const vehicleCloned = useMemo(() => SkeletonUtils.clone(vehicleScene) as Group, [vehicleScene]);
   const characterCloned = useMemo(
     () => SkeletonUtils.clone(characterScene) as Group,
@@ -247,6 +257,7 @@ export default function DrivableModel({
   );
   const lakituCloned = useMemo(() => SkeletonUtils.clone(lakituScene) as Group, [lakituScene]);
   const bulletBillCloned = useMemo(() => SkeletonUtils.clone(bulletBillScene) as Group, [bulletBillScene]);
+  const gliderCloned = useMemo(() => SkeletonUtils.clone(gliderScene) as Group, [gliderScene]);
   const bodyRef = useRef<RapierRigidBody | null>(null);
   const colliderRef = useRef<RapierCollider | null>(null);
   const controllerRef = useRef<KinematicController | null>(null);
@@ -279,6 +290,9 @@ export default function DrivableModel({
   const antiGravEnabledRef = useRef(!antiGravSwitchesEnabled);
   const activeSurfaceTriggerZoneRef = useRef<'in' | 'out' | null>(null);
   const activeLapTriggerKeyRef = useRef<string | null>(null);
+  const activeGliderTriggerHandleRef = useRef<number | null>(null);
+  const gliderAvailableRef = useRef(false);
+  const gliderActiveRef = useRef(false);
   const boostEndTimestampRef = useRef(0);
   const boostStrengthRef = useRef(1);
   const activeBoosterHandleRef = useRef<number | null>(null);
@@ -313,6 +327,7 @@ export default function DrivableModel({
   const visualRootRef = useRef<Group | null>(null);
   const normalVehicleVisualRef = useRef<Group | null>(null);
   const bulletBillVisualRef = useRef<Group | null>(null);
+  const gliderVisualRef = useRef<Group | null>(null);
   const bulletBillWasActiveRef = useRef(false);
   const stunUntilTimestampMsRef = useRef(stunUntilTimestampMs);
   const wasStunnedRef = useRef(false);
@@ -599,6 +614,7 @@ export default function DrivableModel({
     z: spawnPosition[2],
     yaw: initialRotation[1],
     boostActive: false,
+    gliderActive: false,
     forwardX: Math.sin(initialRotation[1]),
     forwardY: 0,
     forwardZ: Math.cos(initialRotation[1]),
@@ -705,6 +721,7 @@ export default function DrivableModel({
     surfaceAttachmentSettings.probeDistance,
     colliderFit.halfExtents[1] + rayStartOffset + GROUND_RAY_EXTRA_DISTANCE,
   );
+  const gliderGroundAlignProbeDistance = groundProbeDistance * 12;
 
   const isValidHandle = (value: unknown): value is number =>
     typeof value === 'number' && Number.isFinite(value) && Number.isSafeInteger(value) && value >= 0;
@@ -840,6 +857,7 @@ export default function DrivableModel({
     triggerType === 'anti-grav-in' ||
     triggerType === 'anti-grav-out' ||
     triggerType === 'booster' ||
+    triggerType === 'glider-on' ||
     triggerType === 'lap-start' ||
     triggerType === 'lap-checkpoint';
 
@@ -871,6 +889,7 @@ export default function DrivableModel({
     if (ANTI_GRAV_IN_SURFACE_RE.test(surfaceName)) return 'anti-grav-in' as const;
     if (ANTI_GRAV_OUT_SURFACE_RE.test(surfaceName)) return 'anti-grav-out' as const;
     if (BOOSTER_SURFACE_RE.test(surfaceName)) return 'booster' as const;
+    if (GLIDER_ON_SURFACE_RE.test(surfaceName)) return 'glider-on' as const;
     if (LAP_CHECKPOINT_SURFACE_RE.test(surfaceName)) return 'lap-checkpoint' as const;
     if (LAP_START_SURFACE_RE.test(surfaceName)) return 'lap-start' as const;
     return null;
@@ -1356,6 +1375,24 @@ export default function DrivableModel({
     );
   };
 
+  const armGliderFromCollider = (collider: RapierCollider | null | undefined, surfaceLabel: string) => {
+    if (!gliderSwitchEnabled) return;
+
+    const colliderHandle = resolveColliderHandle(collider);
+    const sameGliderZone =
+      colliderHandle !== null &&
+      activeGliderTriggerHandleRef.current !== null &&
+      activeGliderTriggerHandleRef.current === colliderHandle;
+    if (sameGliderZone) return;
+
+    activeGliderTriggerHandleRef.current = colliderHandle;
+    if (!gliderAvailableRef.current) {
+      const resolvedSurfaceLabel = surfaceLabel.length > 0 ? surfaceLabel : 'trigger-glider-on';
+      console.log(`[glider][${participantId}] zone planeur activee (${resolvedSurfaceLabel})`);
+    }
+    gliderAvailableRef.current = true;
+  };
+
   const notifyLapTriggerFromCollider = (
     triggerType: 'lap-start' | 'lap-checkpoint',
     collider: RapierCollider | null | undefined,
@@ -1383,6 +1420,11 @@ export default function DrivableModel({
 
     if (triggerType === 'booster') {
       activateBoosterFromCollider(payload.other.collider, surfaceName);
+      return;
+    }
+
+    if (triggerType === 'glider-on') {
+      armGliderFromCollider(payload.other.collider, surfaceName);
       return;
     }
 
@@ -1423,6 +1465,7 @@ export default function DrivableModel({
       (ANTI_GRAV_IN_SURFACE_RE.test(surfaceName) ? 'anti-grav-in' :
         ANTI_GRAV_OUT_SURFACE_RE.test(surfaceName) ? 'anti-grav-out'
         : BOOSTER_SURFACE_RE.test(surfaceName) ? 'booster'
+        : GLIDER_ON_SURFACE_RE.test(surfaceName) ? 'glider-on'
         : LAP_CHECKPOINT_SURFACE_RE.test(surfaceName) ? 'lap-checkpoint'
         : LAP_START_SURFACE_RE.test(surfaceName) ? 'lap-start'
         : null);
@@ -1439,6 +1482,20 @@ export default function DrivableModel({
       }
       const resolvedSurfaceLabel = surfaceName.length > 0 ? surfaceName : 'trigger-booster';
       console.log(`[booster][${participantId}] sortie zone booster (${resolvedSurfaceLabel})`);
+      return;
+    }
+
+    if (triggerType === 'glider-on') {
+      const colliderHandle = resolveColliderHandle(payload.other.collider);
+      if (
+        colliderHandle !== null &&
+        activeGliderTriggerHandleRef.current !== null &&
+        activeGliderTriggerHandleRef.current === colliderHandle
+      ) {
+        activeGliderTriggerHandleRef.current = null;
+      }
+      const resolvedSurfaceLabel = surfaceName.length > 0 ? surfaceName : 'trigger-glider-on';
+      console.log(`[glider][${participantId}] sortie zone planeur (${resolvedSurfaceLabel})`);
       return;
     }
 
@@ -1495,7 +1552,7 @@ export default function DrivableModel({
     return candidateParentHandle !== selfHandle;
   };
 
-  const findNearestWaypoint = (x: number, y: number, z: number) => {
+  const findNearestWaypoint = (x: number, y: number, z: number, planarOnly = false) => {
     if (botWaypoints.length === 0) return null;
 
     let nearest: BotWaypoint | null = null;
@@ -1507,7 +1564,7 @@ export default function DrivableModel({
       const dx = waypoint.position[0] - x;
       const dy = waypoint.position[1] - y;
       const dz = waypoint.position[2] - z;
-      const distanceSq = dx * dx + dy * dy + dz * dz;
+      const distanceSq = planarOnly ? dx * dx + dz * dz : dx * dx + dy * dy + dz * dz;
       if (distanceSq < nearestDistanceSq) {
         nearest = waypoint;
         nearestArrayIndex = i;
@@ -1631,24 +1688,54 @@ export default function DrivableModel({
     return fallbackToFirstHit ? firstHit : null;
   };
 
-  const castSurfaceTriggerHit = (
+  const castSurfaceTriggerHits = (
     origin: Vector3,
     downDirection: Vector3,
     body: RapierRigidBody,
     maxDistance: number,
   ) => {
+    const hits: SurfaceTriggerRayHit[] = [];
+    const rejectedHandles = new Set<number>();
+    const MAX_SURFACE_TRIGGER_RAY_HITS = 8;
+
     setGroundRay(origin, downDirection);
-    return world.castRayAndGetNormal(
-      groundRay,
-      maxDistance,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      body,
-      (candidate) =>
-        isExternalCollider(candidate, body) && resolveSurfaceTriggerTypeFromCollider(candidate) !== null,
-    );
+
+    for (let attempt = 0; attempt < MAX_SURFACE_TRIGGER_RAY_HITS; attempt += 1) {
+      const hit = world.castRayAndGetNormal(
+        groundRay,
+        maxDistance,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        body,
+        (candidate) => {
+          if (!isExternalCollider(candidate, body)) return false;
+          if (resolveSurfaceTriggerTypeFromCollider(candidate) === null) return false;
+
+          const candidateHandle = resolveColliderHandle(candidate);
+          if (candidateHandle === null) return true;
+          return !rejectedHandles.has(candidateHandle);
+        },
+      );
+
+      if (!hit) break;
+
+      const triggerType = resolveSurfaceTriggerTypeFromCollider(hit.collider);
+      if (triggerType !== null) {
+        hits.push({
+          collider: hit.collider,
+          triggerType,
+          distance: hit.timeOfImpact,
+        });
+      }
+
+      const hitHandle = resolveColliderHandle(hit.collider);
+      if (hitHandle === null) break;
+      rejectedHandles.add(hitHandle);
+    }
+
+    return hits;
   };
 
   const publishRenderedPose = (boostActiveNow: boolean) => {
@@ -1673,6 +1760,8 @@ export default function DrivableModel({
     tmpPoseForward.set(0, 0, 1).applyQuaternion(tmpRenderPoseQuat).normalize();
     tmpPoseUp.set(0, 1, 0).applyQuaternion(tmpRenderPoseQuat).normalize();
     const yaw = Math.atan2(tmpPoseForward.x, tmpPoseForward.z);
+    const gliderActiveNow =
+      controlMode === 'remote' ? Boolean(remotePoseRef.current?.gliderActive) : gliderActiveRef.current;
 
     const pose = publishedPoseRef.current;
     pose.x = tmpRenderPosePosition.x;
@@ -1681,6 +1770,7 @@ export default function DrivableModel({
     pose.yaw = yaw;
     pose.speed = speedRef.current;
     pose.boostActive = boostActiveNow;
+    pose.gliderActive = gliderActiveNow;
     pose.forwardX = tmpPoseForward.x;
     pose.forwardY = tmpPoseForward.y;
     pose.forwardZ = tmpPoseForward.z;
@@ -1715,7 +1805,8 @@ export default function DrivableModel({
     applyShadows(characterCloned);
     wheelObjects.forEach((wheelObject) => applyShadows(wheelObject));
     applyShadows(bulletBillCloned);
-  }, [bulletBillCloned, characterCloned, controlMode, vehicleCloned, wheelObjects]);
+    applyShadows(gliderCloned);
+  }, [bulletBillCloned, characterCloned, controlMode, gliderCloned, vehicleCloned, wheelObjects]);
 
   useEffect(() => {
     const enableLakituShadows = controlMode === 'human';
@@ -1920,6 +2011,9 @@ export default function DrivableModel({
     antiGravEnabledRef.current = !antiGravSwitchesEnabled;
     activeSurfaceTriggerZoneRef.current = null;
     activeLapTriggerKeyRef.current = null;
+    activeGliderTriggerHandleRef.current = null;
+    gliderAvailableRef.current = false;
+    gliderActiveRef.current = false;
     rescueActiveRef.current = false;
     rescueStartTimeRef.current = 0;
     rescueStartPosRef.current.set(0, 0, 0);
@@ -1949,6 +2043,7 @@ export default function DrivableModel({
     pose.z = spawnPosition[2];
     pose.yaw = initialRotation[1];
     pose.boostActive = false;
+    pose.gliderActive = false;
     pose.forwardX = Math.sin(initialRotation[1]);
     pose.forwardY = 0;
     pose.forwardZ = Math.cos(initialRotation[1]);
@@ -1970,6 +2065,10 @@ export default function DrivableModel({
     const bulletBillVisual = bulletBillVisualRef.current;
     if (bulletBillVisual) {
       bulletBillVisual.visible = false;
+    }
+    const gliderVisual = gliderVisualRef.current;
+    if (gliderVisual) {
+      gliderVisual.visible = false;
     }
   }, [antiGravSwitchesEnabled, initialRotation, spawnPosition, visualRootPosition]);
 
@@ -2468,6 +2567,16 @@ export default function DrivableModel({
     const probeDown = tmpDownDir;
     const hadAttachmentBeforeStep = attachmentStateRef.current !== 'detached';
     const wasGroundedAtStepStart = controller.computedGrounded();
+    if (
+      gliderSwitchEnabled &&
+      gliderAvailableRef.current &&
+      !gliderActiveRef.current &&
+      !wasGroundedAtStepStart &&
+      attachmentStateRef.current === 'detached'
+    ) {
+      gliderActiveRef.current = true;
+      console.log(`[glider][${participantId}] mode planeur actif (decolage detecte)`);
+    }
     if (steerChargeJumpPendingRef.current) {
       if (wasGroundedAtStepStart) {
         verticalVelRef.current = Math.min(verticalVelRef.current, -STEER_CHARGE_JUMP_SPEED);
@@ -2507,29 +2616,49 @@ export default function DrivableModel({
     currentExtraDragRef.current = sampledSurfaceDrag ?? 0;
 
     const shouldSampleSurfaceTriggers =
-      antiGravSwitchesEnabled || boosterSettings.enabled || Boolean(onLapTrigger);
+      antiGravSwitchesEnabled || boosterSettings.enabled || gliderSwitchEnabled || Boolean(onLapTrigger);
     if (shouldSampleSurfaceTriggers) {
-      const triggerHit = castSurfaceTriggerHit(dragRayOrigin, probeDown, body, groundProbeDistance);
-      const triggerType = triggerHit ? resolveSurfaceTriggerTypeFromCollider(triggerHit.collider) : null;
+      const triggerHits = castSurfaceTriggerHits(dragRayOrigin, probeDown, body, groundProbeDistance);
+      const nearestHitByType = new Map<SurfaceTriggerType, SurfaceTriggerRayHit>();
+      for (const hit of triggerHits) {
+        const existing = nearestHitByType.get(hit.triggerType);
+        if (!existing || hit.distance < existing.distance) {
+          nearestHitByType.set(hit.triggerType, hit);
+        }
+      }
 
-      if (triggerType === 'booster') {
-        activateBoosterFromCollider(triggerHit?.collider, resolveSurfaceNameFromCollider(triggerHit?.collider));
+      const boosterHit = nearestHitByType.get('booster');
+      if (boosterHit) {
+        activateBoosterFromCollider(boosterHit.collider, resolveSurfaceNameFromCollider(boosterHit.collider));
       } else {
         activeBoosterHandleRef.current = null;
       }
 
-      if (onLapTrigger) {
-        const lapTriggerType =
-          triggerType === 'lap-start' ? 'lap-start'
-          : triggerType === 'lap-checkpoint' ? 'lap-checkpoint'
-          : null;
+      const gliderHit = nearestHitByType.get('glider-on');
+      if (gliderHit) {
+        armGliderFromCollider(gliderHit.collider, resolveSurfaceNameFromCollider(gliderHit.collider));
+      } else if (activeGliderTriggerHandleRef.current !== null) {
+        activeGliderTriggerHandleRef.current = null;
+      }
 
-        if (lapTriggerType) {
-          const surfaceLabel = resolveSurfaceNameFromCollider(triggerHit?.collider);
-          const triggerHandle = resolveColliderHandle(triggerHit?.collider);
+      if (onLapTrigger) {
+        const lapStartHit = nearestHitByType.get('lap-start');
+        const lapCheckpointHit = nearestHitByType.get('lap-checkpoint');
+        const lapHit =
+          lapStartHit && lapCheckpointHit ?
+            (lapStartHit.distance <= lapCheckpointHit.distance ? lapStartHit : lapCheckpointHit)
+          : lapStartHit ?? lapCheckpointHit ?? null;
+        const lapTriggerType: 'lap-start' | 'lap-checkpoint' | null =
+          lapHit === null ? null
+          : lapHit.triggerType === 'lap-start' ? 'lap-start'
+          : 'lap-checkpoint';
+
+        if (lapHit && lapTriggerType) {
+          const surfaceLabel = resolveSurfaceNameFromCollider(lapHit.collider);
+          const triggerHandle = resolveColliderHandle(lapHit.collider);
           const triggerKey = `${lapTriggerType}:${triggerHandle ?? surfaceLabel ?? 'unknown-lap-trigger'}`;
           if (activeLapTriggerKeyRef.current !== triggerKey) {
-            notifyLapTriggerFromCollider(lapTriggerType, triggerHit?.collider, surfaceLabel);
+            notifyLapTriggerFromCollider(lapTriggerType, lapHit.collider, surfaceLabel);
           }
           activeLapTriggerKeyRef.current = triggerKey;
         } else if (activeLapTriggerKeyRef.current !== null) {
@@ -2538,9 +2667,15 @@ export default function DrivableModel({
       }
 
       if (antiGravSwitchesEnabled) {
+        const antiGravInHit = nearestHitByType.get('anti-grav-in');
+        const antiGravOutHit = nearestHitByType.get('anti-grav-out');
+        const antiGravHit =
+          antiGravInHit && antiGravOutHit ?
+            (antiGravInHit.distance <= antiGravOutHit.distance ? antiGravInHit : antiGravOutHit)
+          : antiGravInHit ?? antiGravOutHit ?? null;
         const triggerZone =
-          triggerType === 'anti-grav-in' ? 'in'
-          : triggerType === 'anti-grav-out' ? 'out'
+          antiGravHit?.triggerType === 'anti-grav-in' ? 'in'
+          : antiGravHit?.triggerType === 'anti-grav-out' ? 'out'
           : null;
         const prevTriggerZone = activeSurfaceTriggerZoneRef.current;
 
@@ -2569,6 +2704,9 @@ export default function DrivableModel({
       }
       if (activeLapTriggerKeyRef.current !== null) {
         activeLapTriggerKeyRef.current = null;
+      }
+      if (activeGliderTriggerHandleRef.current !== null) {
+        activeGliderTriggerHandleRef.current = null;
       }
     }
 
@@ -2648,6 +2786,11 @@ export default function DrivableModel({
     }
     const shouldUseDetachedLoopReference =
       attachmentFeatureEnabled && !isAttachmentActive && isLoopingOrientation;
+    const gliderFlightActive =
+      gliderSwitchEnabled &&
+      gliderActiveRef.current &&
+      !isAttachmentActive &&
+      !rescueActiveRef.current;
 
     const controllerUpSource =
       isAttachmentActive ? tmpAttachmentNormal
@@ -2701,7 +2844,6 @@ export default function DrivableModel({
       else speedRef.current -= Math.sign(s) * COAST * dtClamped;
     }
     speedRef.current = clamp(speedRef.current, backwardLimit, forwardLimit);
-
     // apply linear damping (drag) to smooth/slow the vehicle over time
     const effectiveDrag = sampledSurfaceDrag ?? Math.max(0, drag);
     if (!boostEffective && effectiveDrag > 0 && Math.abs(speedRef.current) > 0) {
@@ -2755,7 +2897,10 @@ export default function DrivableModel({
     yawRef.current = Math.atan2(tmpForward.x, tmpForward.z);
 
     // Pseudo-gravity for kinematic bodies. Positive value means movement in the "down" direction.
-    const gravityWithAttachment = GRAVITY_ACCEL + (isAttachmentActive ? surfaceAttachmentSettings.stickForce : 0);
+    const gravityWithAttachment =
+      gliderFlightActive ?
+        GLIDER_GRAVITY_ACCEL
+      : GRAVITY_ACCEL + (isAttachmentActive ? surfaceAttachmentSettings.stickForce : 0);
     verticalVelRef.current += gravityWithAttachment * dtClamped;
 
     // Desired movement (character-controller will handle slide + slope).
@@ -2788,6 +2933,22 @@ export default function DrivableModel({
     body.setNextKinematicTranslation(nextTranslation);
 
     const isGroundedAfterMove = controller.computedGrounded();
+    if (
+      gliderSwitchEnabled &&
+      gliderAvailableRef.current &&
+      !gliderActiveRef.current &&
+      !isGroundedAfterMove &&
+      attachmentStateRef.current === 'detached'
+    ) {
+      gliderActiveRef.current = true;
+      console.log(`[glider][${participantId}] mode planeur actif (sortie du sol)`);
+    }
+    if (gliderActiveRef.current && isGroundedAfterMove) {
+      gliderActiveRef.current = false;
+      gliderAvailableRef.current = false;
+      activeGliderTriggerHandleRef.current = null;
+      console.log(`[glider][${participantId}] mode planeur desactive (atterrissage)`);
+    }
     if (isGroundedAfterMove && verticalVelRef.current > 0) {
       verticalVelRef.current = 0;
     }
@@ -2811,7 +2972,9 @@ export default function DrivableModel({
     }
 
     const alignRayOrigin = buildRayOrigin(t1.x, t1.y, t1.z, probeDown);
-    const groundHit = castGroundHit(alignRayOrigin, probeDown, body, groundProbeDistance);
+    const alignProbeDistance =
+      gliderFlightActive ? gliderGroundAlignProbeDistance : groundProbeDistance;
+    const groundHit = castGroundHit(alignRayOrigin, probeDown, body, alignProbeDistance);
     const alignAttachmentReferenceUp =
       attachmentStateRef.current === 'detached' ? detachedReferenceUp : lastValidNormalRef.current;
     const alignAttachmentMinDot =
@@ -2894,7 +3057,7 @@ export default function DrivableModel({
       }
     }
 
-    const nearestWaypoint = findNearestWaypoint(t1.x, t1.y, t1.z);
+    const nearestWaypoint = findNearestWaypoint(t1.x, t1.y, t1.z, gliderActiveRef.current);
     const shouldStartWaypointRescue =
       nearestWaypoint !== null &&
       nearestWaypoint.distance > WAYPOINT_RESCUE_MAX_DISTANCE;
@@ -2930,6 +3093,9 @@ export default function DrivableModel({
       attachmentStateRef.current = 'detached';
       lastAttachTimestampRef.current = 0;
       lastValidNormalRef.current.copy(worldUp);
+      gliderAvailableRef.current = false;
+      gliderActiveRef.current = false;
+      activeGliderTriggerHandleRef.current = null;
 
       setLakituTarget(t1.x, t1.y, t1.z, true);
       return;
@@ -2942,29 +3108,36 @@ export default function DrivableModel({
       tmpNormal.copy(lastValidNormalRef.current);
       smoothedGroundNormalRef.current.copy(tmpNormal);
     } else {
-      if (groundHit) {
-        desiredUp.set(groundHit.normal.x, groundHit.normal.y, groundHit.normal.z).normalize();
-        if (desiredUp.dot(worldUp) < minWalkableDot) {
-          desiredUp.copy(worldUp);
-        } else {
-          // Blend between world-up and the ground normal so we can control how strongly
-          // the car tilts to match the slope. `GROUND_TILT_FACTOR` in [0..1].
-          desiredUp.lerp(worldUp, 1 - GROUND_TILT_FACTOR).normalize();
-        }
-      } else if (shouldUseDetachedLoopReference) {
-        desiredUp.copy(detachedReferenceUp);
-      } else {
+      if (gliderFlightActive) {
+        // Glider flight should keep the kart completely flat relative to world-up.
         desiredUp.copy(worldUp);
-      }
+        smoothedGroundNormalRef.current.copy(worldUp);
+        tmpNormal.copy(worldUp);
+      } else {
+        if (groundHit) {
+          desiredUp.set(groundHit.normal.x, groundHit.normal.y, groundHit.normal.z).normalize();
+          if (desiredUp.dot(worldUp) < minWalkableDot) {
+            desiredUp.copy(worldUp);
+          } else {
+            // Blend between world-up and the ground normal so we can control how strongly
+            // the car tilts to match the slope. `GROUND_TILT_FACTOR` in [0..1].
+            desiredUp.lerp(worldUp, 1 - GROUND_TILT_FACTOR).normalize();
+          }
+        } else if (shouldUseDetachedLoopReference) {
+          desiredUp.copy(detachedReferenceUp);
+        } else {
+          desiredUp.copy(worldUp);
+        }
 
-      const smoothedUp = smoothedGroundNormalRef.current;
-      const alignmentDot = clamp(smoothedUp.dot(desiredUp), -1, 1);
-      if (alignmentDot < GROUND_NORMAL_DEADZONE_DOT) {
-        const upAlpha = 1 - Math.exp(-GROUND_NORMAL_SMOOTHING * dtClamped);
-        smoothedUp.lerp(desiredUp, upAlpha).normalize();
-      }
+        const smoothedUp = smoothedGroundNormalRef.current;
+        const alignmentDot = clamp(smoothedUp.dot(desiredUp), -1, 1);
+        if (alignmentDot < GROUND_NORMAL_DEADZONE_DOT) {
+          const upAlpha = 1 - Math.exp(-GROUND_NORMAL_SMOOTHING * dtClamped);
+          smoothedUp.lerp(desiredUp, upAlpha).normalize();
+        }
 
-      tmpNormal.copy(smoothedUp);
+        tmpNormal.copy(smoothedUp);
+      }
     }
 
     // Debug: log ground object name when the car transitions to a different collider.
@@ -3008,7 +3181,8 @@ export default function DrivableModel({
     // Smoothly interpolate the body rotation towards the target orientation so
     // the car tilts look less abrupt. We compute an alpha from `ROTATION_SMOOTHING`
     // per-frame and slerp the stored quaternion towards the target.
-    const smoothAlpha = 1 - Math.exp(-ROTATION_SMOOTHING * dtClamped);
+    const smoothAlpha =
+      gliderFlightActive ? 1 : (1 - Math.exp(-ROTATION_SMOOTHING * dtClamped));
     rotRef.current.slerp(tmpQuat, smoothAlpha);
     const r = rotRef.current;
     body.setNextKinematicRotation({ x: r.x, y: r.y, z: r.z, w: r.w });
@@ -3055,6 +3229,14 @@ export default function DrivableModel({
       const bulletBillVisual = bulletBillVisualRef.current;
       if (bulletBillVisual) {
         bulletBillVisual.visible = bulletBillActive;
+      }
+      const gliderVisual = gliderVisualRef.current;
+      if (gliderVisual) {
+        const remoteGliderActive = Boolean(remotePoseRef.current?.gliderActive);
+        const shouldShowGlider =
+          !bulletBillActive &&
+          (controlMode === 'remote' ? remoteGliderActive : gliderActiveRef.current);
+        gliderVisual.visible = shouldShowGlider;
       }
     }
   });
@@ -3114,6 +3296,9 @@ export default function DrivableModel({
                 <primitive object={wheelObjects[index]} scale={wheelScale} />
               </group>
             ))}
+            <group ref={gliderVisualRef} visible={false}>
+              <primitive object={gliderCloned} />
+            </group>
             <AttachableObject
               myObject={normalizedMyObject}
               myObjectCharges={normalizedMyObjectCharges}
@@ -3150,5 +3335,6 @@ export default function DrivableModel({
 // required by drei loader typings (preload helper)
 useGLTF.preload('models/lakitu.glb');
 useGLTF.preload('models/BulletBill.glb');
+useGLTF.preload('models/planeur.glb');
 export const preloadDrivable = (url: string) => useGLTF.preload(url);
 

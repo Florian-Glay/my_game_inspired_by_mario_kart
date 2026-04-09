@@ -156,6 +156,7 @@ export function App() {
   const [selectedOnlineLobbyId, setSelectedOnlineLobbyId] = useState<string | null>(null);
   const [onlineLobbyCodeInput, setOnlineLobbyCodeInput] = useState('');
   const [isPerformanceOverlayEnabled, setIsPerformanceOverlayEnabled] = useState(false);
+  const [isWaypointOverlayEnabled, setIsWaypointOverlayEnabled] = useState(false);
   const [performanceOverlayStats, setPerformanceOverlayStats] = useState<PerformanceOverlayStats>({
     fps: null,
     jsHeapUsedMb: null,
@@ -1203,6 +1204,7 @@ export function App() {
               onNetworkLocalPose={handleNetworkLocalPose}
               onNetworkRaceEvent={handleNetworkRaceEvent}
               onNetworkCourseResultValidated={handleNetworkCourseResultValidated}
+              showWaypointOverlay={isWaypointOverlayEnabled}
               onRendererPerformanceSample={
                 showPerformanceOverlay ? handleRendererPerformanceSample : undefined
               }
@@ -1258,6 +1260,7 @@ export function App() {
               isOnlineRaceHost={Boolean(isCurrentOnlineLobbyHost)}
               onlineRaceId={currentOnlineRace?.raceId ?? null}
               onInfoOverlayChange={setIsPerformanceOverlayEnabled}
+              onWaypointOverlayChange={setIsWaypointOverlayEnabled}
             />
           : null}
 

@@ -67,6 +67,7 @@ export type CarPose = {
   yaw: number;
   speed?: number;
   boostActive?: boolean;
+  gliderActive?: boolean;
   forwardX?: number;
   forwardY?: number;
   forwardZ?: number;

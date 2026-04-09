@@ -11,6 +11,7 @@ type CommandBubbleProps = {
   isOnlineRaceHost?: boolean;
   onlineRaceId?: string | null;
   onInfoOverlayChange?: (enabled: boolean) => void;
+  onWaypointOverlayChange?: (enabled: boolean) => void;
 };
 
 export default function CommandBubble({
@@ -19,6 +20,7 @@ export default function CommandBubble({
   isOnlineRaceHost = false,
   onlineRaceId = null,
   onInfoOverlayChange,
+  onWaypointOverlayChange,
 }: CommandBubbleProps) {
   const [input, setInput] = useState('');
   const [message, setMessage] = useState('');
@@ -96,6 +98,12 @@ export default function CommandBubble({
     } else if (cmd === 'info off') {
       onInfoOverlayChange?.(false);
       setMessage('Overlay info desactive');
+    } else if (cmd === 'wayon') {
+      onWaypointOverlayChange?.(true);
+      setMessage('Waypoints affiches');
+    } else if (cmd === 'wayoff') {
+      onWaypointOverlayChange?.(false);
+      setMessage('Waypoints masques');
     } else if (cmd.length > 0) {
       setMessage('Commande inconnue');
     }
