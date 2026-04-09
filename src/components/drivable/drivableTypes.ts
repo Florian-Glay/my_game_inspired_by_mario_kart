@@ -4,6 +4,7 @@ import type {
   BotDrivingTacticalState,
   BotItemTacticalState,
   CarPose,
+  HumanPlayerSlotId,
   KeyBindings,
   ParticipantControlMode,
   RaceParticipantId,
@@ -66,6 +67,7 @@ export type Props = {
   onPoseUpdate?: (participantId: RaceParticipantId, pose: CarPose) => void;
   participantId?: RaceParticipantId;
   participantName?: string;
+  humanSlotId?: HumanPlayerSlotId;
   myObject?: number;
   myObjectCharges?: number;
   coinCount?: number;

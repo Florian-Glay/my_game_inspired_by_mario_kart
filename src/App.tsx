@@ -52,6 +52,11 @@ import {
   updateServerLobbyProfile,
 } from './state/multiplayerClient';
 import { clearSurfaceTriggerRegistry } from './state/surfaceTriggerRegistry';
+import {
+  loadGrandPrixTrophyProgress,
+  persistGrandPrixTrophyProgress,
+  updateGrandPrixTrophyProgress,
+} from './state/grandPrixTrophies';
 import type {
   CcLevel,
   CourseRaceResult,
@@ -155,6 +160,9 @@ export function App() {
   });
   const [selectedOnlineLobbyId, setSelectedOnlineLobbyId] = useState<string | null>(null);
   const [onlineLobbyCodeInput, setOnlineLobbyCodeInput] = useState('');
+  const [grandPrixTrophyProgress, setGrandPrixTrophyProgress] = useState(() =>
+    loadGrandPrixTrophyProgress(),
+  );
   const [isPerformanceOverlayEnabled, setIsPerformanceOverlayEnabled] = useState(false);
   const [isWaypointOverlayEnabled, setIsWaypointOverlayEnabled] = useState(false);
   const [performanceOverlayStats, setPerformanceOverlayStats] = useState<PerformanceOverlayStats>({
@@ -181,6 +189,7 @@ export function App() {
   const reportedOnlineRaceLoadedIdRef = useRef<string | null>(null);
   const pendingOnlineLobbyEntryRef = useRef(false);
   const lastPublishedNetworkPoseAtRef = useRef<Map<string, number>>(new Map());
+  const hasSavedCompletedGrandPrixRef = useRef(false);
 
   useEffect(
     () => () => {
@@ -322,6 +331,60 @@ export function App() {
   const grandPrixStandings = useMemo<GrandPrixStanding[]>(() => {
     return computeGrandPrixStandings({ grandPrixProgress, raceConfig });
   }, [grandPrixProgress, raceConfig]);
+
+  const localTrackedHumanParticipantId = useMemo(() => {
+    if (!raceConfig) return null;
+    const trackedParticipant =
+      raceConfig.participants.find(
+        (participant) => participant.kind === 'human' && participant.humanSlotId === 'p1',
+      ) ?? raceConfig.participants.find((participant) => participant.kind === 'human') ?? null;
+    return trackedParticipant?.id ?? null;
+  }, [raceConfig]);
+
+  const localTrackedHumanFinalPosition = useMemo(() => {
+    if (!localTrackedHumanParticipantId) return null;
+    const standingIndex = grandPrixStandings.findIndex(
+      (standing) => standing.participantId === localTrackedHumanParticipantId,
+    );
+    if (standingIndex < 0) return null;
+    return standingIndex + 1;
+  }, [grandPrixStandings, localTrackedHumanParticipantId]);
+
+  const isCompletedGrandPrix =
+    Boolean(raceConfig) &&
+    Boolean(grandPrixProgress) &&
+    raceConfig.courseIndex + 1 >= raceConfig.totalCourses &&
+    grandPrixProgress?.grandPrixId === raceConfig.grandPrixId &&
+    grandPrixProgress.courseResults.length >= raceConfig.totalCourses;
+
+  useEffect(() => {
+    if (!isCompletedGrandPrix) {
+      hasSavedCompletedGrandPrixRef.current = false;
+      return;
+    }
+    if (mode === 'online') return;
+    if (hasSavedCompletedGrandPrixRef.current) return;
+    if (!raceConfig || !localTrackedHumanFinalPosition) return;
+
+    hasSavedCompletedGrandPrixRef.current = true;
+
+    setGrandPrixTrophyProgress((currentProgress) => {
+      const updatedProgress = updateGrandPrixTrophyProgress({
+        currentProgress,
+        cupId: raceConfig.grandPrixId,
+        finalPosition: localTrackedHumanFinalPosition,
+      });
+      if (updatedProgress !== currentProgress) {
+        persistGrandPrixTrophyProgress(updatedProgress);
+      }
+      return updatedProgress;
+    });
+  }, [
+    isCompletedGrandPrix,
+    localTrackedHumanFinalPosition,
+    mode,
+    raceConfig,
+  ]);
 
   const clearOnlineLobbyMembership = useCallback(() => {
     if (!currentOnlineLobby) return;
@@ -1219,6 +1282,7 @@ export function App() {
               activeLoadout={activeLoadout}
               activeHumanSlot={activeHumanSlot}
               selectedGrandPrixId={selectedGrandPrix?.id ?? selectedGrandPrixId}
+              grandPrixTrophyProgress={grandPrixTrophyProgress}
               onlinePlayerNameInput={onlinePlayerNameInput}
               onlinePlayerName={onlinePlayerName}
               selectedOnlineLobbyId={selectedOnlineLobbyId}

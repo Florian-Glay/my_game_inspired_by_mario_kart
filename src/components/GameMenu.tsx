@@ -24,6 +24,19 @@ import type {
   PlayerLoadoutSelection,
   RaceMode,
 } from '../types/game';
+import {
+  GAMEPAD_AXIS_LEFT_X,
+  GAMEPAD_AXIS_LEFT_Y,
+  GAMEPAD_BUTTON_A,
+  GAMEPAD_BUTTON_B,
+  getConnectedGamepads,
+  isGamepadButtonPressed,
+  readGamepadAxis,
+} from '../utils/gamepad';
+import {
+  getGrandPrixTrophyAssetPath,
+  type GrandPrixTrophyProgress,
+} from '../state/grandPrixTrophies';
 import { GaragePreview } from './GaragePreview';
 import { MenuParticleField } from './MenuParticleField';
 
@@ -34,6 +47,17 @@ type StableMotionState = Extract<MenuMotionState, 'home' | 'submenu'>;
 
 const HOME_PANEL_TRANSITION_MS = 420;
 const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
+const ONLINE_NAME_MAX_LENGTH = 24;
+const MENU_NAV_REPEAT_INITIAL_MS = 260;
+const MENU_NAV_REPEAT_MS = 150;
+
+type MenuNavDirection = 'up' | 'down' | 'left' | 'right';
+
+const VIRTUAL_KEYBOARD_ROWS = [
+  ['A', 'Z', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+  ['Q', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'M'],
+  ['W', 'X', 'C', 'V', 'B', 'N'],
+] as const;
 
 type GameMenuProps = {
   screen: MenuScreen;
@@ -44,6 +68,7 @@ type GameMenuProps = {
   activeLoadout: PlayerLoadoutSelection | null;
   activeHumanSlot: HumanPlayerSlotId;
   selectedGrandPrixId: GrandPrixId | null;
+  grandPrixTrophyProgress: GrandPrixTrophyProgress;
   onlinePlayerNameInput: string;
   onlinePlayerName: string | null;
   selectedOnlineLobbyId: string | null;
@@ -140,6 +165,30 @@ function getAdjacentCatalogItems<T extends CatalogPreviewItem>(
     previous: items[previousIndex] ?? null,
     next: items[nextIndex] ?? null,
   } as const;
+}
+
+function getSortedNavigableElements(root: HTMLElement | null) {
+  if (!root) return [];
+
+  const candidates = Array.from(
+    root.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'),
+  ).filter((element) => {
+    if (!element.isConnected) return false;
+    if (element.getClientRects().length === 0) return false;
+    const style = window.getComputedStyle(element);
+    if (style.visibility === 'hidden' || style.display === 'none') return false;
+    if (element.closest('[aria-hidden="true"]')) return false;
+    return true;
+  });
+
+  return candidates.sort((left, right) => {
+    const leftRect = left.getBoundingClientRect();
+    const rightRect = right.getBoundingClientRect();
+    if (Math.abs(leftRect.top - rightRect.top) > 8) {
+      return leftRect.top - rightRect.top;
+    }
+    return leftRect.left - rightRect.left;
+  });
 }
 
 function GarageSectionCard({
@@ -283,6 +332,7 @@ export function GameMenu({
   activeLoadout,
   activeHumanSlot,
   selectedGrandPrixId,
+  grandPrixTrophyProgress,
   onlinePlayerNameInput,
   onlinePlayerName,
   selectedOnlineLobbyId,
@@ -317,16 +367,33 @@ export function GameMenu({
 }: GameMenuProps) {
   const [heroFailed, setHeroFailed] = useState(false);
   const [onlineCountdownNow, setOnlineCountdownNow] = useState(() => Date.now());
+  const [isVirtualKeyboardOpen, setIsVirtualKeyboardOpen] = useState(false);
+  const [connectedGamepadCount, setConnectedGamepadCount] = useState(0);
   const [motionState, setMotionState] = useState<MenuMotionState>(() =>
     screen === 'home' ? 'home' : 'submenu',
   );
   const transitionTimerRef = useRef<number | null>(null);
   const transitionSourceScreenRef = useRef<MenuScreen>(screen);
+  const menuInteractiveRootRef = useRef<HTMLDivElement | null>(null);
+  const navElementsRef = useRef<HTMLElement[]>([]);
+  const selectedNavIndexRef = useRef(0);
+  const selectedNavElementRef = useRef<HTMLElement | null>(null);
+  const navigationDirectionRef = useRef<MenuNavDirection | null>(null);
+  const lastDirectionMoveAtRef = useRef(0);
+  const lastDirectionBeganAtRef = useRef(0);
+  const wasAButtonPressedRef = useRef(false);
+  const wasBButtonPressedRef = useRef(false);
+  const backActionRef = useRef<() => void>(() => undefined);
+  const activateSelectedActionRef = useRef<() => void>(() => undefined);
+  const displayedScreenRef = useRef<MenuScreen>(screen);
+  const isVirtualKeyboardOpenRef = useRef(false);
+  const isTransitioningRef = useRef(false);
   const currentPlayerLabel = getHumanLabel(activeHumanSlot);
   const selectedHumanSlots = getSelectedHumanSlots(humanCount);
   const isTransitioning = motionState === 'home-exit' || motionState === 'submenu-exit';
   const displayedScreen = isTransitioning ? transitionSourceScreenRef.current : screen;
   const showBack = displayedScreen !== 'home';
+  const connectedGamepadPlayers = Math.min(connectedGamepadCount, MAX_LOCAL_HUMANS);
 
   const selectedCharacter = activeLoadout
     ? getCatalogItemById(CHARACTERS, activeLoadout.characterId)
@@ -387,6 +454,92 @@ export function GameMenu({
     setMotionState((previousState) => (previousState === 'home-exit' ? previousState : 'submenu'));
   }, [screen]);
 
+  useEffect(() => {
+    const updateGamepadCount = () => {
+      setConnectedGamepadCount(getConnectedGamepads().length);
+    };
+
+    updateGamepadCount();
+    const timer = window.setInterval(updateGamepadCount, 350);
+    window.addEventListener('gamepadconnected', updateGamepadCount);
+    window.addEventListener('gamepaddisconnected', updateGamepadCount);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('gamepadconnected', updateGamepadCount);
+      window.removeEventListener('gamepaddisconnected', updateGamepadCount);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (displayedScreen !== 'online-name' && isVirtualKeyboardOpen) {
+      setIsVirtualKeyboardOpen(false);
+    }
+  }, [displayedScreen, isVirtualKeyboardOpen]);
+
+  const setSelectedNavigation = (elements: HTMLElement[], nextIndex: number) => {
+    const shouldHighlight = connectedGamepadPlayers > 0;
+    if (elements.length === 0) {
+      selectedNavIndexRef.current = 0;
+      selectedNavElementRef.current = null;
+      return;
+    }
+
+    const normalizedIndex = ((nextIndex % elements.length) + elements.length) % elements.length;
+    selectedNavIndexRef.current = normalizedIndex;
+    selectedNavElementRef.current = elements[normalizedIndex] ?? null;
+
+    elements.forEach((element, elementIndex) => {
+      element.classList.toggle(
+        'is-gamepad-selected',
+        shouldHighlight && elementIndex === normalizedIndex,
+      );
+    });
+  };
+
+  const syncNavigation = (resetToTop: boolean) => {
+    const elements = getSortedNavigableElements(menuInteractiveRootRef.current);
+    navElementsRef.current = elements;
+    if (elements.length === 0) {
+      selectedNavElementRef.current = null;
+      selectedNavIndexRef.current = 0;
+      return;
+    }
+
+    if (resetToTop) {
+      setSelectedNavigation(elements, 0);
+      return;
+    }
+
+    const selectedElement = selectedNavElementRef.current;
+    const selectedIndex =
+      selectedElement ? elements.indexOf(selectedElement) : -1;
+    if (selectedIndex >= 0) {
+      setSelectedNavigation(elements, selectedIndex);
+      return;
+    }
+
+    const fallbackIndex = Math.min(
+      Math.max(selectedNavIndexRef.current, 0),
+      elements.length - 1,
+    );
+    setSelectedNavigation(elements, fallbackIndex);
+  };
+
+  const moveNavigation = (direction: MenuNavDirection) => {
+    if (isTransitioningRef.current) return;
+    syncNavigation(false);
+    const elements = navElementsRef.current;
+    if (elements.length <= 1) return;
+
+    const offset = direction === 'up' || direction === 'left' ? -1 : 1;
+    const nextIndex = selectedNavIndexRef.current + offset;
+    setSelectedNavigation(elements, nextIndex);
+    selectedNavElementRef.current?.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+    });
+  };
+
   const runScreenTransition = (
     exitState: ExitMotionState,
     stableState: StableMotionState,
@@ -432,6 +585,11 @@ export function GameMenu({
   const handleBackClick = () => {
     if (isTransitioning) return;
 
+    if (displayedScreen === 'online-name' && isVirtualKeyboardOpen) {
+      setIsVirtualKeyboardOpen(false);
+      return;
+    }
+
     if (screen === 'characters' && activeHumanSlot !== 'p1') {
       onBack();
       return;
@@ -458,8 +616,155 @@ export function GameMenu({
     onBack();
   };
 
+  const handleVirtualKeyboardInsert = (value: string) => {
+    const normalizedValue = value.toUpperCase();
+    const nextValue = `${onlinePlayerNameInput}${normalizedValue}`.slice(0, ONLINE_NAME_MAX_LENGTH);
+    onChangeOnlinePlayerNameInput(nextValue);
+  };
+
+  const handleVirtualKeyboardBackspace = () => {
+    if (onlinePlayerNameInput.length === 0) return;
+    onChangeOnlinePlayerNameInput(onlinePlayerNameInput.slice(0, -1));
+  };
+
+  const handleVirtualKeyboardClear = () => {
+    onChangeOnlinePlayerNameInput('');
+  };
+
+  const handleVirtualKeyboardValidate = () => {
+    runForwardTransition(onConfirmOnlinePlayerName);
+    setIsVirtualKeyboardOpen(false);
+  };
+
+  const activateSelectedElement = () => {
+    if (isTransitioningRef.current) return;
+
+    if (displayedScreenRef.current === 'online-name' && !isVirtualKeyboardOpenRef.current) {
+      setIsVirtualKeyboardOpen(true);
+      return;
+    }
+
+    syncNavigation(false);
+    const selectedElement = selectedNavElementRef.current;
+    if (!selectedElement) return;
+
+    if (selectedElement instanceof HTMLInputElement) {
+      selectedElement.focus();
+      return;
+    }
+
+    selectedElement.click();
+  };
+
+  backActionRef.current = handleBackClick;
+  activateSelectedActionRef.current = activateSelectedElement;
+
+  useEffect(() => {
+    displayedScreenRef.current = displayedScreen;
+    isVirtualKeyboardOpenRef.current = isVirtualKeyboardOpen;
+    isTransitioningRef.current = isTransitioning;
+  }, [displayedScreen, isTransitioning, isVirtualKeyboardOpen]);
+
+  const navigationResetContextRef = useRef('');
+  useEffect(() => {
+    const resetContext = `${displayedScreen}:${isVirtualKeyboardOpen ? 'vk-open' : 'vk-closed'}`;
+    const shouldReset = navigationResetContextRef.current !== resetContext;
+    navigationResetContextRef.current = resetContext;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      syncNavigation(shouldReset);
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [
+    activeHumanSlot,
+    connectedGamepadPlayers,
+    displayedScreen,
+    errorMessage,
+    humanCount,
+    isTransitioning,
+    isVirtualKeyboardOpen,
+    onlineLobbyCodeInput,
+    onlinePlayerNameInput,
+    selectedGrandPrixId,
+    selectedOnlineLobbyId,
+    waitingOnlineLobbies,
+  ]);
+
+  useEffect(() => {
+    let animationFrame = 0;
+
+    const tick = () => {
+      const gamepad = getConnectedGamepads()[0] ?? null;
+
+      if (!gamepad) {
+        navigationDirectionRef.current = null;
+        lastDirectionMoveAtRef.current = 0;
+        lastDirectionBeganAtRef.current = 0;
+        wasAButtonPressedRef.current = false;
+        wasBButtonPressedRef.current = false;
+        animationFrame = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      const nowMs = performance.now();
+      const axisX = readGamepadAxis(gamepad, GAMEPAD_AXIS_LEFT_X, 0.55);
+      const axisY = readGamepadAxis(gamepad, GAMEPAD_AXIS_LEFT_Y, 0.55);
+      let direction: MenuNavDirection | null = null;
+
+      if (Math.abs(axisY) >= Math.abs(axisX) && axisY !== 0) {
+        direction = axisY < 0 ? 'up' : 'down';
+      } else if (axisX !== 0) {
+        direction = axisX < 0 ? 'left' : 'right';
+      }
+
+      if (direction) {
+        if (navigationDirectionRef.current !== direction) {
+          navigationDirectionRef.current = direction;
+          lastDirectionBeganAtRef.current = nowMs;
+          lastDirectionMoveAtRef.current = nowMs;
+          moveNavigation(direction);
+        } else {
+          const repeatDelayMs =
+            nowMs - lastDirectionBeganAtRef.current < MENU_NAV_REPEAT_INITIAL_MS ?
+              MENU_NAV_REPEAT_INITIAL_MS
+            : MENU_NAV_REPEAT_MS;
+          if (nowMs - lastDirectionMoveAtRef.current >= repeatDelayMs) {
+            lastDirectionMoveAtRef.current = nowMs;
+            moveNavigation(direction);
+          }
+        }
+      } else {
+        navigationDirectionRef.current = null;
+        lastDirectionMoveAtRef.current = 0;
+        lastDirectionBeganAtRef.current = 0;
+      }
+
+      const aPressed = isGamepadButtonPressed(gamepad.buttons[GAMEPAD_BUTTON_A]);
+      const bPressed = isGamepadButtonPressed(gamepad.buttons[GAMEPAD_BUTTON_B]);
+
+      if (aPressed && !wasAButtonPressedRef.current) {
+        activateSelectedActionRef.current();
+      }
+
+      if (bPressed && !wasBButtonPressedRef.current) {
+        if (displayedScreenRef.current === 'online-name' && isVirtualKeyboardOpenRef.current) {
+          setIsVirtualKeyboardOpen(false);
+        } else {
+          backActionRef.current();
+        }
+      }
+
+      wasAButtonPressedRef.current = aPressed;
+      wasBButtonPressedRef.current = bPressed;
+      animationFrame = window.requestAnimationFrame(tick);
+    };
+
+    animationFrame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, []);
+
   return (
-    <div className="mk-menu-screen">
+    <div className="mk-menu-screen" ref={menuInteractiveRootRef}>
       <div className="mk-menu-background" />
       <MenuParticleField />
       <div
@@ -525,21 +830,60 @@ export function GameMenu({
           )}
 
           {displayedScreen === 'config' && (
-            <div className="mk-card">
+            <div className="mk-card mk-config-panel">
               <h2>Configuration manette</h2>
-              <p>Mode configuration avancee bientot disponible.</p>
-              <div className="mk-mapping-grid">
-                <div>
-                  <strong>P1 clavier:</strong> ZQSD (+ W/A toleres)
+              <p>Resume des commandes clavier et manette detectee.</p>
+
+              <div className="mk-config-box">
+                <h3>Commandes clavier (4 joueurs)</h3>
+                <div className="mk-mapping-grid">
+                  <div>
+                    <strong>Joueur 1:</strong> ZQSD (+ W/A), objet: E
+                  </div>
+                  <div>
+                    <strong>Joueur 2:</strong> Fleches directionnelles, objet: Shift
+                  </div>
+                  <div>
+                    <strong>Joueur 3:</strong> IJKL, objet: O
+                  </div>
+                  <div>
+                    <strong>Joueur 4:</strong> Numpad 8/4/5/6, objet: Numpad 7
+                  </div>
                 </div>
-                <div>
-                  <strong>P2 clavier:</strong> Fleches directionnelles
+              </div>
+
+              <div className="mk-config-box">
+                <h3>Commandes manette (1 joueur)</h3>
+                <div className="mk-mapping-grid">
+                  <div>
+                    <strong>Menu:</strong> Joystick gauche pour choisir, A pour valider, B pour retour
+                  </div>
+                  <div>
+                    <strong>Course:</strong> Joystick gauche pour orienter
+                  </div>
+                  <div>
+                    <strong>Course:</strong> A avance, B recule
+                  </div>
+                  <div>
+                    <strong>Course:</strong> Gachette droite derapage, gachette gauche objet
+                  </div>
                 </div>
-                <div>
-                  <strong>P3 clavier:</strong> IJKL
-                </div>
-                <div>
-                  <strong>P4 clavier:</strong> Numpad 8/4/5/6
+              </div>
+
+              <div className="mk-config-box">
+                <h3>Joueurs manette detectes</h3>
+                <p className="mk-config-count">
+                  {connectedGamepadPlayers} joueur{connectedGamepadPlayers > 1 ? 's' : ''} manette
+                </p>
+                <div className="mk-config-wheel-row">
+                  {connectedGamepadPlayers > 0 ?
+                    Array.from({ length: connectedGamepadPlayers }, (_, index) => (
+                      <div key={`wheel-player-${index + 1}`} className="mk-config-wheel-card">
+                        <img src="ui/vollant.png" alt={`volant joueur ${index + 1}`} />
+                        <span>Joueur {index + 1}</span>
+                      </div>
+                    ))
+                  : <div className="mk-online-empty">Aucune manette connectee.</div>}
                 </div>
               </div>
             </div>
@@ -696,13 +1040,72 @@ export function GameMenu({
                   value={onlinePlayerNameInput}
                   onChange={(event) => onChangeOnlinePlayerNameInput(event.currentTarget.value)}
                   placeholder="Ton nom"
-                  maxLength={24}
+                  maxLength={ONLINE_NAME_MAX_LENGTH}
                   className="mk-online-input"
                 />
                 <button type="submit" className="mk-confirm-btn">
                   Confirmer le nom
                 </button>
               </form>
+
+              {!isVirtualKeyboardOpen ? (
+                <button
+                  type="button"
+                  className="mk-confirm-btn mk-confirm-btn--ghost"
+                  onClick={() => setIsVirtualKeyboardOpen(true)}
+                >
+                  Ouvrir le clavier virtuel
+                </button>
+              ) : (
+                <div className="mk-virtual-keyboard">
+                  <div className="mk-virtual-keyboard-title">Clavier virtuel</div>
+
+                  <div className="mk-virtual-keyboard-grid">
+                    {VIRTUAL_KEYBOARD_ROWS.flatMap((row) => row).map((keyValue) => (
+                      <button
+                        key={`virtual-key-${keyValue}`}
+                        type="button"
+                        className="mk-virtual-key"
+                        onClick={() => handleVirtualKeyboardInsert(keyValue)}
+                      >
+                        {keyValue}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mk-virtual-keyboard-actions">
+                    <button
+                      type="button"
+                      className="mk-virtual-key mk-virtual-key--wide"
+                      onClick={() => handleVirtualKeyboardInsert(' ')}
+                    >
+                      Espace
+                    </button>
+                    <button
+                      type="button"
+                      className="mk-virtual-key mk-virtual-key--wide"
+                      onClick={handleVirtualKeyboardBackspace}
+                    >
+                      Suppr
+                    </button>
+                    <button
+                      type="button"
+                      className="mk-virtual-key mk-virtual-key--wide"
+                      onClick={handleVirtualKeyboardClear}
+                    >
+                      Effacer
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="mk-confirm-btn mk-virtual-keyboard-confirm"
+                    onClick={handleVirtualKeyboardValidate}
+                  >
+                    Valider
+                  </button>
+                </div>
+              )}
 
               {errorMessage ? <div className="mk-error">{errorMessage}</div> : null}
             </div>
@@ -866,6 +1269,14 @@ export function GameMenu({
                     {GRAND_PRIX_ORDER.map((grandPrixId) => {
                       const cup = GRAND_PRIXS[grandPrixId];
                       if (!cup) return null;
+                      const trophyRank = grandPrixTrophyProgress[grandPrixId] ?? null;
+                      const trophyAssetPath =
+                        trophyRank ?
+                          getGrandPrixTrophyAssetPath({
+                            cupId: grandPrixId,
+                            rank: trophyRank,
+                          })
+                        : null;
 
                       return (
                         <button
@@ -875,9 +1286,15 @@ export function GameMenu({
                           onClick={() => onSelectGrandPrix(grandPrixId)}
                           aria-pressed={selectedGrandPrixId === grandPrixId}
                           aria-label={cup.label}
-                          title={cup.label}
                           disabled={mode === 'online' && !isCurrentOnlineLobbyHost}
                         >
+                          {trophyAssetPath ? (
+                            <img
+                              src={trophyAssetPath}
+                              alt={`Trophee ${trophyRank === 1 ? 'or' : trophyRank === 2 ? 'argent' : 'bronze'} ${cup.label}`}
+                              className="mk-gp-cup-trophy-badge"
+                            />
+                          ) : null}
                           <img
                             src={cup.badgeImage}
                             alt={cup.badgeAlt}

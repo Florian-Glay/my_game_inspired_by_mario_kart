@@ -2610,6 +2610,7 @@ export function Scene({
                 key={participant.id}
                 participantId={participant.id}
                 participantName={participant.displayName}
+                humanSlotId={participant.humanSlotId}
                 controlMode={participant.controlMode}
                 vehicleModel={participant.vehicleModel}
                 characterModel={participant.characterModel}

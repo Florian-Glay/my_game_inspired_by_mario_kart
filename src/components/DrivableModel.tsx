@@ -183,6 +183,16 @@ import type {
   SteeringChargeDirection,
   Vec3,
 } from './drivable/drivableTypes';
+import {
+  GAMEPAD_AXIS_LEFT_X,
+  GAMEPAD_BUTTON_A,
+  GAMEPAD_BUTTON_B,
+  GAMEPAD_BUTTON_LEFT_TRIGGER,
+  GAMEPAD_BUTTON_RIGHT_TRIGGER,
+  getGamepadByHumanSlot,
+  isGamepadButtonPressed,
+  readGamepadAxis,
+} from '../utils/gamepad';
 
 type SurfaceTriggerRayHit = {
   collider: RapierCollider;
@@ -213,6 +223,7 @@ export default function DrivableModel({
   onPoseUpdate,
   participantId = 'participant-1',
   participantName = participantId,
+  humanSlotId,
   myObject = 0,
   myObjectCharges = 0,
   coinCount = 0,
@@ -265,6 +276,8 @@ export default function DrivableModel({
   // keyboard state
   const keysRef = useRef({ forward: false, back: false, left: false, right: false });
   const useObjectPressedRef = useRef(false);
+  const gamepadUseObjectPressedRef = useRef(false);
+  const gamepadDriftPressedRef = useRef(false);
 
   const bindingSets = useMemo(
     () => ({
@@ -2101,6 +2114,8 @@ export default function DrivableModel({
       keysRef.current.left = false;
       keysRef.current.right = false;
       useObjectPressedRef.current = false;
+      gamepadUseObjectPressedRef.current = false;
+      gamepadDriftPressedRef.current = false;
       releaseSteerCharge({
         nowMs: performance.now(),
         triggerBoost: false,
@@ -2458,6 +2473,72 @@ export default function DrivableModel({
 
     setLakituTarget(tCurrent.x, tCurrent.y, tCurrent.z, false);
 
+    const shouldReadGamepadInput =
+      effectiveControlMode === 'human' &&
+      !commandInputActive.current &&
+      gameMode.current !== 'free';
+    const activeGamepad =
+      shouldReadGamepadInput ? getGamepadByHumanSlot(humanSlotId ?? null) : null;
+    const gamepadSteerAxis = -readGamepadAxis(activeGamepad, GAMEPAD_AXIS_LEFT_X, 0.28);
+    const gamepadForwardPressed = isGamepadButtonPressed(
+      activeGamepad?.buttons[GAMEPAD_BUTTON_A],
+    );
+    const gamepadBackPressed = isGamepadButtonPressed(
+      activeGamepad?.buttons[GAMEPAD_BUTTON_B],
+    );
+    const gamepadUseObjectPressed = isGamepadButtonPressed(
+      activeGamepad?.buttons[GAMEPAD_BUTTON_LEFT_TRIGGER],
+    );
+    const gamepadDriftPressed = isGamepadButtonPressed(
+      activeGamepad?.buttons[GAMEPAD_BUTTON_RIGHT_TRIGGER],
+    );
+    const gamepadLeftPressed = gamepadSteerAxis >= 0.36;
+    const gamepadRightPressed = gamepadSteerAxis <= -0.36;
+
+    if (!activeGamepad) {
+      gamepadUseObjectPressedRef.current = false;
+      if (gamepadDriftPressedRef.current) {
+        releaseSteerCharge({
+          nowMs,
+          triggerBoost: false,
+        });
+      }
+      gamepadDriftPressedRef.current = false;
+    } else if (controlsTemporarilyLocked) {
+      gamepadUseObjectPressedRef.current = gamepadUseObjectPressed;
+      if (gamepadDriftPressedRef.current) {
+        releaseSteerCharge({
+          nowMs,
+          triggerBoost: false,
+        });
+      }
+      gamepadDriftPressedRef.current = false;
+    } else {
+      if (gamepadUseObjectPressed && !gamepadUseObjectPressedRef.current) {
+        tryUseHeldObject();
+      }
+      gamepadUseObjectPressedRef.current = gamepadUseObjectPressed;
+
+      if (gamepadDriftPressed && !gamepadDriftPressedRef.current) {
+        const driftDirection: SteeringChargeDirection =
+          gamepadLeftPressed ? 'left'
+          : gamepadRightPressed ? 'right'
+          : keysRef.current.left ? 'left'
+          : keysRef.current.right ? 'right'
+          : 'left';
+        forceStartSteerCharge(driftDirection, nowMs);
+      } else if (!gamepadDriftPressed && gamepadDriftPressedRef.current) {
+        releaseSteerCharge({
+          nowMs,
+          triggerBoost: true,
+        });
+      }
+      gamepadDriftPressedRef.current = gamepadDriftPressed;
+    }
+
+    const forwardInputPressed = keysRef.current.forward || gamepadForwardPressed;
+    const backInputPressed = keysRef.current.back || gamepadBackPressed;
+
     const canChargeStartBoost =
       controlsLocked &&
       !commandInputActive.current &&
@@ -2467,7 +2548,7 @@ export default function DrivableModel({
       startCountdownValue <= START_BOOST_CHARGE_FROM_COUNTDOWN;
     const continueStartBoostCharge =
       canChargeStartBoost &&
-      keysRef.current.forward;
+      forwardInputPressed;
 
     if (continueStartBoostCharge) {
       if (startBoostChargeStartMsRef.current === null) {
@@ -2532,17 +2613,18 @@ export default function DrivableModel({
 
     const throttle = controlsTemporarilyLocked
       ? 0
-      : (keysRef.current.forward ? 1 : 0) + (keysRef.current.back ? -1 : 0);
+      : (forwardInputPressed ? 1 : 0) + (backInputPressed ? -1 : 0);
     const steerChargeDirection =
       controlsTemporarilyLocked ? null : steerChargeDirectionRef.current;
     const steerChargeActive =
       steerChargeDirection !== null &&
       steerChargeStartMsRef.current !== null;
+    const keyboardSteerInput = (keysRef.current.left ? 1 : 0) + (keysRef.current.right ? -1 : 0);
     const steer = controlsTemporarilyLocked
       ? 0
       : steerChargeActive ?
           (steerChargeDirection === 'left' ? 1 : -1)
-      : (keysRef.current.left ? 1 : 0) + (keysRef.current.right ? -1 : 0);
+      : clamp(keyboardSteerInput + gamepadSteerAxis, -1, 1);
     const boostActive = nowMs < boostEndTimestampRef.current;
 
     if (effectiveControlMode === 'autopilot' && !controlsTemporarilyLocked) {

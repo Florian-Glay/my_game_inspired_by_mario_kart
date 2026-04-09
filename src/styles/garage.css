@@ -5,7 +5,7 @@
   min-width: 0;
   transform: translateX(0);
   padding: 15px;
-  padding-bottom: clamp(16px, 2.2cqh, 28px);
+  padding-bottom: clamp(16px, 9cqh, 50px);
   overflow: hidden;
 }
 

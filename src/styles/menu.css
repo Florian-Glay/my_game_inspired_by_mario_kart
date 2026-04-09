@@ -148,11 +148,139 @@
 
 .mk-main-btn:hover {
   transform: translateY(-1px) scale(1.005);
-  border-color: rgba(127, 167, 248, 0.98);
+  border-color: rgba(247, 210, 110, 0.96);
+  background: linear-gradient(180deg, rgba(255, 251, 220, 0.98), rgba(255, 234, 172, 0.97));
+  color: #6f6036;
+  box-shadow: 0 0 0 3px rgba(255, 237, 170, 0.72), 0 14px 30px rgba(6, 20, 72, 0.24);
+}
+
+.mk-main-btn:hover .mk-main-btn-icon {
+  border-color: rgba(236, 187, 70, 0.88);
+  color: #a8791a;
+}
+
+@keyframes mk-yellow-highlight-flow {
+  0% {
+    background-position:
+      0% 12%,
+      94% 14%,
+      0% 50%;
+  }
+  50% {
+    background-position:
+      100% 84%,
+      8% 78%,
+      100% 50%;
+  }
+  100% {
+    background-position:
+      0% 12%,
+      94% 14%,
+      0% 50%;
+  }
+}
+
+.mk-main-btn,
+.mk-confirm-btn,
+.mk-gp-cup-btn,
+.mk-online-lobby-btn,
+.mk-garage-scroll-btn,
+.mk-virtual-key,
+.mk-virtual-keyboard-confirm {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.mk-main-btn::after,
+.mk-back-btn::after,
+.mk-confirm-btn::after,
+.mk-gp-cup-btn::after,
+.mk-online-lobby-btn::after,
+.mk-garage-scroll-btn::after,
+.mk-virtual-key::after,
+.mk-virtual-keyboard-confirm::after {
+  content: "";
+  position: absolute;
+  inset: -26%;
+  pointer-events: none;
+  opacity: 0;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(255, 255, 245, 0.42) 0 12%, rgba(255, 255, 245, 0) 44%),
+    radial-gradient(circle at 84% 22%, rgba(255, 248, 196, 0.35) 0 10%, rgba(255, 248, 196, 0) 40%),
+    linear-gradient(110deg, rgba(255, 255, 238, 0.18), rgba(255, 227, 138, 0.3), rgba(255, 248, 210, 0.2));
+  background-size:
+    170% 170%,
+    185% 185%,
+    220% 220%;
+  z-index: 0;
+}
+
+.mk-main-btn:hover::after,
+.mk-main-btn.is-gamepad-selected::after,
+.mk-back-btn:hover::after,
+.mk-back-btn.is-gamepad-selected::after,
+.mk-confirm-btn:hover:not(:disabled)::after,
+.mk-confirm-btn.is-gamepad-selected::after,
+.mk-gp-cup-btn:hover::after,
+.mk-gp-cup-btn.is-gamepad-selected::after,
+.mk-online-lobby-btn:hover::after,
+.mk-online-lobby-btn.is-gamepad-selected::after,
+.mk-garage-scroll-btn:hover::after,
+.mk-garage-scroll-btn.is-gamepad-selected::after,
+.mk-virtual-key:hover::after,
+.mk-virtual-key.is-gamepad-selected::after,
+.mk-virtual-keyboard-confirm.is-gamepad-selected::after {
+  opacity: 0.62;
+  animation: mk-yellow-highlight-flow 2.8s linear infinite;
 }
 
 .mk-main-btn.is-active {
   box-shadow: 0 0 0 3px rgba(123, 182, 255, 0.5), 0 14px 30px rgba(6, 20, 72, 0.22);
+}
+
+.mk-main-btn.is-gamepad-selected {
+  border-color: rgba(247, 210, 110, 0.96);
+  background: linear-gradient(180deg, rgba(255, 251, 220, 0.98), rgba(255, 234, 172, 0.97));
+  color: #6f6036;
+  box-shadow: 0 0 0 3px rgba(255, 237, 170, 0.72), 0 14px 30px rgba(6, 20, 72, 0.24);
+}
+
+.mk-main-btn.is-gamepad-selected .mk-main-btn-icon {
+  border-color: rgba(236, 187, 70, 0.88);
+  color: #a8791a;
+}
+
+.mk-back-btn.is-gamepad-selected,
+.mk-confirm-btn.is-gamepad-selected,
+.mk-gp-cup-btn.is-gamepad-selected,
+.mk-online-lobby-btn.is-gamepad-selected,
+.mk-garage-scroll-btn.is-gamepad-selected,
+.mk-virtual-key.is-gamepad-selected,
+.mk-virtual-keyboard-confirm.is-gamepad-selected {
+  border-color: rgba(255, 221, 132, 0.96) !important;
+  box-shadow: 0 0 0 3px rgba(255, 233, 162, 0.56), 0 12px 24px rgba(8, 25, 75, 0.3);
+}
+
+.mk-back-btn:hover,
+.mk-confirm-btn:hover:not(:disabled),
+.mk-gp-cup-btn:hover,
+.mk-online-lobby-btn:hover,
+.mk-garage-scroll-btn:hover,
+.mk-virtual-key:hover {
+  border-color: rgba(255, 221, 132, 0.96);
+  box-shadow: 0 0 0 3px rgba(255, 233, 162, 0.56), 0 12px 24px rgba(8, 25, 75, 0.3);
+}
+
+.mk-back-btn:hover,
+.mk-confirm-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(255, 251, 220, 0.98), rgba(255, 234, 172, 0.97));
+  color: #6f6036;
+}
+
+.mk-online-input.is-gamepad-selected {
+  border-color: rgba(255, 221, 132, 0.96);
+  box-shadow: 0 0 0 3px rgba(255, 233, 162, 0.34);
 }
 
 .mk-main-btn-icon {
@@ -215,6 +343,64 @@
   display: grid;
   gap: 10px;
   font-size: 14px;
+}
+
+.mk-config-panel {
+  gap: 14px;
+}
+
+.mk-config-box {
+  border: 1px solid rgba(192, 220, 255, 0.28);
+  border-radius: 16px;
+  background: rgba(8, 27, 82, 0.34);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.mk-config-box h3 {
+  margin: 0;
+  font-size: clamp(14px, 1.5cqw, 20px);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mk-config-count {
+  font-size: 15px;
+  font-weight: 900;
+  color: #fef2bc;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.mk-config-wheel-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.mk-config-wheel-card {
+  min-width: 108px;
+  border: 1px solid rgba(192, 220, 255, 0.34);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 10px;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.mk-config-wheel-card img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
+.mk-config-wheel-card span {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .mk-character-grid {
@@ -345,11 +531,15 @@
 
 .mk-grand-prix-card h2 {
   font-size: clamp(20px, min(2.2cqw, 3.8cqh), 32px);
+  position: relative;
+  z-index: 3;
 }
 
 .mk-grand-prix-card > p {
   font-size: clamp(12px, min(1.1cqw, 1.9cqh), 16px);
   line-height: 1.2;
+  position: relative;
+  z-index: 3;
 }
 
 .mk-gp-cups-section {
@@ -357,13 +547,19 @@
   border-radius: 0;
   padding: 0;
   background: transparent;
+  position: relative;
+  z-index: 2;
+  overflow: visible;
 }
 
 .mk-gp-cups-scroll {
+  --mk-gp-cup-overflow-top: clamp(14px, 1.6cqh, 24px);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
+  padding-top: var(--mk-gp-cup-overflow-top);
   padding-bottom: 4px;
+  margin-top: calc(var(--mk-gp-cup-overflow-top) * -1);
 }
 
 .mk-gp-cups-grid {
@@ -390,13 +586,37 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  overflow: visible;
   cursor: pointer;
   transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
 }
 
+.mk-gp-cup-btn::after {
+  inset: 0%;
+  border-radius: 999px;
+  clip-path: circle(50% at 50% 50%);
+}
+
+.mk-gp-cup-trophy-badge {
+  position: absolute;
+  top: -22%;
+  left: -18%;
+  width: 52%;
+  height: 52%;
+  object-fit: contain;
+  transform: rotate(-45deg);
+  z-index: 4;
+  pointer-events: none;
+  filter: drop-shadow(0 5px 8px rgba(2, 11, 38, 0.45));
+}
+
 .mk-gp-cup-btn:hover {
   transform: translateY(-1px) scale(1.02);
-  box-shadow: 0 10px 18px rgba(6, 20, 72, 0.28);
+  border-color: rgba(255, 221, 132, 0.96);
+  box-shadow:
+    0 0 0 3px rgba(255, 233, 162, 0.56),
+    0 12px 24px rgba(8, 25, 75, 0.3);
 }
 
 .mk-gp-cup-btn:focus-visible {
@@ -581,6 +801,56 @@
   box-shadow: 0 0 0 3px rgba(105, 174, 255, 0.22);
 }
 
+.mk-virtual-keyboard {
+  border: 1px solid rgba(192, 220, 255, 0.32);
+  border-radius: 16px;
+  background: rgba(7, 24, 72, 0.38);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.mk-virtual-keyboard-title {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(239, 247, 255, 0.85);
+}
+
+.mk-virtual-keyboard-grid {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mk-virtual-keyboard-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mk-virtual-key {
+  border: 1px solid rgba(191, 219, 255, 0.4);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3f8ff;
+  padding: 9px 8px;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.mk-virtual-key--wide {
+  font-size: 12px;
+}
+
+.mk-virtual-keyboard-confirm {
+  width: 100%;
+}
+
 .mk-online-menu-actions {
   width: min(100%, 760px);
   margin-inline: 0;
@@ -629,8 +899,9 @@
 
 .mk-online-lobby-btn:hover {
   transform: translateY(-1px);
-  border-color: rgba(145, 207, 255, 0.88);
-  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 221, 132, 0.96);
+  background: rgba(255, 246, 205, 0.14);
+  box-shadow: 0 0 0 3px rgba(255, 233, 162, 0.34);
 }
 
 .mk-online-lobby-btn.is-active {

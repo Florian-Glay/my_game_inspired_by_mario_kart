@@ -73,6 +73,10 @@
   .mk-online-actions {
     flex-direction: column;
   }
+
+  .mk-virtual-keyboard-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
 }
 
 @container mk-game (max-aspect-ratio: 4 / 3) {
@@ -198,11 +202,20 @@
     padding: 7px 14px;
     font-size: 11px;
   }
+
+  .mk-virtual-keyboard-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .mk-virtual-key {
+    padding: 7px 6px;
+    font-size: 11px;
+  }
 }
 
 @container mk-game (max-height: 940px) {
   .mk-menu-overlay--garage .mk-menu-panel {
-    padding-bottom: clamp(10px, 1.8cqh, 22px);
+    padding-bottom: clamp(10px, 8cqh, 52px);
   }
 
   .mk-garage-selector {
@@ -265,7 +278,7 @@
   }
 
   .mk-menu-overlay--garage .mk-menu-panel {
-    padding-bottom: clamp(8px, 1.4cqh, 14px);
+    padding-bottom: clamp(8px, 9cqh, 40px);
   }
 
   .mk-hero-panel--garage {
@@ -316,6 +329,17 @@
   .mk-garage-confirm-btn,
   .mk-garage-item-content,
   .mk-garage-item-track {
+    animation: none !important;
+  }
+
+  .mk-main-btn::after,
+  .mk-back-btn::after,
+  .mk-confirm-btn::after,
+  .mk-gp-cup-btn::after,
+  .mk-online-lobby-btn::after,
+  .mk-garage-scroll-btn::after,
+  .mk-virtual-key::after,
+  .mk-virtual-keyboard-confirm::after {
     animation: none !important;
   }
 }
