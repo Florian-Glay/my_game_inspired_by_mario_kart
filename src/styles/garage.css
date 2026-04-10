@@ -126,7 +126,8 @@
   transition: transform 120ms ease, box-shadow 120ms ease;
 }
 
-.mk-garage-scroll-btn:hover {
+.mk-garage-scroll-btn:hover,
+.mk-garage-scroll-btn.is-gamepad-selected {
   transform: translateY(-1px);
   box-shadow: 0 10px 20px rgba(7, 22, 70, 0.24);
 }

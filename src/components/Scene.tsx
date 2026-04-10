@@ -5,6 +5,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -24,6 +25,15 @@ import type {
   RaceParticipantId,
   Vec3,
 } from '../types/game';
+import {
+  GAMEPAD_AXIS_LEFT_X,
+  GAMEPAD_AXIS_LEFT_Y,
+  GAMEPAD_BUTTON_A,
+  GAMEPAD_BUTTON_PLUS,
+  getConnectedGamepads,
+  isGamepadButtonPressed,
+  readGamepadAxis,
+} from '../utils/gamepad';
 import { getRaceAssetUrls, RACE_ATTACHABLE_MODEL_URLS } from '../utils/raceAssetMemory';
 import type { MultiplayerThrowableRemovalReason } from '../../shared/multiplayerProtocol';
 import {
@@ -164,6 +174,45 @@ import { ThrowableObject } from './ThrowableObject';
 import TextureDebug from './TextureDebug';
 
 useGLTF.preload('models/exemple.glb');
+
+type OverlayNavDirection = 'up' | 'down' | 'left' | 'right';
+
+const OVERLAY_NAV_REPEAT_INITIAL_MS = 260;
+const OVERLAY_NAV_REPEAT_MS = 150;
+
+function getSortedOverlayNavigableElements(root: HTMLElement | null) {
+  if (!root) return [];
+
+  const candidates = Array.from(
+    root.querySelectorAll<HTMLElement>('button[data-race-overlay-nav]:not(:disabled)'),
+  ).filter((element) => {
+    if (!element.isConnected) return false;
+    if (element.getClientRects().length === 0) return false;
+    const style = window.getComputedStyle(element);
+    if (style.visibility === 'hidden' || style.display === 'none') return false;
+    if (element.closest('[aria-hidden="true"]')) return false;
+    return true;
+  });
+
+  return candidates.sort((left, right) => {
+    const leftRect = left.getBoundingClientRect();
+    const rightRect = right.getBoundingClientRect();
+    if (Math.abs(leftRect.top - rightRect.top) > 8) {
+      return leftRect.top - rightRect.top;
+    }
+    return leftRect.left - rightRect.left;
+  });
+}
+
+function isGamepadMenuPauseNeutral(gamepad: Gamepad) {
+  const anyButtonPressed = gamepad.buttons.some((button) =>
+    isGamepadButtonPressed(button, 0.15),
+  );
+  if (anyButtonPressed) return false;
+
+  return !gamepad.axes.some((axis) => Number.isFinite(axis) && Math.abs(axis) > 0.35);
+}
+
 export function Scene({
   raceConfig,
   onRaceBack,
@@ -259,6 +308,7 @@ export function Scene({
   const [courseRanking, setCourseRanking] = useState<CourseRankingEntry[]>([]);
   const [overlayStep, setOverlayStep] = useState<RaceOverlayStep>('none');
   const [controlsLocked, setControlsLocked] = useState(true);
+  const [isPauseMenuOpen, setIsPauseMenuOpen] = useState(false);
   const [startCountdownValue, setStartCountdownValue] = useState<number | null>(null);
   const [menuBusy, setMenuBusy] = useState(false);
   const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(true);
@@ -271,6 +321,23 @@ export function Scene({
   const winModeHandledRef = useRef(false);
   const ownedParticipantDirtyStateRef = useRef<Set<RaceParticipantId>>(new Set());
   const pendingThrowableRemovalIdsRef = useRef<Set<string>>(new Set());
+  const overlayInteractiveRootRef = useRef<HTMLDivElement | null>(null);
+  const overlayNavElementsRef = useRef<HTMLElement[]>([]);
+  const overlaySelectedNavIndexRef = useRef(0);
+  const overlaySelectedNavElementRef = useRef<HTMLElement | null>(null);
+  const overlayNavigationDirectionRef = useRef<OverlayNavDirection | null>(null);
+  const overlayLastDirectionMoveAtRef = useRef(0);
+  const overlayLastDirectionBeganAtRef = useRef(0);
+  const overlayWasAButtonPressedRef = useRef(false);
+  const overlayWasPauseButtonPressedRef = useRef(false);
+  const overlayMenuRequiresNeutralRef = useRef(false);
+  const overlayVisibleRef = useRef(false);
+  const pauseMenuOpenRef = useRef(false);
+  const canTogglePauseMenuRef = useRef(false);
+  const overlayNavigationResetContextRef = useRef('');
+  const overlaySyncNavigationActionRef = useRef<(resetToTop: boolean) => void>(() => undefined);
+  const overlayMoveNavigationActionRef = useRef<(direction: OverlayNavDirection) => void>(() => undefined);
+  const overlayActivateSelectedActionRef = useRef<() => void>(() => undefined);
   const circuitPhysicsKey = [
     raceConfig.circuit,
     circuit.road.model,
@@ -488,6 +555,7 @@ export function Scene({
     setLapProgressByPlayer(initialLapProgress);
     setCourseRanking([]);
     setOverlayStep('none');
+    setIsPauseMenuOpen(false);
     setControlsLocked(true);
     setStartCountdownValue(null);
     setMenuBusy(false);
@@ -1995,6 +2063,94 @@ export function Scene({
         'Chargement...'
       : 'Course suivante'
     : 'Resultat final';
+  const canTogglePauseMenu = sceneReady && !isLoadingOverlayActive && overlayStep === 'none';
+  const isPauseMenuVisible = canTogglePauseMenu && isPauseMenuOpen;
+  const isOverlayNavigationVisible =
+    sceneReady &&
+    !isLoadingOverlayActive &&
+    (isCourseRankingVisible || isGrandPrixResultVisible || isPauseMenuVisible);
+
+  const setOverlaySelectedNavigation = (
+    elements: HTMLElement[],
+    nextIndex: number,
+    shouldHighlight: boolean,
+  ) => {
+    if (elements.length === 0) {
+      overlaySelectedNavIndexRef.current = 0;
+      overlaySelectedNavElementRef.current = null;
+      return;
+    }
+
+    const normalizedIndex = ((nextIndex % elements.length) + elements.length) % elements.length;
+    overlaySelectedNavIndexRef.current = normalizedIndex;
+    overlaySelectedNavElementRef.current = elements[normalizedIndex] ?? null;
+
+    elements.forEach((element, elementIndex) => {
+      element.classList.toggle(
+        'is-gamepad-selected',
+        shouldHighlight && elementIndex === normalizedIndex,
+      );
+    });
+  };
+
+  const syncOverlayNavigation = (resetToTop: boolean) => {
+    const elements = getSortedOverlayNavigableElements(overlayInteractiveRootRef.current);
+    overlayNavElementsRef.current = elements;
+    const shouldHighlight = overlayVisibleRef.current && getConnectedGamepads().length > 0;
+
+    if (elements.length === 0) {
+      overlaySelectedNavElementRef.current = null;
+      overlaySelectedNavIndexRef.current = 0;
+      return;
+    }
+
+    if (resetToTop) {
+      setOverlaySelectedNavigation(elements, 0, shouldHighlight);
+      return;
+    }
+
+    const selectedElement = overlaySelectedNavElementRef.current;
+    const selectedIndex =
+      selectedElement ? elements.indexOf(selectedElement) : -1;
+    if (selectedIndex >= 0) {
+      setOverlaySelectedNavigation(elements, selectedIndex, shouldHighlight);
+      return;
+    }
+
+    const fallbackIndex = Math.min(
+      Math.max(overlaySelectedNavIndexRef.current, 0),
+      elements.length - 1,
+    );
+    setOverlaySelectedNavigation(elements, fallbackIndex, shouldHighlight);
+  };
+
+  const moveOverlayNavigation = (direction: OverlayNavDirection) => {
+    if (!overlayVisibleRef.current) return;
+    syncOverlayNavigation(false);
+
+    const elements = overlayNavElementsRef.current;
+    if (elements.length <= 1) return;
+
+    const offset = direction === 'up' || direction === 'left' ? -1 : 1;
+    const nextIndex = overlaySelectedNavIndexRef.current + offset;
+    setOverlaySelectedNavigation(elements, nextIndex, getConnectedGamepads().length > 0);
+    overlaySelectedNavElementRef.current?.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+    });
+  };
+
+  const activateSelectedOverlayElement = () => {
+    if (!overlayVisibleRef.current) return;
+    syncOverlayNavigation(false);
+    const selectedElement = overlaySelectedNavElementRef.current;
+    if (!selectedElement) return;
+    selectedElement.click();
+  };
+
+  overlaySyncNavigationActionRef.current = syncOverlayNavigation;
+  overlayMoveNavigationActionRef.current = moveOverlayNavigation;
+  overlayActivateSelectedActionRef.current = activateSelectedOverlayElement;
 
   useEffect(() => {
     if (isNetworkRace) return;
@@ -2099,11 +2255,185 @@ export function Scene({
     return () => window.clearTimeout(autoAdvanceTimer);
   }, [handleAdvanceAfterCourse, isNetworkRace, overlayStep]);
 
+  useEffect(() => {
+    pauseMenuOpenRef.current = isPauseMenuOpen;
+    overlayMenuRequiresNeutralRef.current = isPauseMenuOpen;
+  }, [isPauseMenuOpen]);
+
+  useEffect(() => {
+    canTogglePauseMenuRef.current = canTogglePauseMenu;
+    if (canTogglePauseMenu) return;
+    if (!pauseMenuOpenRef.current) return;
+    pauseMenuOpenRef.current = false;
+    setIsPauseMenuOpen(false);
+  }, [canTogglePauseMenu]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      if (event.key.toLowerCase() !== 't') return;
+      if (!canTogglePauseMenuRef.current) return;
+      event.preventDefault();
+      const nextState = !pauseMenuOpenRef.current;
+      pauseMenuOpenRef.current = nextState;
+      overlayMenuRequiresNeutralRef.current = nextState;
+      setIsPauseMenuOpen(nextState);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const wasOverlayVisible = overlayVisibleRef.current;
+    overlayVisibleRef.current = isOverlayNavigationVisible;
+    if (isOverlayNavigationVisible) {
+      if (!wasOverlayVisible) {
+        overlayMenuRequiresNeutralRef.current = true;
+      }
+      return;
+    }
+
+    overlayNavElementsRef.current.forEach((element) => {
+      element.classList.remove('is-gamepad-selected');
+    });
+    overlayNavElementsRef.current = [];
+    overlaySelectedNavElementRef.current = null;
+    overlaySelectedNavIndexRef.current = 0;
+    overlayNavigationDirectionRef.current = null;
+    overlayLastDirectionMoveAtRef.current = 0;
+    overlayLastDirectionBeganAtRef.current = 0;
+    overlayWasAButtonPressedRef.current = false;
+    overlayWasPauseButtonPressedRef.current = false;
+    overlayMenuRequiresNeutralRef.current = false;
+    overlayNavigationResetContextRef.current = '';
+  }, [isOverlayNavigationVisible]);
+
+  useLayoutEffect(() => {
+    if (!isOverlayNavigationVisible) return;
+    const resetContext = `${overlayStep}:${isCourseRankingVisible ? 'course' : 'no-course'}:${
+      isGrandPrixResultVisible ? 'grand-prix' : 'no-grand-prix'
+    }:${isPauseMenuVisible ? 'pause' : 'no-pause'}`;
+    const shouldReset = overlayNavigationResetContextRef.current !== resetContext;
+    overlayNavigationResetContextRef.current = resetContext;
+    syncOverlayNavigation(shouldReset);
+  }, [
+    isAdvancingCourse,
+    isCourseRankingVisible,
+    isGrandPrixResultVisible,
+    isNetworkRace,
+    isOverlayNavigationVisible,
+    isPauseMenuVisible,
+    menuBusy,
+    overlayStep,
+    syncOverlayNavigation,
+  ]);
+
+  useEffect(() => {
+    let animationFrame = 0;
+
+    const tick = () => {
+      const gamepad = getConnectedGamepads()[0] ?? null;
+      if (!gamepad) {
+        overlayNavigationDirectionRef.current = null;
+        overlayLastDirectionMoveAtRef.current = 0;
+        overlayLastDirectionBeganAtRef.current = 0;
+        overlayWasAButtonPressedRef.current = false;
+        overlayWasPauseButtonPressedRef.current = false;
+        if (overlayVisibleRef.current) {
+          overlaySyncNavigationActionRef.current(false);
+        }
+        animationFrame = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      const pausePressed = isGamepadButtonPressed(gamepad.buttons[GAMEPAD_BUTTON_PLUS]);
+      const aPressed = isGamepadButtonPressed(gamepad.buttons[GAMEPAD_BUTTON_A]);
+
+      const overlayVisibleNow = overlayVisibleRef.current;
+      if (overlayVisibleNow && overlayMenuRequiresNeutralRef.current) {
+        const gamepadIsNeutral = isGamepadMenuPauseNeutral(gamepad);
+        overlayWasPauseButtonPressedRef.current = pausePressed;
+        overlayWasAButtonPressedRef.current = aPressed;
+
+        if (!gamepadIsNeutral) {
+          overlayNavigationDirectionRef.current = null;
+          overlayLastDirectionMoveAtRef.current = 0;
+          overlayLastDirectionBeganAtRef.current = 0;
+          animationFrame = window.requestAnimationFrame(tick);
+          return;
+        }
+
+        overlayMenuRequiresNeutralRef.current = false;
+        overlayNavigationDirectionRef.current = null;
+        overlayLastDirectionMoveAtRef.current = 0;
+        overlayLastDirectionBeganAtRef.current = 0;
+      }
+
+      if (pausePressed && !overlayWasPauseButtonPressedRef.current && canTogglePauseMenuRef.current) {
+        const nextState = !pauseMenuOpenRef.current;
+        pauseMenuOpenRef.current = nextState;
+        overlayMenuRequiresNeutralRef.current = nextState;
+        setIsPauseMenuOpen(nextState);
+      }
+      overlayWasPauseButtonPressedRef.current = pausePressed;
+
+      if (!overlayVisibleRef.current) {
+        overlayNavigationDirectionRef.current = null;
+        overlayLastDirectionMoveAtRef.current = 0;
+        overlayLastDirectionBeganAtRef.current = 0;
+        overlayWasAButtonPressedRef.current = false;
+        animationFrame = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      const nowMs = performance.now();
+      const axisX = readGamepadAxis(gamepad, GAMEPAD_AXIS_LEFT_X, 0.55);
+      const axisY = readGamepadAxis(gamepad, GAMEPAD_AXIS_LEFT_Y, 0.55);
+      let direction: OverlayNavDirection | null = null;
+
+      if (Math.abs(axisY) >= Math.abs(axisX) && axisY !== 0) {
+        direction = axisY < 0 ? 'up' : 'down';
+      } else if (axisX !== 0) {
+        direction = axisX < 0 ? 'left' : 'right';
+      }
+
+      if (direction) {
+        if (overlayNavigationDirectionRef.current !== direction) {
+          overlayNavigationDirectionRef.current = direction;
+          overlayLastDirectionBeganAtRef.current = nowMs;
+          overlayLastDirectionMoveAtRef.current = nowMs;
+          overlayMoveNavigationActionRef.current(direction);
+        } else {
+          const repeatDelayMs =
+            nowMs - overlayLastDirectionBeganAtRef.current < OVERLAY_NAV_REPEAT_INITIAL_MS ?
+              OVERLAY_NAV_REPEAT_INITIAL_MS
+            : OVERLAY_NAV_REPEAT_MS;
+          if (nowMs - overlayLastDirectionMoveAtRef.current >= repeatDelayMs) {
+            overlayLastDirectionMoveAtRef.current = nowMs;
+            overlayMoveNavigationActionRef.current(direction);
+          }
+        }
+      } else {
+        overlayNavigationDirectionRef.current = null;
+        overlayLastDirectionMoveAtRef.current = 0;
+        overlayLastDirectionBeganAtRef.current = 0;
+      }
+
+      if (aPressed && !overlayWasAButtonPressedRef.current) {
+        overlayActivateSelectedActionRef.current();
+      }
+      overlayWasAButtonPressedRef.current = aPressed;
+
+      animationFrame = window.requestAnimationFrame(tick);
+    };
+
+    animationFrame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, []);
+
   return (
-    <div className="relative h-full w-full">
-      <button type="button" className="mk-back-btn" onClick={onRaceBack}>
-        Retour
-      </button>
+    <div className="relative h-full w-full" ref={overlayInteractiveRootRef}>
       {raceConfig.humanCount === 2 ? <div className="split-divider" aria-hidden /> : null}
       {loadingOverlayVisible ? (
         <div
@@ -2220,6 +2550,43 @@ export function Scene({
         </div>
       ) : null}
 
+      {sceneReady && isPauseMenuVisible ? (
+        <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/72 backdrop-blur-sm">
+          <div className="w-[min(90cqw,520px)] rounded-2xl border border-white/35 bg-[#0a2d66]/90 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
+            <div className="text-xs font-bold uppercase tracking-[0.16em] text-white/80">
+              Pause
+            </div>
+            <h2 className="mt-2 text-2xl font-black">Course en pause</h2>
+            <p className="mt-3 text-sm font-semibold text-white/80">
+              {isNetworkRace ?
+                'Seul ton vehicule est en pause. Les autres joueurs continuent la course.'
+              : 'La course est entierement en pause.'}
+            </p>
+            <div className="mt-5 space-y-3">
+              <button
+                type="button"
+                data-race-overlay-nav
+                className="mk-race-overlay-action-btn w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25"
+                onClick={() => setIsPauseMenuOpen(false)}
+              >
+                Continuer
+              </button>
+              <button
+                type="button"
+                data-race-overlay-nav
+                className="mk-race-overlay-action-btn w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-[#1c376f]"
+                onClick={() => {
+                  setIsPauseMenuOpen(false);
+                  onRaceBack();
+                }}
+              >
+                Menu Principal
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {sceneReady && isCourseRankingVisible ? (
         <div className="absolute inset-0 z-70 flex items-center justify-center bg-[#041334]/70 backdrop-blur-sm">
           <div className="w-[min(92cqw,640px)] rounded-2xl border border-white/35 bg-[#0a2d66]/88 p-6 text-white shadow-[0_24px_60px_rgba(2,8,28,0.55)]">
@@ -2259,7 +2626,8 @@ export function Scene({
             </p>
             <button
               type="button"
-              className="mt-5 w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
+              data-race-overlay-nav
+              className="mk-race-overlay-action-btn mt-5 w-full rounded-lg border border-white/35 bg-white/15 px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={handleAdvanceAfterCourse}
               disabled={menuBusy || isAdvancingCourse || (isNetworkRace && hasNextCourse)}
             >
@@ -2303,7 +2671,8 @@ export function Scene({
             </div>
             <button
               type="button"
-              className="mt-5 w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-[#1c376f]"
+              data-race-overlay-nav
+              className="mk-race-overlay-action-btn mt-5 w-full rounded-lg border border-white/35 bg-[#0f2148] px-4 py-2 text-sm font-black uppercase tracking-widest transition hover:bg-[#1c376f]"
               onClick={onRaceBack}
             >
               {isNetworkRace ? 'Quitter le lobby' : 'Retour au Menu'}
@@ -2606,52 +2975,63 @@ export function Scene({
             ))}
 
             {drivableParticipants.map((participant) => (
-              <DrivableModel
-                key={participant.id}
-                participantId={participant.id}
-                participantName={participant.displayName}
-                humanSlotId={participant.humanSlotId}
-                controlMode={participant.controlMode}
-                vehicleModel={participant.vehicleModel}
-                characterModel={participant.characterModel}
-                wheelModel={participant.wheelModel}
-                vehicleScale={participant.vehicleScale}
-                characterScale={participant.characterScale}
-                wheelScale={participant.wheelScale}
-                characterMount={participant.characterMount}
-                wheelMounts={participant.wheelMounts}
-                chassisLift={participant.chassisLift}
-                driverLift={participant.driverLift}
-                position={participant.spawn}
-                rotation={participant.spawnRotation}
-                keyBindings={participant.keyBindings}
-                maxForward={speedProfile.maxForward}
-                maxBackward={speedProfile.maxBackward}
-                maxYawRate={speedProfile.maxYawRate}
-                remotePose={remotePoseByParticipantId.get(participant.id) ?? null}
-                onPoseUpdate={handlePoseUpdate}
-                onLapTrigger={handleLapTrigger}
-                controlsLocked={controlsLocked}
-                startCountdownValue={startCountdownValue}
-                botWaypoints={circuitWaypoints}
-                autopilotCourseKey={raceConfig.courseId}
-                surfaceAttachment={circuit.vehicleAttachment}
-                antiGravSwitchesEnabled={Boolean(circuit.antiGravIn || circuit.antiGravOut)}
-                booster={circuit.booster}
-                gliderSwitchEnabled={Boolean(circuit.gliderOn)}
-                myObject={myObjectByParticipant[participant.id] ?? 0}
-                myObjectCharges={myObjectChargesByParticipant[participant.id] ?? 0}
-                coinCount={coinsByParticipant[participant.id] ?? 0}
-                thunderDebuffUntilTimestampMs={thunderDebuffUntilByParticipant[participant.id] ?? 0}
-                bulletBillUntilTimestampMs={bulletBillUntilByParticipant[participant.id] ?? 0}
-                stunUntilTimestampMs={stunUntilByParticipant[participant.id] ?? 0}
-                botItemTacticalState={botItemTacticalStateByParticipant[participant.id] ?? null}
-                botDrivingTacticalState={botDrivingTacticalStateByParticipant[participant.id] ?? null}
-                objectItemMaxValue={OBJECT_ITEM_MAX_VALUE}
-                miniObjectModelPaths={RACE_ATTACHABLE_MODEL_URLS}
-                onObjectUsed={handleParticipantObjectUsed}
-                onObjectConsumed={handleParticipantObjectConsumed}
-              />
+              (() => {
+                const participantPaused =
+                  isPauseMenuVisible &&
+                  (!isNetworkRace ||
+                    (participant.kind === 'human' && networkOwnedParticipantIdSet.has(participant.id)));
+                const participantControlsLocked = controlsLocked || participantPaused;
+
+                return (
+                  <DrivableModel
+                    key={participant.id}
+                    participantId={participant.id}
+                    participantName={participant.displayName}
+                    humanSlotId={participant.humanSlotId}
+                    controlMode={participant.controlMode}
+                    vehicleModel={participant.vehicleModel}
+                    characterModel={participant.characterModel}
+                    wheelModel={participant.wheelModel}
+                    vehicleScale={participant.vehicleScale}
+                    characterScale={participant.characterScale}
+                    wheelScale={participant.wheelScale}
+                    characterMount={participant.characterMount}
+                    wheelMounts={participant.wheelMounts}
+                    chassisLift={participant.chassisLift}
+                    driverLift={participant.driverLift}
+                    position={participant.spawn}
+                    rotation={participant.spawnRotation}
+                    keyBindings={participant.keyBindings}
+                    maxForward={speedProfile.maxForward}
+                    maxBackward={speedProfile.maxBackward}
+                    maxYawRate={speedProfile.maxYawRate}
+                    remotePose={remotePoseByParticipantId.get(participant.id) ?? null}
+                    onPoseUpdate={handlePoseUpdate}
+                    onLapTrigger={handleLapTrigger}
+                    controlsLocked={participantControlsLocked}
+                    pauseFrozen={participantPaused}
+                    startCountdownValue={startCountdownValue}
+                    botWaypoints={circuitWaypoints}
+                    autopilotCourseKey={raceConfig.courseId}
+                    surfaceAttachment={circuit.vehicleAttachment}
+                    antiGravSwitchesEnabled={Boolean(circuit.antiGravIn || circuit.antiGravOut)}
+                    booster={circuit.booster}
+                    gliderSwitchEnabled={Boolean(circuit.gliderOn)}
+                    myObject={myObjectByParticipant[participant.id] ?? 0}
+                    myObjectCharges={myObjectChargesByParticipant[participant.id] ?? 0}
+                    coinCount={coinsByParticipant[participant.id] ?? 0}
+                    thunderDebuffUntilTimestampMs={thunderDebuffUntilByParticipant[participant.id] ?? 0}
+                    bulletBillUntilTimestampMs={bulletBillUntilByParticipant[participant.id] ?? 0}
+                    stunUntilTimestampMs={stunUntilByParticipant[participant.id] ?? 0}
+                    botItemTacticalState={botItemTacticalStateByParticipant[participant.id] ?? null}
+                    botDrivingTacticalState={botDrivingTacticalStateByParticipant[participant.id] ?? null}
+                    objectItemMaxValue={OBJECT_ITEM_MAX_VALUE}
+                    miniObjectModelPaths={RACE_ATTACHABLE_MODEL_URLS}
+                    onObjectUsed={handleParticipantObjectUsed}
+                    onObjectConsumed={handleParticipantObjectConsumed}
+                  />
+                );
+              })()
             ))}
 
             {showWaypointOverlay && waypointPointPositions.length > 0 ? (

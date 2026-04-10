@@ -350,12 +350,14 @@ export function App() {
     return standingIndex + 1;
   }, [grandPrixStandings, localTrackedHumanParticipantId]);
 
-  const isCompletedGrandPrix =
-    Boolean(raceConfig) &&
-    Boolean(grandPrixProgress) &&
-    raceConfig.courseIndex + 1 >= raceConfig.totalCourses &&
-    grandPrixProgress?.grandPrixId === raceConfig.grandPrixId &&
-    grandPrixProgress.courseResults.length >= raceConfig.totalCourses;
+  const isCompletedGrandPrix = useMemo(() => {
+    if (!raceConfig || !grandPrixProgress) return false;
+    return (
+      raceConfig.courseIndex + 1 >= raceConfig.totalCourses &&
+      grandPrixProgress.grandPrixId === raceConfig.grandPrixId &&
+      grandPrixProgress.courseResults.length >= raceConfig.totalCourses
+    );
+  }, [grandPrixProgress, raceConfig]);
 
   useEffect(() => {
     if (!isCompletedGrandPrix) {

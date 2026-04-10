@@ -186,7 +186,8 @@
 .mk-online-lobby-btn,
 .mk-garage-scroll-btn,
 .mk-virtual-key,
-.mk-virtual-keyboard-confirm {
+.mk-virtual-keyboard-confirm,
+.mk-race-overlay-action-btn {
   position: relative;
   overflow: hidden;
   isolation: isolate;
@@ -199,7 +200,8 @@
 .mk-online-lobby-btn::after,
 .mk-garage-scroll-btn::after,
 .mk-virtual-key::after,
-.mk-virtual-keyboard-confirm::after {
+.mk-virtual-keyboard-confirm::after,
+.mk-race-overlay-action-btn::after {
   content: "";
   position: absolute;
   inset: -26%;
@@ -230,7 +232,9 @@
 .mk-garage-scroll-btn.is-gamepad-selected::after,
 .mk-virtual-key:hover::after,
 .mk-virtual-key.is-gamepad-selected::after,
-.mk-virtual-keyboard-confirm.is-gamepad-selected::after {
+.mk-virtual-keyboard-confirm.is-gamepad-selected::after,
+.mk-race-overlay-action-btn:hover:not(:disabled)::after,
+.mk-race-overlay-action-btn.is-gamepad-selected::after {
   opacity: 0.62;
   animation: mk-yellow-highlight-flow 2.8s linear infinite;
 }
@@ -257,23 +261,36 @@
 .mk-online-lobby-btn.is-gamepad-selected,
 .mk-garage-scroll-btn.is-gamepad-selected,
 .mk-virtual-key.is-gamepad-selected,
-.mk-virtual-keyboard-confirm.is-gamepad-selected {
+.mk-virtual-keyboard-confirm.is-gamepad-selected,
+.mk-race-overlay-action-btn.is-gamepad-selected {
   border-color: rgba(255, 221, 132, 0.96) !important;
   box-shadow: 0 0 0 3px rgba(255, 233, 162, 0.56), 0 12px 24px rgba(8, 25, 75, 0.3);
 }
 
 .mk-back-btn:hover,
+.mk-back-btn.is-gamepad-selected,
 .mk-confirm-btn:hover:not(:disabled),
+.mk-confirm-btn.is-gamepad-selected:not(:disabled),
 .mk-gp-cup-btn:hover,
+.mk-gp-cup-btn.is-gamepad-selected,
 .mk-online-lobby-btn:hover,
+.mk-online-lobby-btn.is-gamepad-selected,
 .mk-garage-scroll-btn:hover,
-.mk-virtual-key:hover {
+.mk-garage-scroll-btn.is-gamepad-selected,
+.mk-virtual-key:hover,
+.mk-race-overlay-action-btn:hover:not(:disabled),
+.mk-race-overlay-action-btn.is-gamepad-selected:not(:disabled) {
   border-color: rgba(255, 221, 132, 0.96);
   box-shadow: 0 0 0 3px rgba(255, 233, 162, 0.56), 0 12px 24px rgba(8, 25, 75, 0.3);
 }
 
 .mk-back-btn:hover,
-.mk-confirm-btn:hover:not(:disabled) {
+.mk-back-btn.is-gamepad-selected,
+.mk-confirm-btn:hover:not(:disabled),
+.mk-confirm-btn.is-gamepad-selected:not(:disabled),
+.mk-virtual-key.is-gamepad-selected,
+.mk-virtual-keyboard-confirm.is-gamepad-selected,
+.mk-race-overlay-action-btn.is-gamepad-selected:not(:disabled) {
   background: linear-gradient(180deg, rgba(255, 251, 220, 0.98), rgba(255, 234, 172, 0.97));
   color: #6f6036;
 }
@@ -611,7 +628,8 @@
   filter: drop-shadow(0 5px 8px rgba(2, 11, 38, 0.45));
 }
 
-.mk-gp-cup-btn:hover {
+.mk-gp-cup-btn:hover,
+.mk-gp-cup-btn.is-gamepad-selected {
   transform: translateY(-1px) scale(1.02);
   border-color: rgba(255, 221, 132, 0.96);
   box-shadow:
@@ -897,7 +915,8 @@
   transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
-.mk-online-lobby-btn:hover {
+.mk-online-lobby-btn:hover,
+.mk-online-lobby-btn.is-gamepad-selected {
   transform: translateY(-1px);
   border-color: rgba(255, 221, 132, 0.96);
   background: rgba(255, 246, 205, 0.14);

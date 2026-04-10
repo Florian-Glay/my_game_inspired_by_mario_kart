@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   CHARACTERS,
   VEHICLES,
@@ -383,6 +383,7 @@ export function GameMenu({
   const lastDirectionBeganAtRef = useRef(0);
   const wasAButtonPressedRef = useRef(false);
   const wasBButtonPressedRef = useRef(false);
+  const moveNavigationActionRef = useRef<(direction: MenuNavDirection) => void>(() => undefined);
   const backActionRef = useRef<() => void>(() => undefined);
   const activateSelectedActionRef = useRef<() => void>(() => undefined);
   const displayedScreenRef = useRef<MenuScreen>(screen);
@@ -657,6 +658,7 @@ export function GameMenu({
   };
 
   backActionRef.current = handleBackClick;
+  moveNavigationActionRef.current = moveNavigation;
   activateSelectedActionRef.current = activateSelectedElement;
 
   useEffect(() => {
@@ -666,29 +668,13 @@ export function GameMenu({
   }, [displayedScreen, isTransitioning, isVirtualKeyboardOpen]);
 
   const navigationResetContextRef = useRef('');
-  useEffect(() => {
+  useLayoutEffect(() => {
     const resetContext = `${displayedScreen}:${isVirtualKeyboardOpen ? 'vk-open' : 'vk-closed'}`;
     const shouldReset = navigationResetContextRef.current !== resetContext;
     navigationResetContextRef.current = resetContext;
 
-    const animationFrame = window.requestAnimationFrame(() => {
-      syncNavigation(shouldReset);
-    });
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [
-    activeHumanSlot,
-    connectedGamepadPlayers,
-    displayedScreen,
-    errorMessage,
-    humanCount,
-    isTransitioning,
-    isVirtualKeyboardOpen,
-    onlineLobbyCodeInput,
-    onlinePlayerNameInput,
-    selectedGrandPrixId,
-    selectedOnlineLobbyId,
-    waitingOnlineLobbies,
-  ]);
+    syncNavigation(shouldReset);
+  });
 
   useEffect(() => {
     let animationFrame = 0;
@@ -722,7 +708,7 @@ export function GameMenu({
           navigationDirectionRef.current = direction;
           lastDirectionBeganAtRef.current = nowMs;
           lastDirectionMoveAtRef.current = nowMs;
-          moveNavigation(direction);
+          moveNavigationActionRef.current(direction);
         } else {
           const repeatDelayMs =
             nowMs - lastDirectionBeganAtRef.current < MENU_NAV_REPEAT_INITIAL_MS ?
@@ -730,7 +716,7 @@ export function GameMenu({
             : MENU_NAV_REPEAT_MS;
           if (nowMs - lastDirectionMoveAtRef.current >= repeatDelayMs) {
             lastDirectionMoveAtRef.current = nowMs;
-            moveNavigation(direction);
+            moveNavigationActionRef.current(direction);
           }
         }
       } else {

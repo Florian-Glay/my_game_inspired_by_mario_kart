@@ -4,6 +4,7 @@ const HUMAN_SLOT_ORDER: HumanPlayerSlotId[] = ['p1', 'p2', 'p3', 'p4'];
 
 export const GAMEPAD_BUTTON_A = 0;
 export const GAMEPAD_BUTTON_B = 1;
+export const GAMEPAD_BUTTON_PLUS = 9;
 export const GAMEPAD_BUTTON_LEFT_TRIGGER = 6;
 export const GAMEPAD_BUTTON_RIGHT_TRIGGER = 7;
 export const GAMEPAD_AXIS_LEFT_X = 0;

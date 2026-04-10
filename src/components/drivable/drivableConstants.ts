@@ -171,7 +171,8 @@ export const FLAME_TRAIL_EMIT_UP_OFFSET = 0.22;
 export const FLAME_TRAIL_EMIT_BACK_OFFSET = 0.3;
 export const START_BOOST_ORANGE_TRAIL_MIN_DURATION_MS = 1600;
 export const FLAME_TRAIL_ORANGE_RGB: Readonly<[number, number, number]> = [1, 0.48, 0.1];
-export const FLAME_TRAIL_BLUE_RGB: Readonly<[number, number, number]> = [0.2, 0.62, 1];
+export const FLAME_TRAIL_SKY_BLUE_RGB: Readonly<[number, number, number]> = [0.48, 0.84, 1];
+export const FLAME_TRAIL_DARK_BLUE_RGB: Readonly<[number, number, number]> = [0.08, 0.28, 0.92];
 
 export const ROAD_SURFACE_RE = /(?:^|[-_])road(?:[-_]|$)/i;
 export const EXT_SURFACE_RE = /(?:^|[-_])ext(?:[-_]|$)/i;

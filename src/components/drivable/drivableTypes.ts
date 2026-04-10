@@ -15,7 +15,7 @@ export type RapierVec = { x: number; y: number; z: number };
 export type GroundHit = { collider: RapierCollider; normal: RapierVec };
 export type AttachmentSurfaceKind = 'road' | 'ext';
 export type SteeringChargeDirection = 'left' | 'right';
-export type FlameTrailColor = 'blue' | 'orange';
+export type FlameTrailColor = 'sky-blue' | 'dark-blue' | 'orange';
 export type GroundHitOptions = {
   filter?: (candidate: RapierCollider) => boolean;
   preferredUp?: Vector3;
@@ -85,6 +85,7 @@ export type Props = {
     consumedUnits?: number,
   ) => void;
   controlsLocked?: boolean;
+  pauseFrozen?: boolean;
   startCountdownValue?: number | null;
   onLapTrigger?: (participantId: RaceParticipantId, triggerType: 'lap-start' | 'lap-checkpoint') => void;
   surfaceAttachment?: SurfaceAttachmentConfig;

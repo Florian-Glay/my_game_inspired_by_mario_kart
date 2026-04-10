@@ -80,7 +80,7 @@ import {
   DEFAULT_WHEEL_MOUNTS,
   EXT_SURFACE_RE,
   FLAME_TRAIL_BACKWARD_SPEED,
-  FLAME_TRAIL_BLUE_RGB,
+  FLAME_TRAIL_DARK_BLUE_RGB,
   FLAME_TRAIL_EMIT_BACK_OFFSET,
   FLAME_TRAIL_EMIT_UP_OFFSET,
   FLAME_TRAIL_GRAVITY,
@@ -88,6 +88,7 @@ import {
   FLAME_TRAIL_MAX_LIFETIME_SEC,
   FLAME_TRAIL_MAX_PARTICLES,
   FLAME_TRAIL_MIN_LIFETIME_SEC,
+  FLAME_TRAIL_SKY_BLUE_RGB,
   FLAME_TRAIL_ORANGE_RGB,
   FLAME_TRAIL_PARTICLE_SIZE,
   FLAME_TRAIL_POSITION_JITTER,
@@ -237,6 +238,7 @@ export default function DrivableModel({
   onObjectUsed,
   onObjectConsumed,
   controlsLocked = false,
+  pauseFrozen = false,
   startCountdownValue = null,
   onLapTrigger,
   surfaceAttachment,
@@ -1006,11 +1008,16 @@ export default function DrivableModel({
     flameTrailLifeRef.current[particleIndex] =
       FLAME_TRAIL_MIN_LIFETIME_SEC +
       Math.random() * (FLAME_TRAIL_MAX_LIFETIME_SEC - FLAME_TRAIL_MIN_LIFETIME_SEC);
-    flameTrailTypeRef.current[particleIndex] = color === 'orange' ? 1 : 0;
+    flameTrailTypeRef.current[particleIndex] =
+      color === 'orange' ? 2
+      : color === 'dark-blue' ? 1
+      : 0;
     flameTrailActiveRef.current[particleIndex] = 1;
 
     const [baseR, baseG, baseB] =
-      color === 'orange' ? FLAME_TRAIL_ORANGE_RGB : FLAME_TRAIL_BLUE_RGB;
+      color === 'orange' ? FLAME_TRAIL_ORANGE_RGB
+      : color === 'dark-blue' ? FLAME_TRAIL_DARK_BLUE_RGB
+      : FLAME_TRAIL_SKY_BLUE_RGB;
     flameTrailColors[i3] = baseR;
     flameTrailColors[i3 + 1] = baseG;
     flameTrailColors[i3 + 2] = baseB;
@@ -1037,7 +1044,7 @@ export default function DrivableModel({
     }
 
     if (source === 'steer-normal') {
-      scheduleFlameTrail('blue', resolvedDurationMs);
+      scheduleFlameTrail('dark-blue', resolvedDurationMs);
     }
   };
 
@@ -1870,13 +1877,17 @@ export default function DrivableModel({
       steerChargeVisualActive &&
       steerChargeElapsedMs >= STEER_CHARGE_NORMAL_THRESHOLD_MS &&
       steerChargeElapsedMs < STEER_CHARGE_BIG_THRESHOLD_MS;
+    const steerChargePreBoostActive =
+      steerChargeVisualActive &&
+      steerChargeElapsedMs < STEER_CHARGE_NORMAL_THRESHOLD_MS;
     const steerChargeBigReady =
       steerChargeVisualActive &&
       steerChargeElapsedMs >= STEER_CHARGE_BIG_THRESHOLD_MS;
-    const blueTrailActive = steerChargeNormalReady || nowMs < flameTrailBlueEndMsRef.current;
+    const darkBlueTrailActive = steerChargeNormalReady || nowMs < flameTrailBlueEndMsRef.current;
     const activeTrailColor: FlameTrailColor | null =
       orangeTrailActive || steerChargeBigReady ? 'orange'
-      : blueTrailActive ? 'blue'
+      : darkBlueTrailActive ? 'dark-blue'
+      : steerChargePreBoostActive ? 'sky-blue'
       : null;
 
     const body = bodyRef.current;
@@ -1975,7 +1986,9 @@ export default function DrivableModel({
 
       const lifeAlpha = clamp(1 - age / life, 0, 1);
       const [baseR, baseG, baseB] =
-        flameTrailTypeRef.current[i] === 1 ? FLAME_TRAIL_ORANGE_RGB : FLAME_TRAIL_BLUE_RGB;
+        flameTrailTypeRef.current[i] === 2 ? FLAME_TRAIL_ORANGE_RGB
+        : flameTrailTypeRef.current[i] === 1 ? FLAME_TRAIL_DARK_BLUE_RGB
+        : FLAME_TRAIL_SKY_BLUE_RGB;
       flameTrailColors[i3] = baseR * lifeAlpha;
       flameTrailColors[i3 + 1] = baseG * lifeAlpha;
       flameTrailColors[i3 + 2] = baseB * lifeAlpha;
@@ -2330,6 +2343,39 @@ export default function DrivableModel({
     }
     bulletBillWasActiveRef.current = bulletBillActive;
     const tCurrent = body.translation();
+
+    if (pauseFrozen) {
+      keysRef.current.forward = false;
+      keysRef.current.back = false;
+      keysRef.current.left = false;
+      keysRef.current.right = false;
+      useObjectPressedRef.current = false;
+      gamepadUseObjectPressedRef.current = false;
+      if (gamepadDriftPressedRef.current || steerChargeDirectionRef.current !== null) {
+        releaseSteerCharge({
+          nowMs,
+          triggerBoost: false,
+        });
+      }
+      gamepadDriftPressedRef.current = false;
+
+      const nextTranslation = nextTranslationRef.current;
+      nextTranslation.x = tCurrent.x;
+      nextTranslation.y = tCurrent.y;
+      nextTranslation.z = tCurrent.z;
+      body.setNextKinematicTranslation(nextTranslation);
+
+      const frozenRotation = body.rotation();
+      body.setNextKinematicRotation({
+        x: frozenRotation.x,
+        y: frozenRotation.y,
+        z: frozenRotation.z,
+        w: frozenRotation.w,
+      });
+
+      setLakituTarget(tCurrent.x, tCurrent.y, tCurrent.z, false);
+      return;
+    }
 
     if (effectiveControlMode === 'remote') {
       const pose = remotePoseRef.current;
