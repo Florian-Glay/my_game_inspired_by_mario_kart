@@ -17,6 +17,7 @@ export type CcLevel = '50cc' | '100cc' | '150cc' | '200cc';
 
 export type CircuitId =
   | 'ds_mario_circuit'
+  | 'mario_circuit_8'
   | 'stadium'
   | 'super_bell_subway'
   | 'kalimari_desert';

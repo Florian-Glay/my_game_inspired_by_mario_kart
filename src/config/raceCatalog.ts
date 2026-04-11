@@ -40,6 +40,16 @@ export type CircuitPerformanceConfig = {
   maxVisibleDistance: number;
   cullConeDot: number;
   cullNearDistance: number;
+  triangleBudgetEnabled?: boolean;
+  triangleBudgetPerFrame?: number;
+  triangleBudgetFrameStride?: number;
+  dynamicTriangleBudgetEnabled?: boolean;
+  dynamicTriangleBudgetPerFrame?: number;
+  dynamicTriangleBudgetFrameStride?: number;
+  // Legacy fields kept for backward compatibility.
+  triangleOcclusionEnabled?: boolean;
+  triangleCullChecksPerFrame?: number;
+  triangleCullFrameStride?: number;
 };
 
 export type VehicleAttachmentConfig = {
@@ -130,6 +140,7 @@ export const HERO_IMAGE_PATH = 'ui/home-hero.png';
 
 export const CIRCUIT_ORDER: CircuitId[] = [
   'ds_mario_circuit',
+  'mario_circuit_8',
   'stadium',
   'super_bell_subway',
   'kalimari_desert',
@@ -226,6 +237,10 @@ export const CC_SPEEDS: Record<
 };
 
 const CULL_CONE_DOT_120 = Math.cos((60 * Math.PI) / 180);
+const TRIANGLE_BUDGET_PER_FRAME = 1000;
+const TRIANGLE_BUDGET_FRAME_STRIDE = 1;
+const DYNAMIC_TRIANGLE_BUDGET_PER_FRAME = 280;
+const DYNAMIC_TRIANGLE_BUDGET_FRAME_STRIDE = 1;
 
 const marioTransform = {
   position: [0, -60, 0] as Vec3,
@@ -273,6 +288,12 @@ const kalimariDesertTransform = {
   position: [0, 0, 0] as Vec3,
   rotation: [0, 0, 0] as Vec3,
   scale: [1, 1, 1] as Vec3,
+};
+
+const marioCircuit8Transform = {
+  position: [0, 0, 0] as Vec3,
+  rotation: [0, 0, 0] as Vec3,
+  scale: [3, 3, 3] as Vec3,
 };
 
 const DS_MARIO_CIRCUIT_SPAWN_SLOTS: SpawnSlot[] = [
@@ -336,6 +357,21 @@ const KALIMARI_DESERT_SPAWN_SLOTS: SpawnSlot[] = [
   { position: [219.668, 9.84, -157.23], rotation: [0, -3.117, 0] },
 ];
 
+const MARIO_CIRCUIT_8_SPAWN_SLOTS: SpawnSlot[] = [
+  { position: [-13.424, 76.32, -9.943], rotation: [0, -0.079, 0] },
+  { position: [-17.013, 76.32, -10.226], rotation: [0, -0.079, 0] },
+  { position: [-13.164, 76.587, -6.281], rotation: [0, 0.058, 0] },
+  { position: [-16.758, 76.587, -6.074], rotation: [0, 0.058, 0] },
+  { position: [-13.07, 76.694, -2.428], rotation: [0, 0.136, 0] },
+  { position: [-16.637, 76.694, -1.94], rotation: [0, 0.136, 0] },
+  { position: [-13.183, 76.575, 1.552], rotation: [0, 0.094, 0] },
+  { position: [-16.767, 76.575, 1.89], rotation: [0, 0.094, 0] },
+  { position: [-13.469, 76.506, 5.388], rotation: [0, 0.139, 0] },
+  { position: [-17.034, 76.506, 5.886], rotation: [0, 0.139, 0] },
+  { position: [-13.672, 76.424, 10.088], rotation: [0, -0.291, 0] },
+  { position: [-49.039, 240, 49.85], rotation: [0, 0, 0] },
+];
+
 const DS_MARIO_CIRCUIT_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
   { position: [290.202, -48.573, 12.971], rotation: [0, 0, 0] },
   { position: [284.901, -48.719, 11.579], rotation: [0, 0, 0] },
@@ -373,6 +409,14 @@ const KALIMARI_DESERT_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
   { position: [223.6, 11.2, -163.2], rotation: [0, 0, 0] },
 ];
 
+const MARIO_CIRCUIT_8_OBJECT_CRATE_SPAWNS: ObjectCrateSpawn[] = [
+  { position: [-3.431, 75.976, 52.756], rotation: [0, 1.765, 0] },
+  { position: [10.589, 71.284, 47.932], rotation: [0, 2.729, 0] },
+  { position: [10.857, 65.498, 34.477], rotation: [0, -2.709, 0] },
+  { position: [3.849, 62.532, 23.777], rotation: [0, -1.786, 0] },
+  { position: [-10.813, 59.46, 19.723], rotation: [0, -2.543, 0] },
+];
+
 const DS_MARIO_CIRCUIT_COIN_SPAWNS: TrackCoinSpawn[] = [
   { position: [78.351, -43.817, 132.244], rotation: [0, 0, 0] },
   { position: [80.647, -43.654, 126.738], rotation: [0, 0, 0] },
@@ -403,6 +447,14 @@ const KALIMARI_DESERT_COIN_SPAWNS: TrackCoinSpawn[] = [
   { position: [222.5, 11.2, -183.9], rotation: [0, 0, 0] },
   { position: [231.3, 11.2, -175.6], rotation: [0, 0, 0] },
   { position: [223.6, 11.2, -163.2], rotation: [0, 0, 0] },
+];
+
+const MARIO_CIRCUIT_8_COIN_SPAWNS: TrackCoinSpawn[] = [
+  { position: [-15.669, 54.411, 5.878], rotation: [0, 3.1, 0] },
+  { position: [-14.525, 48.707, -8.969], rotation: [0, 3.036, 0] },
+  { position: [-12.385, 44.16, -24.139], rotation: [0, 3.022, 0] },
+  { position: [-11.129, 45.002, -39.454], rotation: [0, 3.012, 0] },
+  { position: [-11.24, 57.522, -47.877], rotation: [0, 2.912, 0] },
 ];
 
 export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
@@ -447,6 +499,12 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       maxVisibleDistance: 250,
       cullConeDot: CULL_CONE_DOT_120,
       cullNearDistance: 45,
+      triangleBudgetEnabled: true,
+      triangleBudgetPerFrame: TRIANGLE_BUDGET_PER_FRAME,
+      triangleBudgetFrameStride: TRIANGLE_BUDGET_FRAME_STRIDE,
+      dynamicTriangleBudgetEnabled: true,
+      dynamicTriangleBudgetPerFrame: DYNAMIC_TRIANGLE_BUDGET_PER_FRAME,
+      dynamicTriangleBudgetFrameStride: DYNAMIC_TRIANGLE_BUDGET_FRAME_STRIDE,
     },
     vehicleAttachment: {
       enabled: false,
@@ -458,6 +516,80 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       allowedSurfaces: 'road-ext',
       loopSlopeClimbAngleDeg: 160,
       loopSlopeSlideAngleDeg: 170,
+    },
+  },
+  mario_circuit_8: {
+    id: 'mario_circuit_8',
+    label: 'Mario Circuit 8',
+    transform: marioCircuit8Transform,
+    spawnSlots: MARIO_CIRCUIT_8_SPAWN_SLOTS,
+    objectCrateSpawns: MARIO_CIRCUIT_8_OBJECT_CRATE_SPAWNS,
+    coinSpawns: MARIO_CIRCUIT_8_COIN_SPAWNS,
+    road: {
+      model: 'models/mario_circuit_8_road.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+    },
+    ext: {
+      model: 'models/mario_circuit_8_ext.glb',
+      drag: 2,
+      friction: 0,
+      restitution: 0,
+    },
+    antiGravIn: {
+      model: 'models/mario_circuit_8_antiGravIn.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: marioCircuit8Transform,
+    },
+    antiGravOut: {
+      model: 'models/mario_circuit_8_antiGravOut.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: marioCircuit8Transform,
+    },
+    lapStart: {
+      model: 'models/mario_circuit_8_start.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: marioCircuit8Transform,
+    },
+    lapCheckpoint: {
+      model: 'models/mario_circuit_8_checkpoint.glb',
+      drag: 0,
+      friction: 0,
+      restitution: 0,
+      transform: marioCircuit8Transform,
+    },
+    waypoints: {
+      model: 'models/mario_circuit_8_waypoints.glb',
+      transform: marioCircuit8Transform,
+    },
+    performance: {
+      maxVisibleDistance: 220,
+      cullConeDot: CULL_CONE_DOT_120,
+      cullNearDistance: 40,
+      triangleBudgetEnabled: true,
+      triangleBudgetPerFrame: TRIANGLE_BUDGET_PER_FRAME,
+      triangleBudgetFrameStride: TRIANGLE_BUDGET_FRAME_STRIDE,
+      dynamicTriangleBudgetEnabled: true,
+      dynamicTriangleBudgetPerFrame: DYNAMIC_TRIANGLE_BUDGET_PER_FRAME,
+      dynamicTriangleBudgetFrameStride: DYNAMIC_TRIANGLE_BUDGET_FRAME_STRIDE,
+    },
+    vehicleAttachment: {
+      enabled: false,
+      maxAttachAngleDeg: 88,
+      probeDistance: 8,
+      stickForce: 34,
+      maxSlopeClimbAngleDeg: 60,
+      detachGraceMs: 120,
+      allowedSurfaces: 'road-ext',
+      loopSlopeClimbAngleDeg: 165,
+      loopSlopeSlideAngleDeg: 172,
     },
   },
   stadium: {
@@ -528,6 +660,12 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       maxVisibleDistance: 230,
       cullConeDot: CULL_CONE_DOT_120,
       cullNearDistance: 35,
+      triangleBudgetEnabled: true,
+      triangleBudgetPerFrame: TRIANGLE_BUDGET_PER_FRAME,
+      triangleBudgetFrameStride: TRIANGLE_BUDGET_FRAME_STRIDE,
+      dynamicTriangleBudgetEnabled: true,
+      dynamicTriangleBudgetPerFrame: DYNAMIC_TRIANGLE_BUDGET_PER_FRAME,
+      dynamicTriangleBudgetFrameStride: DYNAMIC_TRIANGLE_BUDGET_FRAME_STRIDE,
     },
     vehicleAttachment: {
       enabled: false,
@@ -588,6 +726,12 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       maxVisibleDistance: 90,
       cullConeDot: CULL_CONE_DOT_120,
       cullNearDistance: 35,
+      triangleBudgetEnabled: true,
+      triangleBudgetPerFrame: TRIANGLE_BUDGET_PER_FRAME,
+      triangleBudgetFrameStride: TRIANGLE_BUDGET_FRAME_STRIDE,
+      dynamicTriangleBudgetEnabled: true,
+      dynamicTriangleBudgetPerFrame: DYNAMIC_TRIANGLE_BUDGET_PER_FRAME,
+      dynamicTriangleBudgetFrameStride: DYNAMIC_TRIANGLE_BUDGET_FRAME_STRIDE,
     },
     vehicleAttachment: {
       enabled: false,
@@ -648,6 +792,12 @@ export const CIRCUITS: Record<CircuitId, CircuitConfig> = {
       maxVisibleDistance: 320,
       cullConeDot: CULL_CONE_DOT_120,
       cullNearDistance: 45,
+      triangleBudgetEnabled: true,
+      triangleBudgetPerFrame: TRIANGLE_BUDGET_PER_FRAME,
+      triangleBudgetFrameStride: TRIANGLE_BUDGET_FRAME_STRIDE,
+      dynamicTriangleBudgetEnabled: true,
+      dynamicTriangleBudgetPerFrame: DYNAMIC_TRIANGLE_BUDGET_PER_FRAME,
+      dynamicTriangleBudgetFrameStride: DYNAMIC_TRIANGLE_BUDGET_FRAME_STRIDE,
     },
     vehicleAttachment: {
       enabled: false,
@@ -671,7 +821,7 @@ export const GRAND_PRIXS: Record<GrandPrixId, GrandPrixConfig> = {
     { origin: 'N64', label: 'Desert Kalimari', previewIndex: 4, circuitId: 'kalimari_desert' },
   ]),
   flower_cup: createGrandPrix('flower_cup', 'Coupe Fleur', 'Coupe Fleur', [
-    { origin: 'Wii', label: 'Stadium', previewIndex: 5, circuitId: 'stadium' },
+    { origin: 'MK8', label: 'Mario Circuit', previewIndex: 2, circuitId: 'mario_circuit_8' },
     { origin: 'DS', label: 'Cascades Cheep Cheep', previewIndex: 6, circuitId: 'super_bell_subway' },
     { origin: 'GCN', label: 'Portail Peach', previewIndex: 7, circuitId: 'ds_mario_circuit' },
     { origin: 'N64', label: 'Desert Kalimari', previewIndex: 8, circuitId: 'stadium' },
