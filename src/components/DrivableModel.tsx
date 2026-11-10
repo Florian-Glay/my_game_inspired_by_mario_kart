@@ -225,6 +225,7 @@ export default function DrivableModel({
   participantId = 'participant-1',
   participantName = participantId,
   humanSlotId,
+  mobileControls,
   myObject = 0,
   myObjectCharges = 0,
   coinCount = 0,
@@ -280,6 +281,8 @@ export default function DrivableModel({
   const useObjectPressedRef = useRef(false);
   const gamepadUseObjectPressedRef = useRef(false);
   const gamepadDriftPressedRef = useRef(false);
+  const mobileUseObjectPressedRef = useRef(false);
+  const mobileDriftPressedRef = useRef(false);
 
   const bindingSets = useMemo(
     () => ({
@@ -2129,6 +2132,8 @@ export default function DrivableModel({
       useObjectPressedRef.current = false;
       gamepadUseObjectPressedRef.current = false;
       gamepadDriftPressedRef.current = false;
+      mobileUseObjectPressedRef.current = false;
+      mobileDriftPressedRef.current = false;
       releaseSteerCharge({
         nowMs: performance.now(),
         triggerBoost: false,
@@ -2540,6 +2545,16 @@ export default function DrivableModel({
     );
     const gamepadLeftPressed = gamepadSteerAxis >= 0.36;
     const gamepadRightPressed = gamepadSteerAxis <= -0.36;
+    const shouldReadMobileInput =
+      shouldReadGamepadInput && mobileControls !== undefined;
+    const mobileSteerAxis = shouldReadMobileInput ? clamp(mobileControls.steer, -1, 1) : 0;
+    const mobileThrottleAxis = shouldReadMobileInput ? clamp(mobileControls.throttle, -1, 1) : 0;
+    const mobileForwardPressed = mobileThrottleAxis > 0.12;
+    const mobileBackPressed = mobileThrottleAxis < -0.12;
+    const mobileUseObjectPressed = shouldReadMobileInput && mobileControls.useObjectPressed;
+    const mobileDriftPressed = shouldReadMobileInput && mobileControls.driftPressed;
+    const mobileLeftPressed = mobileSteerAxis >= 0.2;
+    const mobileRightPressed = mobileSteerAxis <= -0.2;
 
     if (!activeGamepad) {
       gamepadUseObjectPressedRef.current = false;
@@ -2582,8 +2597,41 @@ export default function DrivableModel({
       gamepadDriftPressedRef.current = gamepadDriftPressed;
     }
 
-    const forwardInputPressed = keysRef.current.forward || gamepadForwardPressed;
-    const backInputPressed = keysRef.current.back || gamepadBackPressed;
+    if (!shouldReadMobileInput) {
+      mobileUseObjectPressedRef.current = false;
+      if (mobileDriftPressedRef.current) {
+        releaseSteerCharge({ nowMs, triggerBoost: false });
+      }
+      mobileDriftPressedRef.current = false;
+    } else if (controlsTemporarilyLocked) {
+      mobileUseObjectPressedRef.current = mobileUseObjectPressed;
+      if (mobileDriftPressedRef.current) {
+        releaseSteerCharge({ nowMs, triggerBoost: false });
+      }
+      mobileDriftPressedRef.current = false;
+    } else {
+      if (mobileUseObjectPressed && !mobileUseObjectPressedRef.current) {
+        tryUseHeldObject();
+      }
+      mobileUseObjectPressedRef.current = mobileUseObjectPressed;
+
+      if (mobileDriftPressed && !mobileDriftPressedRef.current) {
+        const driftDirection: SteeringChargeDirection =
+          mobileLeftPressed ? 'left'
+          : mobileRightPressed ? 'right'
+          : keysRef.current.left ? 'left'
+          : keysRef.current.right ? 'right'
+          : 'left';
+        forceStartSteerCharge(driftDirection, nowMs);
+      } else if (!mobileDriftPressed && mobileDriftPressedRef.current) {
+        releaseSteerCharge({ nowMs, triggerBoost: true });
+      }
+      mobileDriftPressedRef.current = mobileDriftPressed;
+    }
+
+    const forwardInputPressed =
+      keysRef.current.forward || gamepadForwardPressed || mobileForwardPressed;
+    const backInputPressed = keysRef.current.back || gamepadBackPressed || mobileBackPressed;
 
     const canChargeStartBoost =
       controlsLocked &&
@@ -2670,7 +2718,7 @@ export default function DrivableModel({
       ? 0
       : steerChargeActive ?
           (steerChargeDirection === 'left' ? 1 : -1)
-      : clamp(keyboardSteerInput + gamepadSteerAxis, -1, 1);
+      : clamp(keyboardSteerInput + gamepadSteerAxis + mobileSteerAxis, -1, 1);
     const boostActive = nowMs < boostEndTimestampRef.current;
 
     if (effectiveControlMode === 'autopilot' && !controlsTemporarilyLocked) {

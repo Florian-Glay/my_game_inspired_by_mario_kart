@@ -9,6 +9,7 @@ import type {
   ParticipantControlMode,
   RaceParticipantId,
 } from '../../types/game';
+import type { MobileControlState } from '../../state/mobileControls';
 
 export type Vec3 = [number, number, number];
 export type RapierVec = { x: number; y: number; z: number };
@@ -68,6 +69,7 @@ export type Props = {
   participantId?: RaceParticipantId;
   participantName?: string;
   humanSlotId?: HumanPlayerSlotId;
+  mobileControls?: MobileControlState;
   myObject?: number;
   myObjectCharges?: number;
   coinCount?: number;

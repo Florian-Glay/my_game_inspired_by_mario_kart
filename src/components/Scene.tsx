@@ -17,6 +17,7 @@ import { CHARACTERS, getCatalogItemById } from '../config/garageCatalog';
 import { CC_SPEEDS, CIRCUITS } from '../config/raceCatalog';
 import { PERF_PROFILE } from '../config/performanceProfile';
 import { gameMode } from '../state/gamemode';
+import { createMobileControlState } from '../state/mobileControls';
 import type {
   BotDrivingTacticalState,
   BotItemTacticalState,
@@ -44,6 +45,7 @@ import {
 import { CameraController } from './CameraController';
 import { CircuitMeshCullingController } from './CircuitMeshCullingController';
 import DrivableModel from './DrivableModel';
+import { MobileRaceControls } from './MobileRaceControls';
 import { LocalMultiviewCameraController } from './LocalMultiviewCameraController';
 import Model from './Model';
 import { ObjectCrate, type ObjectCrateTouch } from './ObjectCrate';
@@ -316,6 +318,7 @@ export function Scene({
   const [loadingBackdropFailed, setLoadingBackdropFailed] = useState(false);
   const [loadingMascotFailed, setLoadingMascotFailed] = useState(false);
   const [liveScoreboardTick, setLiveScoreboardTick] = useState(0);
+  const mobileControlsRef = useRef(createMobileControlState());
   const courseResultSentRef = useRef(false);
   const startCountdownStartedRef = useRef(false);
   const winModeHandledRef = useRef(false);
@@ -366,6 +369,10 @@ export function Scene({
           return leftOrder - rightOrder;
         }),
     [raceConfig.participants],
+  );
+  const mobileParticipantId = useMemo(
+    () => humanParticipants.find((participant) => participant.controlMode === 'human')?.id ?? null,
+    [humanParticipants],
   );
   const poseRefsByParticipant = useMemo<
     Record<RaceParticipantId, MutableRefObject<CarPose>>
@@ -2503,7 +2510,7 @@ export function Scene({
       ) : null}
 
       {sceneReady && !isLoadingOverlayActive && humanCoinHudEntries.length > 0 ? (
-        <div className="pointer-events-none absolute bottom-4 right-4 z-42 flex flex-col items-end gap-2">
+        <div className="mk-coin-hud pointer-events-none absolute bottom-4 right-4 z-42 flex flex-col items-end gap-2">
           {humanCoinHudEntries.map((entry) => (
             <div
               key={`coin-hud-${entry.participantId}`}
@@ -2521,6 +2528,14 @@ export function Scene({
             </div>
           ))}
         </div>
+      ) : null}
+
+      {sceneReady && !isLoadingOverlayActive && overlayStep === 'none' && mobileParticipantId ? (
+        <MobileRaceControls
+          controls={mobileControlsRef.current}
+          disabled={isPauseMenuVisible}
+          hasObject={hudMyObject > 0}
+        />
       ) : null}
 
       {sceneReady && !isLoadingOverlayActive && overlayStep === 'none' ? (
@@ -2988,6 +3003,9 @@ export function Scene({
                     participantId={participant.id}
                     participantName={participant.displayName}
                     humanSlotId={participant.humanSlotId}
+                    mobileControls={
+                      participant.id === mobileParticipantId ? mobileControlsRef.current : undefined
+                    }
                     controlMode={participant.controlMode}
                     vehicleModel={participant.vehicleModel}
                     characterModel={participant.characterModel}

@@ -344,3 +344,166 @@
   }
 }
 
+.mk-mobile-controls {
+  display: none;
+}
+
+@media (hover: none) and (pointer: coarse), (max-width: 720px) {
+  .mk-mobile-controls {
+    position: absolute;
+    inset: 0;
+    z-index: 55;
+    display: block;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+
+  .mk-mobile-controls.is-disabled {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .mk-mobile-joystick-wrap {
+    position: absolute;
+    left: max(14px, env(safe-area-inset-left));
+    bottom: max(14px, env(safe-area-inset-bottom));
+    display: grid;
+    justify-items: center;
+    gap: 4px;
+    pointer-events: auto;
+  }
+
+  .mk-mobile-joystick {
+    position: relative;
+    width: clamp(92px, 17cqw, 148px);
+    aspect-ratio: 1;
+    border: 2px solid rgba(255, 255, 255, 0.72);
+    border-radius: 50%;
+    background:
+      radial-gradient(circle, rgba(125, 190, 255, 0.18) 0 35%, transparent 36%),
+      rgba(4, 18, 48, 0.48);
+    box-shadow: inset 0 0 22px rgba(104, 192, 255, 0.22), 0 10px 26px rgba(0, 0, 0, 0.34);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    touch-action: none;
+  }
+
+  .mk-mobile-joystick::before,
+  .mk-mobile-joystick::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    background: rgba(255, 255, 255, 0.18);
+    transform: translate(-50%, -50%);
+  }
+
+  .mk-mobile-joystick::before {
+    width: 64%;
+    height: 1px;
+  }
+
+  .mk-mobile-joystick::after {
+    width: 1px;
+    height: 64%;
+  }
+
+  .mk-mobile-joystick-stick {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 45%;
+    aspect-ratio: 1;
+    border: 2px solid rgba(255, 255, 255, 0.92);
+    border-radius: 50%;
+    background: linear-gradient(145deg, rgba(83, 172, 255, 0.96), rgba(18, 76, 201, 0.94));
+    box-shadow: 0 5px 14px rgba(0, 25, 90, 0.45), inset 0 2px 5px rgba(255, 255, 255, 0.45);
+    transform: translate(-50%, -50%);
+    will-change: transform;
+  }
+
+  .mk-mobile-joystick-arrow {
+    position: absolute;
+    left: 50%;
+    z-index: 1;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: clamp(8px, 1.5cqw, 13px);
+    transform: translateX(-50%);
+  }
+
+  .mk-mobile-joystick-arrow.is-up { top: 7%; }
+  .mk-mobile-joystick-arrow.is-down { bottom: 7%; }
+
+  .mk-mobile-control-caption {
+    color: white;
+    font-size: clamp(8px, 1.3cqw, 11px);
+    font-weight: 900;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    text-shadow: 0 2px 7px rgba(0, 0, 0, 0.8);
+  }
+
+  .mk-mobile-actions {
+    position: absolute;
+    right: max(14px, env(safe-area-inset-right));
+    bottom: max(14px, env(safe-area-inset-bottom));
+    display: flex;
+    align-items: flex-end;
+    gap: clamp(10px, 2cqw, 18px);
+    pointer-events: auto;
+  }
+
+  .mk-mobile-action {
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 2px;
+    width: clamp(70px, 11cqw, 96px);
+    aspect-ratio: 1;
+    margin: 0;
+    padding: 5px;
+    border: 2px solid rgba(255, 255, 255, 0.82);
+    border-radius: 50%;
+    color: white;
+    font: inherit;
+    font-size: clamp(7px, 1.15cqw, 10px);
+    font-weight: 950;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-shadow: 0 2px 5px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 9px 22px rgba(0, 0, 0, 0.38), inset 0 2px 5px rgba(255, 255, 255, 0.32);
+    touch-action: none;
+    transition: transform 80ms ease, filter 80ms ease;
+  }
+
+  .mk-mobile-action--object {
+    background: linear-gradient(145deg, rgba(255, 190, 50, 0.93), rgba(221, 77, 17, 0.93));
+  }
+
+  .mk-mobile-action--object:not(.has-object) {
+    filter: saturate(0.55) brightness(0.78);
+  }
+
+  .mk-mobile-action--drift {
+    width: clamp(82px, 13cqw, 112px);
+    background: linear-gradient(145deg, rgba(54, 198, 255, 0.94), rgba(48, 65, 222, 0.94));
+  }
+
+  .mk-mobile-action.is-active {
+    transform: scale(0.9);
+    filter: brightness(1.22);
+  }
+
+  .mk-mobile-action-icon {
+    font-size: clamp(18px, 3.2cqw, 29px);
+    line-height: 1;
+  }
+
+  .mk-coin-hud {
+    bottom: auto !important;
+    top: clamp(78px, 13cqh, 112px);
+  }
+}
+
